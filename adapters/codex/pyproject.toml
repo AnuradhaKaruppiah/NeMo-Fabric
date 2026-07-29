@@ -25,7 +25,7 @@ license-files = ["LICENSE"]
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "nemo-fabric-adapters-common == 0.2.0",
+  "nemo-fabric-adapters-common == 0.1.0",
   "tomli-w~=1.2",
 ]
 
