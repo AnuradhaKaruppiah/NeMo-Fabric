@@ -148,9 +148,9 @@ selected adapter, and the harness inside an isolated task environment such as a
 Docker container or Daytona sandbox. Adapter discovery and task-path resolution
 occur inside that sandbox.
 
-Install `nemo-fabric[harbor]==0.1.0` in the host environment. Install a complete
-harness composition such as `nemo-fabric[claude]==0.1.0` or
-`nemo-fabric[hermes-agent,relay]==0.1.0` in the task environment. For Claude or
+Install `nemo-fabric[harbor]==0.2.0` in the host environment. Install a complete
+harness composition such as `nemo-fabric[claude]==0.2.0` or
+`nemo-fabric[hermes-agent,relay]==0.2.0` in the task environment. For Claude or
 Codex Relay streaming, also provision the external NeMo Relay CLI in the task
 environment. Refer to the
 [Harbor execution model](examples/harbor/README.md#execution-model) for details.
@@ -167,7 +167,7 @@ Create an environment for the NeMo Fabric runtime:
 ```bash
 python -m venv .venv-fabric
 source .venv-fabric/bin/activate
-pip install nemo-fabric==0.1.0
+pip install nemo-fabric==0.2.0
 ```
 
 Create another environment for the adapter and harness. For example, install
@@ -176,7 +176,7 @@ the Hermes Agent integration:
 ```bash
 python -m venv .venv-hermes
 source .venv-hermes/bin/activate
-pip install "nemo-fabric-adapters-hermes[harness]==0.1.0"
+pip install "nemo-fabric-adapters-hermes[harness]==0.2.0"
 ```
 
 The adapter package keeps this environment independent from the

@@ -31,6 +31,13 @@ The adapter package also provides `relay` and `full` extras. Use `relay` when
 the environment already manages the Deep Agents stack. Use `full` to install
 the stack and NeMo Relay Python package together.
 
+To install the runtime, adapter, supported Deep Agents stack, and NeMo Relay
+Python package in one environment:
+
+```bash
+pip install "nemo-fabric[deepagents,relay]"
+```
+
 If the environment already manages a compatible Deep Agents stack, install only
 the adapter:
 

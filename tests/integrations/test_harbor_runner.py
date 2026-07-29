@@ -297,7 +297,9 @@ def test_harbor_calculator_documents_explicit_cli_commands():
     landing = INTEGRATION_README.read_text(encoding="utf-8")
     swebench = SWEBENCH_README.read_text(encoding="utf-8")
     with (ROOT / "pyproject.toml").open("rb") as file:
-        declared_extras = set(tomllib.load(file)["project"]["optional-dependencies"])
+        project = tomllib.load(file)["project"]
+    package_version = project["version"]
+    declared_extras = set(project["optional-dependencies"])
 
     assert "run.sh" not in calculator
     assert calculator.count(" harbor run \\") == 4
@@ -318,9 +320,9 @@ def test_harbor_calculator_documents_explicit_cli_commands():
     assert 'CALCULATOR_DIR="$PWD/examples/harbor/calculator"' in calculator
     assert "calculator/README.md" in landing
     assert "swebench/README.md" in landing
-    assert "nemo-fabric[harbor]==0.1.0" in landing
-    assert "nemo-fabric[claude]==0.1.0" in landing
-    assert "nemo-fabric[hermes-agent,relay]==0.1.0" in landing
+    assert f"nemo-fabric[harbor]=={package_version}" in landing
+    assert f"nemo-fabric[claude]=={package_version}" in landing
+    assert f"nemo-fabric[hermes-agent,relay]=={package_version}" in landing
     assert documented_root_extras(
         "\n".join((calculator, dockerfile, landing, swebench))
     ) <= declared_extras
@@ -329,7 +331,7 @@ def test_harbor_calculator_documents_explicit_cli_commands():
     assert "raw.githubusercontent.com/NVIDIA/NeMo-Relay/main/install.sh" in swebench
     assert (
         "FABRIC_PACKAGE="
-        "'nemo-fabric[claude,hermes-agent,relay]==0.1.0a20260724'"
+        f"'nemo-fabric[claude,hermes-agent,relay]=={package_version}'"
         in swebench
     )
     assert "PIP_FIND_LINKS" not in swebench
