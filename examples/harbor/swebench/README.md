@@ -73,7 +73,7 @@ The default Hermes Agent command uses NVIDIA's hosted API:
 uv run --extra harbor harbor run \
   --task swe-bench/django__django-13741 \
   --agent "$FABRIC_AGENT" \
-  --model nvidia/nemotron-3-nano-30b-a3b \
+  --model nvidia/nemotron-3-nano-omni-30b-a3b-reasoning \
   --ak fabric_adapter_id=nvidia.fabric.hermes \
   --ak fabric_config_bundle="$FABRIC_BUNDLE" \
   --ak "fabric_package=$FABRIC_PACKAGE" \
@@ -139,7 +139,7 @@ For example, the complete skill variation is:
 uv run --extra harbor harbor run \
   --task swe-bench/django__django-13741 \
   --agent "$FABRIC_AGENT" \
-  --model nvidia/nemotron-3-nano-30b-a3b \
+  --model nvidia/nemotron-3-nano-omni-30b-a3b-reasoning \
   --skill "$PWD/examples/harbor/swebench/skills/swebench-debugging" \
   --ak fabric_adapter_id=nvidia.fabric.hermes \
   --ak fabric_config_bundle="$FABRIC_BUNDLE" \
@@ -230,7 +230,7 @@ uv run --extra harbor harbor run \
   --dataset swe-bench/swe-bench-verified \
   --n-tasks 5 \
   --agent "$FABRIC_AGENT" \
-  --model nvidia/nemotron-3-nano-30b-a3b \
+  --model nvidia/nemotron-3-nano-omni-30b-a3b-reasoning \
   --ak fabric_adapter_id=nvidia.fabric.hermes \
   --ak fabric_config_bundle="$FABRIC_BUNDLE" \
   --ak fabric_telemetry=relay \
