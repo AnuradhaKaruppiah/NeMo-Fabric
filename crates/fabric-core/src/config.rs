@@ -620,6 +620,12 @@ pub struct McpServerConfig {
     pub transport: String,
     /// MCP server URL or process command, depending on transport.
     pub url: String,
+    /// Arguments passed to an MCP stdio server process.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    /// Environment variables passed to an MCP stdio server process.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
     /// How NeMo Fabric exposes the MCP capability to the harness.
     pub exposure: McpExposure,
     /// MCP tool names to expose. `None` exposes every tool discovered from the server.
@@ -1774,7 +1780,10 @@ fn resolve_capability_plan(
                         McpServerPlan {
                             transport: server.transport.clone(),
                             url: server.url.clone(),
+                            args: server.args.clone(),
+                            env: server.env.clone(),
                             exposure: server.exposure,
+                            extensions: server.extensions.clone(),
                             allowed_tools: server.allowed_tools.clone(),
                             blocked_tools: server.blocked_tools.clone(),
                         },
@@ -2217,8 +2226,17 @@ pub struct McpServerPlan {
     pub transport: String,
     /// MCP URL or command.
     pub url: String,
+    /// Arguments passed to an MCP stdio server process.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    /// Environment variables passed to an MCP stdio server process.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
     /// Exposure strategy.
     pub exposure: McpExposure,
+    /// Additive MCP server fields from author config.
+    #[serde(default, flatten)]
+    pub extensions: BTreeMap<String, Value>,
     /// MCP tool names to expose. `None` exposes every discovered tool.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed_tools: Option<Vec<String>>,
@@ -2305,6 +2323,48 @@ mod tests {
         assert_eq!(value["version"], 2);
         assert_eq!(value["atof"]["sinks"][0]["type"], "file");
         assert_eq!(value["atof"]["sinks"][1]["type"], "stream");
+    }
+
+    #[test]
+    fn mcp_server_args_and_env_survive_capability_planning() {
+        let mut config = typed_config("nvidia.fabric.hermes");
+        config.skills = None;
+        config.mcp = Some(McpConfig {
+            servers: BTreeMap::from([(
+                "analyzer".to_string(),
+                serde_json::from_value(serde_json::json!({
+                    "transport": "stdio",
+                    "url": "/tmp/analyzer-mcp",
+                    "exposure": "harness_native",
+                    "env": {"NVIDIA_API_KEY": "${NVIDIA_API_KEY}"},
+                    "args": ["--stdio"]
+                }))
+                .expect("mcp server with args and env"),
+            )]),
+            extensions: BTreeMap::new(),
+        });
+
+        let plan = resolve_run_plan_from_config(config, ResolveContext::new(repository_root()))
+            .expect("hermes plan with mcp args and env");
+
+        let server = plan
+            .capability_plan
+            .native
+            .mcp_servers
+            .get("analyzer")
+            .expect("native analyzer mcp server");
+        assert_eq!(server.transport, "stdio");
+        assert_eq!(server.url, "/tmp/analyzer-mcp");
+        assert_eq!(server.exposure, McpExposure::HarnessNative);
+        assert_eq!(server.args, vec!["--stdio".to_string()]);
+        assert_eq!(
+            server.env,
+            BTreeMap::from([(
+                "NVIDIA_API_KEY".to_string(),
+                "${NVIDIA_API_KEY}".to_string()
+            )])
+        );
+        assert!(server.extensions.is_empty());
     }
 
     #[test]
@@ -2641,6 +2701,8 @@ mod tests {
                 McpServerConfig {
                     transport: "streamable-http".to_string(),
                     url: "https://mcp.example".to_string(),
+                    args: Vec::new(),
+                    env: BTreeMap::new(),
                     exposure: McpExposure::FabricManaged,
                     allowed_tools: None,
                     blocked_tools: Vec::new(),
@@ -2687,6 +2749,8 @@ mod tests {
                 McpServerConfig {
                     transport: "streamable-http".to_string(),
                     url: "https://mcp.example".to_string(),
+                    args: Vec::new(),
+                    env: BTreeMap::new(),
                     exposure: McpExposure::HarnessNative,
                     allowed_tools: Some(Vec::new()),
                     blocked_tools: vec!["delete".to_string()],
@@ -2735,6 +2799,8 @@ mod tests {
                     McpServerConfig {
                         transport: "streamable-http".to_string(),
                         url: "https://mcp.example".to_string(),
+                        args: Vec::new(),
+                        env: BTreeMap::new(),
                         exposure: McpExposure::HarnessNative,
                         allowed_tools,
                         blocked_tools,
@@ -2770,6 +2836,8 @@ mod tests {
                 McpServerConfig {
                     transport: "streamable-http".to_string(),
                     url: "https://mcp.example".to_string(),
+                    args: Vec::new(),
+                    env: BTreeMap::new(),
                     exposure: McpExposure::HarnessNative,
                     allowed_tools: Some(vec!["search".to_string()]),
                     blocked_tools: vec!["search".to_string()],
@@ -2812,6 +2880,8 @@ mod tests {
                     McpServerConfig {
                         transport: "streamable-http".to_string(),
                         url: "https://mcp.example".to_string(),
+                        args: Vec::new(),
+                        env: BTreeMap::new(),
                         exposure: McpExposure::HarnessNative,
                         allowed_tools,
                         blocked_tools,

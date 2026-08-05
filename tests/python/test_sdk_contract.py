@@ -141,6 +141,8 @@ def test_typed_config_authoring_helpers_emit_schema_shape():
         "github",
         transport="streamable-http",
         url="${GITHUB_MCP_URL}",
+        args=["--read-only"],
+        env={"GITHUB_TOKEN": "${GITHUB_TOKEN}"},
         exposure="fabric_managed",
         allowed_tools=["issues.read", "pull_requests.read"],
         blocked_tools=["issues.delete"],
@@ -168,6 +170,8 @@ def test_typed_config_authoring_helpers_emit_schema_shape():
             "github": {
                 "transport": "streamable-http",
                 "url": "${GITHUB_MCP_URL}",
+                "args": ["--read-only"],
+                "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"},
                 "exposure": "fabric_managed",
                 "allowed_tools": ["issues.read", "pull_requests.read"],
                 "blocked_tools": ["issues.delete"],

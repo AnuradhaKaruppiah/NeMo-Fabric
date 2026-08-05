@@ -215,12 +215,26 @@
             "null"
           ]
         },
+        "args": {
+          "description": "Arguments passed to an MCP stdio server process.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "blocked_tools": {
           "description": "MCP tool names to block after applying the optional allowlist.",
           "items": {
             "type": "string"
           },
           "type": "array"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Environment variables passed to an MCP stdio server process.",
+          "type": "object"
         },
         "exposure": {
           "$ref": "#/$defs/McpExposure",
