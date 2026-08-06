@@ -292,9 +292,8 @@ else:
 ```
 
 - Treat `status == "succeeded"` as the only success. Other terminal values
-  (`failed`, `cancelled`) are unsuccessful, and `error` can be `None` even then,
-  so branch on `status`, not on `error`. Read `status`, `error`, and `events`
-  before processing `output`.
+  (`failed`, `cancelled`) are unsuccessful, so branch on `status`, not on
+  `error`. Read `status`, `error`, and `events` before processing `output`.
 - Capture `artifacts` and `telemetry` references as the returned evidence for
   platforms and evaluations. Store and log `runtime_id`, `invocation_id`, and
   `request_id` separately as opaque strings.

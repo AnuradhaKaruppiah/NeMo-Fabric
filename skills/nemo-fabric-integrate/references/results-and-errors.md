@@ -14,7 +14,7 @@ Every invocation that reaches the adapter boundary returns a normalized
 | Field | Meaning |
 | --- | --- |
 | `status` | Terminal invocation status: `succeeded`, `failed`, or `cancelled`. Branch on this. |
-| `error` | Structured `ErrorInfo`, or `None` — can be `None` even when `status` is not `succeeded`, so do not use it as the success signal. |
+| `error` | Structured failure metadata when available. Branch on `status`, not on this field. |
 | `output` | Harness output normalized to the configured output schema. |
 | `artifacts` | Output files, logs, patches, and other materialized references. |
 | `telemetry` | References to NVIDIA NeMo Relay or other telemetry streams from the run. |

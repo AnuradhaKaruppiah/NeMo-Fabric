@@ -56,7 +56,7 @@ Consumer integration skills live directly under `skills/` so each bundle can be
 validated and published independently. The following skill helps software on
 the consumer side call NeMo Fabric through its public SDK:
 
-| Skill | Use it when |
+| Skill | Use It When |
 |---|---|
 | [`nemo-fabric-integrate`](nemo-fabric-integrate/SKILL.md) | You are adding NeMo Fabric to a consumer application, service, evaluation harness, or platform through the typed Python SDK — building an in-memory `FabricConfig`, choosing the single-invocation convenience API or an explicitly started runtime, validating with `plan`/`doctor`, and consuming normalized results. |
 
