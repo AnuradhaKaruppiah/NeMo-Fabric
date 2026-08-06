@@ -35,11 +35,10 @@ documentation URLs, never on repository-internal paths.
 ## Using an Integration Skill in Your Project
 
 For example, copy the individual skill directory
-`integrations/consumer/nemo-fabric-integrate/`, including its `references/`,
-into the place your coding agent discovers skills **in your own project**. Copy
-the skill bundle itself, not its `consumer/` or `harness/` category directory.
-Do not rely on this repository's maintainer wiring (its `.claude/skills` symlink
-or `.agents/skills/` set); those serve NeMo Fabric's own contributors.
+`nemo-fabric-integrate/`, including its `references/`, into the place your coding
+agent discovers skills **in your own project**. Do not rely on this repository's
+maintainer wiring (its `.claude/skills` symlink or `.agents/skills/` set); those
+serve NeMo Fabric's own contributors.
 
 - **Claude Code:** place it at `.claude/skills/nemo-fabric-integrate/` in your
   project, or `~/.claude/skills/nemo-fabric-integrate/` to use it across
@@ -53,20 +52,20 @@ or `.agents/skills/` set); those serve NeMo Fabric's own contributors.
 
 ## Consumer Integrations
 
-Consumer integration skills live under `integrations/consumer/`. The following
-skill helps software on the consumer side call NeMo Fabric through its public
-SDK:
+Consumer integration skills live directly under `skills/` so each bundle can be
+validated and published independently. The following skill helps software on
+the consumer side call NeMo Fabric through its public SDK:
 
 | Skill | Use it when |
 |---|---|
-| [`nemo-fabric-integrate`](integrations/consumer/nemo-fabric-integrate/SKILL.md) | You are adding NeMo Fabric to a consumer application, service, evaluation harness, or platform through the typed Python SDK — building an in-memory `FabricConfig`, choosing the single-invocation convenience API or an explicitly started runtime, validating with `plan`/`doctor`, and consuming normalized results. |
+| [`nemo-fabric-integrate`](nemo-fabric-integrate/SKILL.md) | You are adding NeMo Fabric to a consumer application, service, evaluation harness, or platform through the typed Python SDK — building an in-memory `FabricConfig`, choosing the single-invocation convenience API or an explicitly started runtime, validating with `plan`/`doctor`, and consuming normalized results. |
 
 ## Harness Integrations
 
-Harness integration skills belong under `integrations/harness/`. A forthcoming
-adapter-authoring skill will guide third-party harness authors through the
-published adapter contract so they can build harness integrations that are
-compatible with NeMo Fabric.
+A forthcoming adapter-authoring skill can guide third-party harness authors
+through the published adapter contract. Like other consumer skills, its bundle
+will live directly under `skills/`; repository-internal adapter maintenance
+remains in `.agents/skills/`.
 
 ## Conventions
 
