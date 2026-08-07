@@ -36,10 +36,10 @@ Key conventions for the two tiers:
   and example URLs rather than a docs-site domain, so they keep working when
   exported.
 - **Supported consumer surface:** the consumer tier currently ships one skill,
-  `skills/integrations/consumer/nemo-fabric-integrate`, for typed Python SDK
-  integration. Future public harness adapter-authoring skills belong under
-  `skills/integrations/harness/`; repository-internal adapter maintenance stays
-  in `.agents/skills/`.
+  `skills/nemo-fabric-integrate`, for typed Python SDK integration. Future
+  consumer skills also live directly under `skills/` so they can be validated
+  and published independently; repository-internal adapter maintenance stays in
+  `.agents/skills/`.
 
 ## Documentation And Contribution Workflow
 
