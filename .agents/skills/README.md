@@ -17,10 +17,10 @@ Use these skills for repository work such as:
 These skills may reference repository internals, build and test commands, and
 contribution workflows.
 
-Consumer-facing integration skills live in the top-level
+External integration skills live in the top-level
 [`skills/`](../../skills/README.md) directory so they can be exported separately
-for application developers and integrators. Keep external usage guidance out of
-this set.
+for application developers, integrators, and third-party adapter authors. Keep
+external usage guidance out of this set.
 
 ## Skills
 
@@ -29,7 +29,7 @@ This table lists the maintainer skills in this set and what each covers.
 | Skill | Purpose |
 |---|---|
 | [`contribute-api`](contribute-api/SKILL.md) | Add a public API surface with Rust, CLI, Python, schema, adapter, and documentation parity. |
-| [`contribute-adapter`](contribute-adapter/SKILL.md) | Add a production-ready harness adapter with explicit capability, policy, packaging, lifecycle, and validation contracts. |
+| [`contribute-adapter`](contribute-adapter/SKILL.md) | Integrate a first-party adapter into repository packaging, discovery, catalogs, CI, and validation. |
 | [`small-fix`](small-fix/SKILL.md) | Make a small, reviewable bug fix without widening scope. |
 | [`contribute-docs`](contribute-docs/SKILL.md) | Change documentation or examples in step with public behavior. |
 | [`review-doc-style`](review-doc-style/SKILL.md) | Review documentation and public text for NVIDIA technical-writing style. |

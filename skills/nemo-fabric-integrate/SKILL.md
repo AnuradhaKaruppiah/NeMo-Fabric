@@ -135,9 +135,11 @@ def to_fabric_config(job) -> FabricConfig:
     return config
 ```
 
-- Shape capabilities with `ToolsConfig`, `block_tools`, `add_skill_path`,
+- Shape capabilities with `ToolsConfig`, `add_tool_definition`, `block_tools`, `add_skill_path`,
   `remove_skill_path`,
   `add_mcp_server`, `remove_mcp_server`, and `enable_relay`.
+- Use `add_tool_definition` only when the selected adapter accepts
+  `tools.definitions` and publishes a `tool_definition_schema`.
 - Use a restricted `allowed_tools` list or non-empty `blocked_tools` on
   `add_mcp_server` only when the selected adapter declares both `mcp` and
   `mcp.tool_filters`. An unfiltered server requires only `mcp`.
