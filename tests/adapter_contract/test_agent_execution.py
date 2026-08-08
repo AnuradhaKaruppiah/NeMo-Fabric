@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import fields
 from pathlib import Path
 
 import pytest
@@ -15,8 +16,13 @@ from nemo_fabric_adapter_contract.models import AgentRunRequest
 from nemo_fabric_adapter_contract.models import AgentRunResult
 from nemo_fabric_adapter_contract.models import AgentRunStatus
 from nemo_fabric_adapter_contract.models import AgentUsage
+from nemo_fabric_adapter_contract.models import ArtifactManifest
+from nemo_fabric_adapter_contract.models import ArtifactRef
+from nemo_fabric_adapter_contract.models import EnvironmentHandle
 from nemo_fabric_adapter_contract.models import RuntimeContext
-from pydantic import ValidationError
+from nemo_fabric_adapter_contract.models import RuntimeTelemetryContext
+from nemo_fabric_adapter_contract.codec import ContractValidationError
+from nemo_fabric_adapter_contract.pydantic_support import type_adapter
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -32,7 +38,11 @@ def test_agent_run_request_contains_only_southbound_request_fields():
         "input": {"messages": [{"role": "user", "content": "hello"}]},
         "context": {"task": "sample"},
     }
-    assert set(AgentRunRequest.model_fields) == {"input", "context", "extensions"}
+    assert {item.name for item in fields(AgentRunRequest)} == {
+        "input",
+        "context",
+        "extensions",
+    }
 
 
 def test_agent_run_result_contains_only_adapter_owned_result_fields():
@@ -77,7 +87,7 @@ def test_agent_run_result_contains_only_adapter_owned_result_fields():
             }
         ],
     }
-    assert set(AgentRunResult.model_fields) == {
+    assert {item.name for item in fields(AgentRunResult)} == {
         "status",
         "output",
         "error",
@@ -99,15 +109,49 @@ def test_agent_execution_models_track_rust_schema_root_fields(model, filename):
     rust_schema = json.loads(
         (ROOT / "schemas" / "adapter-contract" / filename).read_text(encoding="utf-8")
     )
-    pydantic_schema = model.model_json_schema()
+    pydantic_schema = type_adapter(model).json_schema()
 
     assert rust_schema["additionalProperties"] is False
     assert pydantic_schema["additionalProperties"] is False
     assert set(pydantic_schema["properties"]) == set(rust_schema["properties"])
 
 
+@pytest.mark.parametrize(
+    ("filename", "models"),
+    [
+        (
+            "agent-run-result.schema.json",
+            (AgentArtifact, AgentRunError, AgentUsage),
+        ),
+        (
+            "runtime-context.schema.json",
+            (
+                ArtifactManifest,
+                ArtifactRef,
+                EnvironmentHandle,
+                RuntimeTelemetryContext,
+            ),
+        ),
+    ],
+)
+def test_agent_execution_dataclasses_track_rust_schema_block_fields(
+    filename,
+    models,
+):
+    rust_schema = json.loads(
+        (ROOT / "schemas" / "adapter-contract" / filename).read_text(encoding="utf-8")
+    )
+
+    for model in models:
+        assert {item.name for item in fields(model)} == set(
+            rust_schema["$defs"][model.__name__]["properties"]
+        )
+
+
 def test_failed_agent_run_result_requires_error():
-    with pytest.raises(ValidationError, match="failed result requires an error"):
+    with pytest.raises(
+        ContractValidationError, match="failed result requires an error"
+    ):
         AgentRunResult(status=AgentRunStatus.FAILED, output=None)
 
 
@@ -125,5 +169,5 @@ def test_failed_agent_run_result_requires_error():
     ],
 )
 def test_agent_artifact_rejects_unsafe_paths(path: str):
-    with pytest.raises(ValidationError, match="artifact path must be"):
+    with pytest.raises(ContractValidationError, match="artifact path must be"):
         AgentArtifact(name="output", kind="file", path=path)
