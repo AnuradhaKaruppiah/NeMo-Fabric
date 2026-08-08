@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import MISSING
 from dataclasses import fields
 from pathlib import Path
 
@@ -146,6 +147,12 @@ def test_agent_execution_dataclasses_track_rust_schema_block_fields(
         assert {item.name for item in fields(model)} == set(
             rust_schema["$defs"][model.__name__]["properties"]
         )
+        required = {
+            item.name
+            for item in fields(model)
+            if item.default is MISSING and item.default_factory is MISSING
+        }
+        assert required == set(rust_schema["$defs"][model.__name__].get("required", []))
 
 
 def test_failed_agent_run_result_requires_error():

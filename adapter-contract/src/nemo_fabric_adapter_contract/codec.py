@@ -12,6 +12,7 @@ from dataclasses import MISSING
 from dataclasses import Field
 from dataclasses import fields
 from enum import Enum
+from functools import cache
 from pathlib import Path
 from typing import Any
 from typing import Literal
@@ -79,7 +80,7 @@ def json_mapping(
     """Validate and detach one JSON object mapping."""
 
     result = json_value(value, path=path)
-    if not isinstance(result, dict):  # pragma: no cover - kept true by the annotation
+    if not isinstance(result, dict):
         raise ContractValidationError("must be a JSON object", path=path)
     return result
 
@@ -120,10 +121,15 @@ def decode_dataclass(model: type[_T], value: Any, *, path: tuple[str, ...] = ())
         raise error.prepend(path) from error
 
 
+@cache
+def _resolved_type_hints(model: type[Any]) -> dict[str, Any]:
+    return get_type_hints(model)
+
+
 def validate_dataclass(instance: Any) -> None:
     """Validate and normalize all declared fields on a contract dataclass."""
 
-    annotations = get_type_hints(type(instance))
+    annotations = _resolved_type_hints(type(instance))
     for item in fields(instance):
         value = getattr(instance, item.name)
         decoded = _decode_value(
@@ -157,6 +163,8 @@ def _decode_value(
     field: Field[Any] | None = None,
 ) -> Any:
     if field is not None and field.metadata.get("json"):
+        if get_origin(annotation) is dict:
+            return json_mapping(value, path=path)
         return json_value(value, path=path)
 
     origin = get_origin(annotation)

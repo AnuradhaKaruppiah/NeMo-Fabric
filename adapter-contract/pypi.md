@@ -36,7 +36,7 @@ Install the package directly when developing a Python adapter:
 pip install nemo-fabric-adapter-contract
 ```
 
-Install optional Pydantic interoperability with:
+Install the optional `pydantic` extra to enable Pydantic interoperability.
 
 ```bash
 pip install "nemo-fabric-adapter-contract[pydantic]"

@@ -99,6 +99,21 @@ def test_agent_config_blocks_reject_implicit_and_non_json_extensions():
         AgentConfig().set_extensions({"unsupported": object()})
 
 
+@pytest.mark.parametrize(
+    ("payload", "path"),
+    [
+        ({"extensions": []}, "extensions"),
+        ({"harness": {"settings": "not-an-object"}}, "harness.settings"),
+    ],
+)
+def test_agent_config_rejects_non_object_json_mappings(payload, path):
+    with pytest.raises(
+        ContractValidationError,
+        match=rf"{path}: must be a JSON object",
+    ):
+        AgentConfig.from_mapping(payload)
+
+
 @pytest.mark.parametrize("model", AGENT_CONFIG_BLOCKS)
 def test_agent_config_schema_exposes_explicit_extensions_on_every_block(
     model: type[AgentConfigBlock],
