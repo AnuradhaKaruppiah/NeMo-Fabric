@@ -10,7 +10,8 @@ LangGraph agent with its own NeMo Fabric adapter. It is intentionally small:
 the graph owns application behavior, the adapter owns translation and
 lifecycle, and the consumer owns `FabricConfig`.
 
-The classifier is illustrative, not a production security control.
+The phishing analyzer is a small application used to demonstrate the adapter
+contract.
 
 ```mermaid
 flowchart TD
@@ -22,18 +23,9 @@ flowchart TD
     Adapter -. "optional callback" .-> Relay["NeMo Relay"]
 ```
 
-## Read the Boundaries
-
-| Source | Responsibility |
-| --- | --- |
-| [`consumer/config.py`](consumer/config.py) | Builds northbound configs and independent variations. |
-| [`adapter/fabric-adapter.json`](adapter/fabric-adapter.json) | Declares the exact supported contract surface. |
-| [`adapter/configuration.py`](adapter/configuration.py) | Maps typed `AgentConfig` into a native chat model and instruction. |
-| [`adapter/mcp.py`](adapter/mcp.py) | Optionally maps normalized MCP servers and filters into a native LangChain tool. |
-| [`adapter/runtime.py`](adapter/runtime.py) | Implements one `start`, zero or more `invoke`, and one `stop`. |
-| [`adapter/telemetry.py`](adapter/telemetry.py) | Lazily activates optional Relay telemetry for an invocation. |
-| [`agent/graph.py`](agent/graph.py) | Defines application behavior without importing Fabric or Relay. |
-| [`mcp/url_inspector.py`](mcp/url_inspector.py) | Provides the example's deterministic stdio MCP tool. |
+The example separates consumer-owned configuration, adapter-owned translation
+and lifecycle, and an application-owned LangGraph agent that has no dependency
+on Fabric or Relay.
 
 This is a dedicated custom-agent adapter: selecting its `adapter_id` selects
 this email analyzer. It is not a generic loader for arbitrary LangGraph agents
@@ -86,19 +78,10 @@ Every variation returns an independent `FabricConfig`:
 
 | Variation | Consumer API or CLI | Southbound effect |
 | --- | --- | --- |
-| Model | `public_config(model=...)` or `--model` | `models.default.model` |
-| Endpoint | `public_config()` / `frontier_config()` | Credential-variable name and `models.default.base_url` |
+| Model | `--model` | `models.default.model` |
 | Instruction | `with_system_instruction(...)` or `--system-instruction` | `instructions.system` |
 | Temperature | `with_temperature(...)` or `--temperature` | `models.default.temperature` |
 | stdio MCP | `with_url_inspector_mcp(...)` or `--mcp` | `mcp.servers` and per-server tool policy |
-
-For example:
-
-```python
-config = public_config()
-config = with_system_instruction(config, "Explain only the strongest signal.")
-config = with_temperature(config, 0.2)
-```
 
 The descriptor bounds variation. Unsupported providers, extra model roles,
 model-specific settings, missing endpoints, and missing credential variables
@@ -134,7 +117,7 @@ Fabric runtime retains the compiled graph and native tool between invocations.
 `with_relay(config)` enables ATOF and ATIF without changing the adapter
 lifecycle. During `invoke`, Fabric supplies `RuntimeContext.telemetry`; the
 adapter loads that generated configuration, opens one invocation-level Agent
-scope, and passes the public `NemoRelayCallbackHandler` through LangGraph
+scope, and passes `NemoRelayCallbackHandler` through LangGraph
 runnable config. Relay records the graph and its model-backed node, while the
 terminal result remains separate.
 
@@ -161,24 +144,15 @@ Planning is credential-free:
 
 ```bash
 .venv/bin/python -m examples.langgraph_custom_agent.consumer \
-  --variant public --base-dir "$FABRIC_LANGGRAPH_EXAMPLE" --plan
+  --base-dir "$FABRIC_LANGGRAPH_EXAMPLE" --plan
 ```
 
-Run the requested default model through the public NVIDIA endpoint:
+Run the default model through `https://integrate.api.nvidia.com/v1`:
 
 ```bash
 export NVIDIA_API_KEY="..."
 .venv/bin/python -m examples.langgraph_custom_agent.consumer \
-  --variant public --base-dir "$FABRIC_LANGGRAPH_EXAMPLE"
-```
-
-Use an internal OpenAI-compatible NVIDIA endpoint with the same config shape:
-
-```bash
-export NVIDIA_FRONTIER_API_KEY="..."
-export NVIDIA_FRONTIER_BASE_URL="https://your-frontier-endpoint/v1"
-.venv/bin/python -m examples.langgraph_custom_agent.consumer \
-  --variant frontier --base-dir "$FABRIC_LANGGRAPH_EXAMPLE"
+  --base-dir "$FABRIC_LANGGRAPH_EXAMPLE"
 ```
 
 The endpoint key must grant access to the configured model. Use `--model` when
@@ -190,17 +164,6 @@ Add `--relay` to either live command to produce correlated ATOF and ATIF under
 Add `--mcp` to include URL inspection before classification. The two optional
 paths compose, so `--mcp --relay` traces the MCP-backed graph node as well as
 the model-backed explanation.
-
-## Validate
-
-```bash
-.venv/bin/pytest tests/examples/langgraph_custom_agent -q
-```
-
-The focused tests cover descriptor projection, application behavior,
-configuration mapping and rejection, repeated lifecycle invocation, cleanup,
-configuration independence, normalized MCP projection and filtering,
-Relay-off optionality, and correlated Relay artifacts.
 
 The example intentionally omits generic workflow loading, named tools, skills,
 checkpointing, cancellation, resume, updates, and native streaming. The stdio
