@@ -396,9 +396,12 @@ def serve(
 ) -> None:
     """Serve ordered lifecycle requests for exactly one Fabric runtime.
 
-    ``config_loader`` opts an adapter into typed southbound configuration. The
-    host passes it the start config and places the returned value in
-    ``payload["config"]``. Omitting it preserves the legacy mapping unchanged.
+    ``config_loader`` decodes and validates the southbound start configuration.
+    Contract-compliant adapters use ``AgentConfig.from_mapping`` so the runtime
+    receives the canonical ``AgentConfig`` in ``payload["config"]``. The
+    callable is generic only to keep this lifecycle host framework-neutral; it
+    does not define alternative adapter contract types. Omitting it preserves
+    the untyped mapping for adapters that have not yet migrated.
     """
 
     # Reserve process stdout for the protocol for the entire host lifetime,
