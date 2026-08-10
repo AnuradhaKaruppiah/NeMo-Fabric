@@ -39,11 +39,17 @@ just build-all
 
 ## LangGraph custom agent
 
-[`langgraph_custom_agent`](langgraph_custom_agent/README.md) separates a small
-application-defined LangGraph, its dedicated adapter, and consumer-owned
-`FabricConfig`. It builds from the required lifecycle to normalized model and
-instruction variations, then adds an optional stdio MCP tool and Relay
-telemetry without expanding the required lifecycle.
+[`langgraph_custom_agent`](langgraph_custom_agent/README.md) shows how to run a
+custom LangGraph application through NeMo Fabric. The email-phishing example
+keeps each responsibility in a separate directory:
+
+- `consumer/` configures and runs the example with `FabricConfig`.
+- `adapter/` receives `AgentConfig` and manages `start`, `invoke`, and `stop`.
+- `agent/` contains the LangGraph application without NeMo Fabric-specific
+  code.
+
+Start with the model-backed example. You can then vary its model settings, add
+a stdio MCP tool, or enable NeMo Relay telemetry.
 
 ## Harbor
 
