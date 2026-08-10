@@ -8,7 +8,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import shlex
 import sys
 from pathlib import Path
 
@@ -58,11 +57,13 @@ def build_config() -> FabricConfig:
         ),
         runtime=RuntimeConfig(input_schema="text", output_schema="message"),
     )
+
     server = Path(__file__).with_name("calculator_mcp.py")
     config.add_mcp_server(
         "calculator",
         transport="stdio",
-        url=shlex.join([sys.executable, str(server)]),
+        url=sys.executable,
+        args=[str(server)],
         exposure="harness_native",
         blocked_tools=["divide"],
     )
