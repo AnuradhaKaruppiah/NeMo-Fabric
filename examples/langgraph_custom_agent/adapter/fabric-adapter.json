@@ -13,7 +13,9 @@
       "models",
       "models.base_url",
       "models.temperature",
-      "instructions.system"
+      "instructions.system",
+      "mcp",
+      "mcp.tool_filters"
     ]
   },
   "telemetry": {

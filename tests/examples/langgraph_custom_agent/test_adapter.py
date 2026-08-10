@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
+from langchain_core.tools import tool
 from nemo_fabric_adapters.common import lifecycle
 from nemo_fabric_adapter_contract.models import AgentConfig
 
@@ -186,3 +187,61 @@ def test_stop_is_safe_after_partial_start(monkeypatch):
     asyncio.run(runtime.stop())
     assert runtime._graph is None
     assert runtime._runtime_id is None
+
+
+def test_runtime_returns_optional_mcp_link_inspections(monkeypatch):
+    @tool
+    async def inspect_url(url: str) -> str:
+        """Inspect one URL."""
+
+        return json.dumps(
+            {
+                "hostname": "example.invalid",
+                "indicators": ["reserved_test_domain"],
+            }
+        )
+
+    async def resolve(_config):
+        return inspect_url
+
+    monkeypatch.setattr(
+        runtime_module,
+        "resolve_agent_dependencies",
+        lambda _config: AgentDependencies(
+            FakeListChatModel(responses=["The link is suspicious."]),
+            "Explain the assessment.",
+        ),
+    )
+    monkeypatch.setattr(runtime_module, "resolve_url_inspector", resolve)
+    runtime = runtime_module.EmailPhishingRuntime()
+    asyncio.run(
+        runtime.start(
+            {
+                "config": AgentConfig.from_mapping(_config()),
+                "runtime_context": _context("runtime-1", "runtime-start"),
+            }
+        )
+    )
+
+    output = asyncio.run(
+        runtime.invoke(
+            {
+                "runtime_context": _context("runtime-1", "invocation-1"),
+                "request": {"input": "Review https://example.invalid/login."},
+            }
+        )
+    )
+
+    assert output["signals"] == [
+        "credential_request",
+        "external_link",
+        "suspicious_link",
+    ]
+    assert output["link_inspections"] == [
+        {
+            "url": "https://example.invalid/login",
+            "hostname": "example.invalid",
+            "indicators": ["reserved_test_domain"],
+        }
+    ]
+    asyncio.run(runtime.stop())

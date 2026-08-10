@@ -13,6 +13,7 @@ from examples.langgraph_custom_agent.consumer.config import public_config
 from examples.langgraph_custom_agent.consumer.config import with_relay
 from examples.langgraph_custom_agent.consumer.config import with_system_instruction
 from examples.langgraph_custom_agent.consumer.config import with_temperature
+from examples.langgraph_custom_agent.consumer.config import with_url_inspector_mcp
 
 
 def test_public_and_frontier_configs_vary_only_endpoint_and_credential():
@@ -57,3 +58,16 @@ def test_relay_variant_is_additive_and_independent():
     assert relay.relay.observability.atof.enabled is True
     assert relay.relay.observability.atif.enabled is True
     assert relay.runtime.artifacts == "./artifacts"
+
+
+def test_stdio_mcp_variant_is_additive_and_bounded():
+    base = public_config()
+
+    mcp = with_url_inspector_mcp(base)
+
+    assert base.mcp is None
+    server = mcp.mcp.servers["url-inspector"]
+    assert server.transport == "stdio"
+    assert server.exposure == "harness_native"
+    assert server.allowed_tools == ["inspect_url"]
+    assert server.blocked_tools == []

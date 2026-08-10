@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
 
 from nemo_fabric import Fabric
@@ -16,8 +18,10 @@ from nemo_fabric import InstructionsConfig
 from nemo_fabric import MetadataConfig
 from nemo_fabric import ModelConfig
 
+from examples.langgraph_custom_agent.consumer.config import URL_INSPECTOR_SERVER
 from examples.langgraph_custom_agent.consumer.config import public_config
 from examples.langgraph_custom_agent.consumer.config import with_relay
+from examples.langgraph_custom_agent.consumer.config import with_url_inspector_mcp
 
 ROOT = Path(__file__).parents[3]
 ADAPTER_ID = "nvidia.fabric.example.langgraph.email-phishing"
@@ -39,7 +43,7 @@ def _stage_descriptor(tmp_path: Path) -> None:
     )
 
 
-def test_descriptor_freezes_the_minimum_custom_agent_contract():
+def test_descriptor_freezes_the_custom_agent_contract_surface():
     descriptor = json.loads(DESCRIPTOR.read_text(encoding="utf-8"))
 
     assert descriptor == {
@@ -56,6 +60,8 @@ def test_descriptor_freezes_the_minimum_custom_agent_contract():
                 "models.base_url",
                 "models.temperature",
                 "instructions.system",
+                "mcp",
+                "mcp.tool_filters",
             ],
         },
         "telemetry": {
@@ -127,3 +133,27 @@ def test_plan_accepts_only_the_verified_relay_output(tmp_path: Path):
     assert plan["telemetry_plan"]["relay_enabled"] is True
     assert plan["telemetry_plan"]["providers"] == ["relay"]
     assert plan["telemetry_plan"]["adapter_outputs"] == ["atif"]
+
+
+def test_plan_projects_optional_stdio_mcp_to_agent_config(tmp_path: Path):
+    _stage_descriptor(tmp_path)
+
+    plan = (
+        Fabric()
+        .plan(
+            with_url_inspector_mcp(public_config()),
+            base_dir=tmp_path,
+        )
+        .to_mapping()
+    )
+
+    assert plan["agent_config"]["mcp"] == {
+        "servers": {
+            "url-inspector": {
+                "transport": "stdio",
+                "url": os.environ.get("ADAPTER_PYTHON", sys.executable),
+                "args": [str(URL_INSPECTOR_SERVER)],
+                "allowed_tools": ["inspect_url"],
+            }
+        }
+    }

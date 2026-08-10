@@ -17,6 +17,7 @@ from examples.langgraph_custom_agent.consumer.config import public_config
 from examples.langgraph_custom_agent.consumer.config import with_relay
 from examples.langgraph_custom_agent.consumer.config import with_system_instruction
 from examples.langgraph_custom_agent.consumer.config import with_temperature
+from examples.langgraph_custom_agent.consumer.config import with_url_inspector_mcp
 
 
 async def main() -> None:
@@ -25,6 +26,7 @@ async def main() -> None:
     parser.add_argument("--model")
     parser.add_argument("--system-instruction")
     parser.add_argument("--temperature", type=float)
+    parser.add_argument("--mcp", action="store_true")
     parser.add_argument("--relay", action="store_true")
     parser.add_argument("--base-dir", type=Path, default=Path.cwd())
     parser.add_argument("--plan", action="store_true")
@@ -43,6 +45,8 @@ async def main() -> None:
         config = with_system_instruction(config, args.system_instruction)
     if args.temperature is not None:
         config = with_temperature(config, args.temperature)
+    if args.mcp:
+        config = with_url_inspector_mcp(config)
     if args.relay:
         config = with_relay(config)
     fabric = Fabric()

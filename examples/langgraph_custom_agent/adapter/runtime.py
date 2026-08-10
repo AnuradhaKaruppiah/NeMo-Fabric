@@ -16,6 +16,7 @@ from nemo_fabric_adapters.common import lifecycle
 from examples.langgraph_custom_agent.adapter.configuration import (
     resolve_agent_dependencies,
 )
+from examples.langgraph_custom_agent.adapter.mcp import resolve_url_inspector
 from examples.langgraph_custom_agent.adapter.telemetry import observe_invocation
 from examples.langgraph_custom_agent.agent.graph import build_email_phishing_graph
 
@@ -61,9 +62,11 @@ class EmailPhishingRuntime:
 
         context = _runtime_context(payload)
         dependencies = resolve_agent_dependencies(agent_config)
+        url_inspector = await resolve_url_inspector(agent_config)
         graph = build_email_phishing_graph(
             dependencies.model,
             dependencies.system_instruction,
+            url_inspector,
         )
         self._runtime_id = context.runtime_id
         self._base_dir = Path(payload.get("base_dir") or ".").resolve()
@@ -112,6 +115,8 @@ class EmailPhishingRuntime:
             "classification": result["classification"],
             "signals": result["signals"],
         }
+        if "link_inspections" in result:
+            output["link_inspections"] = result["link_inspections"]
         relay_artifacts = telemetry.artifacts()
         if relay_artifacts:
             output["relay_artifacts"] = relay_artifacts

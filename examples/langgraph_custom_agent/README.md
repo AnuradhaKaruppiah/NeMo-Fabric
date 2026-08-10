@@ -13,10 +13,10 @@ lifecycle, and the consumer owns `FabricConfig`.
 The classifier is illustrative, not a production security control.
 
 ```mermaid
-flowchart LR
+flowchart TD
     Consumer["Consumer<br/>FabricConfig"] --> Fabric[NeMo Fabric]
     Fabric -->|"AgentConfig + RuntimeContext"| Adapter["Adapter<br/>start / invoke / stop"]
-    Adapter -->|"native model + instruction"| Agent["Custom LangGraph agent"]
+    Adapter -->|"native dependencies"| Agent["Custom LangGraph agent"]
     Agent -->|"classification + explanation"| Adapter
     Adapter -->|"terminal JSON"| Fabric
     Adapter -. "optional callback" .-> Relay["NeMo Relay"]
@@ -29,9 +29,11 @@ flowchart LR
 | [`consumer/config.py`](consumer/config.py) | Builds northbound configs and independent variations. |
 | [`adapter/fabric-adapter.json`](adapter/fabric-adapter.json) | Declares the exact supported contract surface. |
 | [`adapter/configuration.py`](adapter/configuration.py) | Maps typed `AgentConfig` into a native chat model and instruction. |
+| [`adapter/mcp.py`](adapter/mcp.py) | Optionally maps normalized MCP servers and filters into a native LangChain tool. |
 | [`adapter/runtime.py`](adapter/runtime.py) | Implements one `start`, zero or more `invoke`, and one `stop`. |
 | [`adapter/telemetry.py`](adapter/telemetry.py) | Lazily activates optional Relay telemetry for an invocation. |
 | [`agent/graph.py`](agent/graph.py) | Defines application behavior without importing Fabric or Relay. |
+| [`mcp/url_inspector.py`](mcp/url_inspector.py) | Provides the example's deterministic stdio MCP tool. |
 
 This is a dedicated custom-agent adapter: selecting its `adapter_id` selects
 this email analyzer. It is not a generic loader for arbitrary LangGraph agents
@@ -49,16 +51,20 @@ fields the adapter applies:
     "models",
     "models.base_url",
     "models.temperature",
-    "instructions.system"
+    "instructions.system",
+    "mcp",
+    "mcp.tool_filters"
   ]
 }
 ```
 
-Fabric projects those values from `FabricConfig` into `AgentConfig`. The
-adapter resolves `models.default` into `ChatOpenAI`, applies the normalized
-system instruction, compiles one graph during `start`, and retains it for
-ordered invocations. The custom graph receives native dependencies; it does
-not parse either Fabric configuration type.
+The minimum path configures only a model and instruction; MCP is an optional
+extension described below. Fabric projects configured values from
+`FabricConfig` into `AgentConfig`. The adapter resolves `models.default` into
+`ChatOpenAI`, applies the normalized system instruction, compiles one graph
+during `start`, and retains it for ordered invocations. The custom graph
+receives native dependencies; it does not parse either Fabric configuration
+type.
 
 The current local-host binding still carries the invocation request and result
 in JSON envelopes. That unavoidable extraction stays at the edge of
@@ -85,6 +91,7 @@ Every variation returns an independent `FabricConfig`:
 | Endpoint | `public_config()` / `frontier_config()` | Credential-variable name and `models.default.base_url` |
 | Instruction | `with_system_instruction(...)` or `--system-instruction` | `instructions.system` |
 | Temperature | `with_temperature(...)` or `--temperature` | `models.default.temperature` |
+| stdio MCP | `with_url_inspector_mcp(...)` or `--mcp` | `mcp.servers` and per-server tool policy |
 
 For example:
 
@@ -97,6 +104,31 @@ config = with_temperature(config, 0.2)
 The descriptor bounds variation. Unsupported providers, extra model roles,
 model-specific settings, missing endpoints, and missing credential variables
 fail explicitly rather than being ignored.
+
+## Optional stdio MCP Tool
+
+`with_url_inspector_mcp(config)` adds a deterministic URL-inspection server as
+an optional capability beyond the minimum adapter surface:
+
+```mermaid
+flowchart TD
+    FabricConfig["FabricConfig.mcp"] --> AgentConfig["AgentConfig.mcp"]
+    AgentConfig --> Adapter["adapter/mcp.py"]
+    Adapter --> Client["MultiServerMCPClient"]
+    Client -->|"stdio"| Server["URL inspector MCP server"]
+    Client -->|"native BaseTool"| Graph["Custom LangGraph"]
+```
+
+The adapter validates stdio transport, converts normalized server settings
+through the official LangChain MCP adapter, and applies each server's allow
+and block lists. The graph receives only the resulting native `BaseTool`; it
+does not know about Fabric or MCP configuration. The tool checks URL syntax
+locally and makes no network requests. Startup fails if the configured policy
+does not expose exactly one `inspect_url` tool.
+
+Add `--mcp` to a live command to exercise this path. MCP sessions and stdio
+processes are scoped to discovery or tool calls by `MultiServerMCPClient`; the
+Fabric runtime retains the compiled graph and native tool between invocations.
 
 ## Optional Relay Telemetry
 
@@ -117,7 +149,7 @@ Until this example becomes a package, stage its descriptor under a development
 adapter directory and make the repository importable:
 
 ```bash
-uv sync --group adapter-tests
+uv sync --group langgraph-example
 export FABRIC_LANGGRAPH_EXAMPLE="$PWD/.tmp/langgraph-custom-agent"
 mkdir -p "$FABRIC_LANGGRAPH_EXAMPLE/adapters/langgraph-email-phishing"
 cp examples/langgraph_custom_agent/adapter/fabric-adapter.json \
@@ -156,6 +188,10 @@ the endpoint exposes a different authorized model ID.
 Add `--relay` to either live command to produce correlated ATOF and ATIF under
 `$FABRIC_LANGGRAPH_EXAMPLE/artifacts/relay/`.
 
+Add `--mcp` to include URL inspection before classification. The two optional
+paths compose, so `--mcp --relay` traces the MCP-backed graph node as well as
+the model-backed explanation.
+
 ## Validate
 
 ```bash
@@ -164,9 +200,10 @@ Add `--relay` to either live command to produce correlated ATOF and ATIF under
 
 The focused tests cover descriptor projection, application behavior,
 configuration mapping and rejection, repeated lifecycle invocation, cleanup,
-configuration independence, Relay-off optionality, and correlated Relay
-artifacts.
+configuration independence, normalized MCP projection and filtering,
+Relay-off optionality, and correlated Relay artifacts.
 
-The example intentionally omits generic workflow loading, tools, MCP, skills,
-checkpointing, cancellation, resume, updates, and native streaming. Adding a
-dormant hook for any of those would make the minimum adapter harder to read.
+The example intentionally omits generic workflow loading, named tools, skills,
+checkpointing, cancellation, resume, updates, and native streaming. The stdio
+MCP path is kept optional so the required adapter lifecycle remains easy to
+identify.

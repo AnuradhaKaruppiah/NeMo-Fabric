@@ -42,8 +42,8 @@ just build-all
 [`langgraph_custom_agent`](langgraph_custom_agent/README.md) separates a small
 application-defined LangGraph, its dedicated adapter, and consumer-owned
 `FabricConfig`. It builds from the required lifecycle to normalized model and
-instruction variations, then adds optional Relay telemetry without adding an
-adapter streaming API.
+instruction variations, then adds an optional stdio MCP tool and Relay
+telemetry without expanding the required lifecycle.
 
 ## Harbor
 
