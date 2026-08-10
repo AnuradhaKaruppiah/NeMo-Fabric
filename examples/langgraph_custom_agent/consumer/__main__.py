@@ -31,12 +31,8 @@ async def main() -> None:
     )
     args = parser.parse_args()
 
-    if args.variant == "frontier":
-        if not args.model:
-            parser.error("--model is required with --variant frontier")
-        config = frontier_config(args.model)
-    else:
-        config = public_config(args.model) if args.model else public_config()
+    config_factory = frontier_config if args.variant == "frontier" else public_config
+    config = config_factory(args.model) if args.model else config_factory()
     fabric = Fabric()
     output = (
         fabric.plan(config, base_dir=args.base_dir)

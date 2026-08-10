@@ -16,7 +16,7 @@ from nemo_fabric import ModelConfig
 from nemo_fabric import RuntimeConfig
 
 ADAPTER_ID = "nvidia.fabric.example.langgraph.email-phishing"
-PUBLIC_DEFAULT_MODEL = "nvidia/nemotron-3-nano-30b-a3b"
+DEFAULT_MODEL = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
 PUBLIC_BASE_URL = "https://integrate.api.nvidia.com/v1"
 
 
@@ -51,7 +51,7 @@ def _config(*, model: str, api_key_env: str, base_url: str) -> FabricConfig:
     )
 
 
-def public_config(model: str = PUBLIC_DEFAULT_MODEL) -> FabricConfig:
+def public_config(model: str = DEFAULT_MODEL) -> FabricConfig:
     """Use the public NVIDIA API Catalog endpoint."""
 
     return _config(
@@ -61,7 +61,7 @@ def public_config(model: str = PUBLIC_DEFAULT_MODEL) -> FabricConfig:
     )
 
 
-def frontier_config(model: str) -> FabricConfig:
+def frontier_config(model: str = DEFAULT_MODEL) -> FabricConfig:
     """Use an internal NVIDIA Frontier OpenAI-compatible endpoint."""
 
     base_url = os.environ.get("NVIDIA_FRONTIER_BASE_URL")
