@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from langgraph.graph.state import CompiledStateGraph
@@ -15,6 +16,7 @@ from nemo_fabric_adapters.common import lifecycle
 from examples.langgraph_custom_agent.adapter.configuration import (
     resolve_agent_dependencies,
 )
+from examples.langgraph_custom_agent.adapter.telemetry import observe_invocation
 from examples.langgraph_custom_agent.agent.graph import build_email_phishing_graph
 
 
@@ -39,6 +41,9 @@ class EmailPhishingRuntime:
 
     def __init__(self) -> None:
         self._runtime_id: str | None = None
+        self._base_dir: Path | None = None
+        self._agent_name: str | None = None
+        self._model_name: str | None = None
         self._graph: CompiledStateGraph | None = None
 
     async def start(self, payload: dict[str, Any]) -> None:
@@ -61,10 +66,19 @@ class EmailPhishingRuntime:
             dependencies.system_instruction,
         )
         self._runtime_id = context.runtime_id
+        self._base_dir = Path(payload.get("base_dir") or ".").resolve()
+        self._agent_name = str(payload.get("agent_name") or "email-phishing-agent")
+        self._model_name = agent_config.models["default"].model
         self._graph = graph
 
     async def invoke(self, payload: dict[str, Any]) -> dict[str, Any]:
-        if self._graph is None or self._runtime_id is None:
+        if (
+            self._graph is None
+            or self._runtime_id is None
+            or self._base_dir is None
+            or self._agent_name is None
+            or self._model_name is None
+        ):
             raise lifecycle.LifecycleError(
                 "email_phishing_runtime_not_started",
                 "The email-phishing runtime is not started",
@@ -83,15 +97,31 @@ class EmailPhishingRuntime:
                 "The email-phishing adapter requires a non-empty text input",
             )
 
-        result = await self._graph.ainvoke({"email": email})
-        return {
+        async with observe_invocation(
+            context,
+            base_dir=self._base_dir,
+            agent_name=self._agent_name,
+            model_name=self._model_name,
+        ) as telemetry:
+            result = await self._graph.ainvoke(
+                {"email": email},
+                config=telemetry.runnable_config,
+            )
+        output = {
             "response": result["explanation"],
             "classification": result["classification"],
             "signals": result["signals"],
         }
+        relay_artifacts = telemetry.artifacts()
+        if relay_artifacts:
+            output["relay_artifacts"] = relay_artifacts
+        return output
 
     async def stop(self) -> None:
         self._runtime_id = None
+        self._base_dir = None
+        self._agent_name = None
+        self._model_name = None
         self._graph = None
 
 

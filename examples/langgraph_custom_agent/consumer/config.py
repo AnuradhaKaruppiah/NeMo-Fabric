@@ -13,6 +13,10 @@ from nemo_fabric import InstructionConfig
 from nemo_fabric import InstructionsConfig
 from nemo_fabric import MetadataConfig
 from nemo_fabric import ModelConfig
+from nemo_fabric import RelayAtifConfig
+from nemo_fabric import RelayAtofConfig
+from nemo_fabric import RelayAtofFileSinkConfig
+from nemo_fabric import RelayObservabilityConfig
 from nemo_fabric import RuntimeConfig
 
 ADAPTER_ID = "nvidia.fabric.example.langgraph.email-phishing"
@@ -72,3 +76,51 @@ def frontier_config(model: str = DEFAULT_MODEL) -> FabricConfig:
         api_key_env="NVIDIA_FRONTIER_API_KEY",
         base_url=base_url,
     )
+
+
+def with_system_instruction(base: FabricConfig, content: str) -> FabricConfig:
+    """Return an independent config with a different normalized instruction."""
+
+    config = base.model_copy(deep=True)
+    config.instructions = InstructionsConfig(
+        system=InstructionConfig(content=content)
+    )
+    return config
+
+
+def with_temperature(base: FabricConfig, temperature: float) -> FabricConfig:
+    """Return an independent config with a different model temperature."""
+
+    config = base.model_copy(deep=True)
+    config.models["default"].temperature = temperature
+    return config
+
+
+def with_relay(base: FabricConfig) -> FabricConfig:
+    """Return an independent config with Relay ATOF and ATIF enabled."""
+
+    config = base.model_copy(deep=True)
+    config.runtime.artifacts = "./artifacts"
+    config.enable_relay(
+        output_dir="./artifacts/relay",
+        observability=RelayObservabilityConfig(
+            atof=RelayAtofConfig(
+                enabled=True,
+                sinks=[
+                    RelayAtofFileSinkConfig(
+                        output_directory="./artifacts/relay",
+                        filename="events.atof.jsonl",
+                        mode="overwrite",
+                    )
+                ],
+            ),
+            atif=RelayAtifConfig(
+                enabled=True,
+                output_directory="./artifacts/relay",
+                filename_template="trajectory-{session_id}.atif.json",
+                agent_name="langgraph-email-phishing",
+                agent_version="fabric-sdk-example",
+            ),
+        ),
+    )
+    return config

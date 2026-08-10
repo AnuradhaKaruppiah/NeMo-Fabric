@@ -16,6 +16,9 @@ from nemo_fabric import InstructionsConfig
 from nemo_fabric import MetadataConfig
 from nemo_fabric import ModelConfig
 
+from examples.langgraph_custom_agent.consumer.config import public_config
+from examples.langgraph_custom_agent.consumer.config import with_relay
+
 ROOT = Path(__file__).parents[3]
 ADAPTER_ID = "nvidia.fabric.example.langgraph.email-phishing"
 DESCRIPTOR = (
@@ -25,6 +28,15 @@ DESCRIPTOR = (
     / "adapter"
     / "fabric-adapter.json"
 )
+
+
+def _stage_descriptor(tmp_path: Path) -> None:
+    staged = tmp_path / "adapters" / "langgraph-email-phishing"
+    staged.mkdir(parents=True)
+    (staged / "fabric-adapter.json").write_text(
+        DESCRIPTOR.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
 
 
 def test_descriptor_freezes_the_minimum_custom_agent_contract():
@@ -46,6 +58,14 @@ def test_descriptor_freezes_the_minimum_custom_agent_contract():
                 "instructions.system",
             ],
         },
+        "telemetry": {
+            "providers": {
+                "relay": {
+                    "outputs": ["atif"],
+                    "integration_modes": ["sdk"],
+                }
+            }
+        },
         "capabilities": {
             "cancellation": False,
             "service": False,
@@ -56,12 +76,7 @@ def test_descriptor_freezes_the_minimum_custom_agent_contract():
 
 
 def test_plan_projects_only_the_advertised_agent_config(tmp_path: Path):
-    staged = tmp_path / "adapters" / "langgraph-email-phishing"
-    staged.mkdir(parents=True)
-    (staged / "fabric-adapter.json").write_text(
-        DESCRIPTOR.read_text(encoding="utf-8"),
-        encoding="utf-8",
-    )
+    _stage_descriptor(tmp_path)
     config = FabricConfig(
         metadata=MetadataConfig(name="langgraph-email-phishing"),
         harness=HarnessConfig(
@@ -102,3 +117,13 @@ def test_plan_projects_only_the_advertised_agent_config(tmp_path: Path):
             }
         },
     }
+
+
+def test_plan_accepts_only_the_verified_relay_output(tmp_path: Path):
+    _stage_descriptor(tmp_path)
+
+    plan = Fabric().plan(with_relay(public_config()), base_dir=tmp_path).to_mapping()
+
+    assert plan["telemetry_plan"]["relay_enabled"] is True
+    assert plan["telemetry_plan"]["providers"] == ["relay"]
+    assert plan["telemetry_plan"]["adapter_outputs"] == ["atif"]

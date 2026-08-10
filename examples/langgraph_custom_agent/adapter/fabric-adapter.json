@@ -16,6 +16,14 @@
       "instructions.system"
     ]
   },
+  "telemetry": {
+    "providers": {
+      "relay": {
+        "outputs": ["atif"],
+        "integration_modes": ["sdk"]
+      }
+    }
+  },
   "capabilities": {
     "cancellation": false,
     "service": false,

@@ -6,10 +6,20 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
 from examples.langgraph_custom_agent.agent.graph import build_email_phishing_graph
+
+GRAPH_SOURCE = Path(__file__).parents[3] / "examples/langgraph_custom_agent/agent/graph.py"
+
+
+def test_application_graph_does_not_depend_on_fabric_or_relay():
+    source = GRAPH_SOURCE.read_text(encoding="utf-8")
+
+    assert "nemo_fabric" not in source
+    assert "nemo_relay" not in source
 
 
 def test_graph_keeps_classification_deterministic_and_uses_model_for_explanation():

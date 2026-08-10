@@ -14,12 +14,18 @@ from nemo_fabric import Fabric
 
 from examples.langgraph_custom_agent.consumer.config import frontier_config
 from examples.langgraph_custom_agent.consumer.config import public_config
+from examples.langgraph_custom_agent.consumer.config import with_relay
+from examples.langgraph_custom_agent.consumer.config import with_system_instruction
+from examples.langgraph_custom_agent.consumer.config import with_temperature
 
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--variant", choices=("public", "frontier"), default="public")
     parser.add_argument("--model")
+    parser.add_argument("--system-instruction")
+    parser.add_argument("--temperature", type=float)
+    parser.add_argument("--relay", action="store_true")
     parser.add_argument("--base-dir", type=Path, default=Path.cwd())
     parser.add_argument("--plan", action="store_true")
     parser.add_argument(
@@ -33,6 +39,12 @@ async def main() -> None:
 
     config_factory = frontier_config if args.variant == "frontier" else public_config
     config = config_factory(args.model) if args.model else config_factory()
+    if args.system_instruction:
+        config = with_system_instruction(config, args.system_instruction)
+    if args.temperature is not None:
+        config = with_temperature(config, args.temperature)
+    if args.relay:
+        config = with_relay(config)
     fabric = Fabric()
     output = (
         fabric.plan(config, base_dir=args.base_dir)

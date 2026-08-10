@@ -37,6 +37,14 @@ just build-all
   --input "Reply with exactly: NeMo Fabric works"
 ```
 
+## LangGraph custom agent
+
+[`langgraph_custom_agent`](langgraph_custom_agent/README.md) separates a small
+application-defined LangGraph, its dedicated adapter, and consumer-owned
+`FabricConfig`. It builds from the required lifecycle to normalized model and
+instruction variations, then adds optional Relay telemetry without adding an
+adapter streaming API.
+
 ## Harbor
 
 [`harbor`](harbor/README.md) demonstrates how to evaluate NeMo Fabric agents with
