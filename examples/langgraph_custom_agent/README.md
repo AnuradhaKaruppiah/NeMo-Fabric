@@ -66,10 +66,9 @@ during `start`, and retains it for ordered invocations. The custom graph
 receives native dependencies; it does not parse either Fabric configuration
 type.
 
-The current local-host binding still carries the invocation request and result
-in JSON envelopes. That unavoidable extraction stays at the edge of
-`adapter/runtime.py`; the preview `AgentRunRequest` and `AgentRunResult` types
-are not emitted as negotiated transport structures.
+The local-host lifecycle transport carries invocation requests and results in
+JSON envelopes. That extraction stays at the edge of `adapter/runtime.py`;
+`AgentRunRequest` and `AgentRunResult` are not negotiated by this transport.
 
 A successful terminal output is deliberately small:
 
@@ -145,7 +144,7 @@ runs the ordinary adapter `invoke` operation.
 
 ## Run the Source Example
 
-Until this example becomes a package, stage its descriptor under a development
+Because this is a source-only example, stage its descriptor under a development
 adapter directory and make the repository importable:
 
 ```bash

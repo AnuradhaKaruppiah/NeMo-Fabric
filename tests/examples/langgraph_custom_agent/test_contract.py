@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Phase 0 contract for the dedicated LangGraph custom-agent example."""
+"""Descriptor and planning contract for the LangGraph custom-agent example."""
 
 from __future__ import annotations
 
