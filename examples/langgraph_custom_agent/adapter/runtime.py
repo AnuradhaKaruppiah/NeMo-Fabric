@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,23 @@ from examples.langgraph_custom_agent.adapter.configuration import (
 from examples.langgraph_custom_agent.adapter.mcp import resolve_url_inspector
 from examples.langgraph_custom_agent.adapter.telemetry import observe_invocation
 from examples.langgraph_custom_agent.agent.graph import build_email_phishing_graph
+
+LOGGER = logging.getLogger(__name__)
+
+
+def _invocation_failure() -> dict[str, Any]:
+    """Return a safe terminal failure without invalidating the runtime."""
+
+    return {
+        "response": None,
+        "completed": False,
+        "failed": True,
+        "error": {
+            "code": "email_phishing_invoke_failed",
+            "message": "The email-phishing agent invocation failed",
+            "retryable": False,
+        },
+    }
 
 
 def main() -> None:
@@ -108,16 +126,23 @@ class EmailPhishingRuntime:
                 "The email-phishing adapter requires a non-empty text input",
             )
 
-        async with observe_invocation(
-            context,
-            base_dir=self._base_dir,
-            agent_name=self._agent_name,
-            model_name=self._model_name,
-        ) as telemetry:
-            result = await self._graph.ainvoke(
-                {"email": email},
-                config=telemetry.runnable_config,
+        try:
+            async with observe_invocation(
+                context,
+                base_dir=self._base_dir,
+                agent_name=self._agent_name,
+                model_name=self._model_name,
+            ) as telemetry:
+                result = await self._graph.ainvoke(
+                    {"email": email},
+                    config=telemetry.runnable_config,
+                )
+        except Exception as error:
+            LOGGER.error(
+                "Email-phishing invocation failed (error_type=%s)",
+                type(error).__name__,
             )
+            return _invocation_failure()
         output = {
             "response": result["explanation"],
             "classification": result["classification"],

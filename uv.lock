@@ -2238,7 +2238,7 @@ langgraph-example = [
     { name = "langchain-mcp-adapters", specifier = ">=0.1,<0.3.0" },
     { name = "langchain-openai", specifier = ">=0.3,<2.0" },
     { name = "langgraph", specifier = ">=1.2,<2.0" },
-    { name = "mcp", specifier = ">=1.2" },
+    { name = "mcp", specifier = ">=1.10" },
 ]
 package = [
     { name = "maturin", marker = "sys_platform != 'linux'", specifier = ">=1.9.3,<2.0" },

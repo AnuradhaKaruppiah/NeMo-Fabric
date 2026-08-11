@@ -95,6 +95,105 @@ def test_lifecycle_host_starts_once_invokes_repeatedly_and_stops(
     }
 
 
+def test_invocation_failure_does_not_invalidate_runtime(
+    monkeypatch,
+    runtime_context_factory,
+    agent_config_mapping,
+    lifecycle_request_factory,
+):
+    class FailThenSucceedGraph:
+        def __init__(self):
+            self.calls = 0
+
+        async def ainvoke(self, _input, *, config):
+            self.calls += 1
+            if self.calls == 1:
+                raise TimeoutError("provider details must not escape")
+            return {
+                "explanation": "second invocation succeeded",
+                "classification": "benign",
+                "signals": [],
+            }
+
+    graph = FailThenSucceedGraph()
+    monkeypatch.setattr(
+        runtime_module,
+        "resolve_agent_dependencies",
+        lambda _config: AgentDependencies(
+            FakeListChatModel(responses=["unused"]),
+            "Explain the assessment.",
+        ),
+    )
+    monkeypatch.setattr(
+        runtime_module,
+        "build_email_phishing_graph",
+        lambda *_args: graph,
+    )
+    runtime_id = "runtime-1"
+    requests = [
+        lifecycle_request_factory(
+            "start",
+            {
+                "config": agent_config_mapping,
+                "runtime_context": runtime_context_factory(
+                    runtime_id, "runtime-start"
+                ),
+            },
+        ),
+        lifecycle_request_factory(
+            "invoke",
+            {
+                "runtime_context": runtime_context_factory(
+                    runtime_id, "invocation-1"
+                ),
+                "request": {"input": "first"},
+            },
+        ),
+        lifecycle_request_factory(
+            "invoke",
+            {
+                "runtime_context": runtime_context_factory(
+                    runtime_id, "invocation-2"
+                ),
+                "request": {"input": "second"},
+            },
+        ),
+        lifecycle_request_factory("stop", {"runtime_id": runtime_id}),
+    ]
+    input_stream = io.StringIO(
+        "".join(f"{json.dumps(request)}\n" for request in requests)
+    )
+    output_stream = io.StringIO()
+
+    lifecycle.serve(
+        runtime_module.EmailPhishingRuntime,
+        config_loader=AgentConfig.from_mapping,
+        input_stream=input_stream,
+        output_stream=output_stream,
+    )
+
+    responses = [json.loads(line) for line in output_stream.getvalue().splitlines()]
+    assert responses[1]["outcome"] == {
+        "status": "succeeded",
+        "output": {
+            "response": None,
+            "completed": False,
+            "failed": True,
+            "error": {
+                "code": "email_phishing_invoke_failed",
+                "message": "The email-phishing agent invocation failed",
+                "retryable": False,
+            },
+        },
+    }
+    assert responses[2]["outcome"]["output"] == {
+        "response": "second invocation succeeded",
+        "classification": "benign",
+        "signals": [],
+    }
+    assert graph.calls == 2
+
+
 def test_runtime_rejects_invoke_before_start(runtime_context_factory):
     runtime = runtime_module.EmailPhishingRuntime()
 

@@ -3,8 +3,6 @@
 
 """Small deterministic stdio MCP server for the phishing example."""
 
-from __future__ import annotations
-
 import ipaddress
 from typing import TypedDict
 from urllib.parse import urlparse
@@ -22,7 +20,7 @@ class UrlInspection(TypedDict):
 server = FastMCP("email-link-inspector", log_level="ERROR")
 
 
-@server.tool(structured_output=True)
+@server.tool()
 def inspect_url(url: str) -> UrlInspection:
     """Inspect URL syntax for a few deterministic phishing indicators."""
 
