@@ -17,7 +17,11 @@ from examples.langgraph_custom_agent.adapter.telemetry import observe_invocation
 from examples.langgraph_custom_agent.agent.graph import build_email_phishing_graph
 
 
-def _context(config_path: Path | None = None) -> RuntimeContext:
+def _context(
+    config_path: Path | None = None,
+    *,
+    invocation_id: str = "invocation-1",
+) -> RuntimeContext:
     telemetry = None
     if config_path is not None:
         telemetry = {
@@ -28,8 +32,8 @@ def _context(config_path: Path | None = None) -> RuntimeContext:
     return RuntimeContext.from_mapping(
         {
             "runtime_id": "runtime-1",
-            "invocation_id": "invocation-1",
-            "request_id": "request-1",
+            "invocation_id": invocation_id,
+            "request_id": f"request-{invocation_id}",
             "environment": {
                 "environment_id": "environment-1",
                 "provider": "local",
@@ -89,7 +93,7 @@ def test_relay_observes_graph_and_model_backed_node(tmp_path):
                                                 "type": "file",
                                                 "output_directory": "relay",
                                                 "filename": "events.atof.jsonl",
-                                                "mode": "overwrite",
+                                                "mode": "append",
                                             }
                                         ],
                                     },
@@ -110,13 +114,18 @@ def test_relay_observes_graph_and_model_backed_node(tmp_path):
         encoding="utf-8",
     )
     graph = build_email_phishing_graph(
-        FakeListChatModel(responses=["The fixed assessment is phishing."]),
+        FakeListChatModel(
+            responses=[
+                "The first fixed assessment is phishing.",
+                "The second fixed assessment is phishing.",
+            ]
+        ),
         "Explain the fixed assessment.",
     )
 
-    async def run() -> list[dict[str, str]]:
+    async def run(invocation_id: str) -> list[dict[str, str]]:
         async with observe_invocation(
-            _context(config_path),
+            _context(config_path, invocation_id=invocation_id),
             base_dir=tmp_path,
             agent_name="email-phishing",
             model_name="test-model",
@@ -135,7 +144,8 @@ def test_relay_observes_graph_and_model_backed_node(tmp_path):
         ] == "test-model"
         return telemetry.artifacts()
 
-    artifacts = asyncio.run(run())
+    artifacts = asyncio.run(run("invocation-1"))
+    asyncio.run(run("invocation-2"))
 
     assert {artifact["kind"] for artifact in artifacts} == {"atof", "atif"}
     atof_path = Path(
@@ -147,8 +157,8 @@ def test_relay_observes_graph_and_model_backed_node(tmp_path):
         event.get("metadata", {}).get("langgraph_node") == "explain_assessment"
         for event in events
     )
-    assert any(
+    invocation_ids = {
         event.get("metadata", {}).get("nemo_fabric_invocation_id")
-        == "invocation-1"
         for event in events
-    )
+    }
+    assert {"invocation-1", "invocation-2"}.issubset(invocation_ids)

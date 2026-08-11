@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Minimum Fabric lifecycle for the email-phishing custom agent."""
+"""Minimum NeMo Fabric lifecycle for the email-phishing custom agent."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ def _runtime_context(payload: dict[str, Any]) -> RuntimeContext:
 
 
 class EmailPhishingRuntime:
-    """One compiled email-phishing graph owned by one Fabric runtime."""
+    """One compiled email-phishing graph owned by one NeMo Fabric runtime."""
 
     def __init__(self) -> None:
         self._runtime_id: str | None = None

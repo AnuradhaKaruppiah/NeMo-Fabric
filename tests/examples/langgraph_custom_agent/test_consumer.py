@@ -5,8 +5,6 @@
 
 from __future__ import annotations
 
-import os
-
 from examples.langgraph_custom_agent.consumer.config import DEFAULT_MODEL
 from examples.langgraph_custom_agent.consumer.config import frontier_config
 from examples.langgraph_custom_agent.consumer.config import public_config
@@ -16,8 +14,11 @@ from examples.langgraph_custom_agent.consumer.config import with_temperature
 from examples.langgraph_custom_agent.consumer.config import with_url_inspector_mcp
 
 
-def test_public_and_frontier_configs_vary_only_endpoint_and_credential():
-    os.environ["NVIDIA_FRONTIER_BASE_URL"] = "https://frontier.example/v1"
+def test_public_and_frontier_configs_vary_only_endpoint_and_credential(monkeypatch):
+    monkeypatch.setenv(
+        "NVIDIA_FRONTIER_BASE_URL",
+        "https://frontier.example/v1",
+    )
 
     public = public_config()
     frontier = frontier_config()

@@ -57,7 +57,15 @@ def extract_signals(state: EmailAnalysisState) -> dict[str, list[str]]:
         signals.append("credential_request")
     if "http://" in email or "https://" in email:
         signals.append("external_link")
-    if any(term in email for term in ("account locked", "account suspended")):
+    if any(
+        term in email
+        for term in (
+            "account locked",
+            "account is locked",
+            "account suspended",
+            "account is suspended",
+        )
+    ):
         signals.append("account_threat")
     return {"signals": signals}
 

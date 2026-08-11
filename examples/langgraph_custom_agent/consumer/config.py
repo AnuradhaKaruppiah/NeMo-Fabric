@@ -130,7 +130,7 @@ def with_relay(base: FabricConfig) -> FabricConfig:
                     RelayAtofFileSinkConfig(
                         output_directory="./artifacts/relay",
                         filename="events.atof.jsonl",
-                        mode="overwrite",
+                        mode="append",
                     )
                 ],
             ),

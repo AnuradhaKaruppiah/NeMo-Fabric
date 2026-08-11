@@ -15,11 +15,18 @@ from nemo_fabric_adapters.common import lifecycle
 URL_INSPECTOR_TOOL = "inspect_url"
 
 
-def _config_error(field: str, message: str) -> lifecycle.LifecycleError:
+def _config_error(
+    field: str,
+    message: str,
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> lifecycle.LifecycleError:
+    details: dict[str, Any] = {"field": field}
+    details.update(metadata or {})
     return lifecycle.LifecycleError(
         "email_phishing_invalid_mcp",
         message,
-        metadata={"field": field},
+        metadata=details,
     )
 
 
@@ -81,7 +88,12 @@ async def resolve_url_inspector(agent_config: AgentConfig) -> BaseTool | None:
     except Exception as error:
         raise _config_error(
             "mcp.servers",
-            "The email-phishing adapter could not discover the configured MCP tools",
+            "The email-phishing adapter could not discover the configured MCP tools; "
+            "verify each stdio command, its arguments, and server startup",
+            metadata={
+                "cause_type": type(error).__name__,
+                "servers": sorted(connections),
+            },
         ) from error
 
     selected: list[BaseTool] = []

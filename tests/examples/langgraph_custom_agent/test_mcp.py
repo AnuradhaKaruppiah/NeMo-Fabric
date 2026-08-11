@@ -116,6 +116,26 @@ def test_resolver_rejects_non_stdio_transport():
     assert error.value.metadata == {"field": "mcp.servers.links.transport"}
 
 
+def test_resolver_reports_discovery_context_without_exposing_raw_error_details(
+    monkeypatch,
+):
+    async def fail_discovery(_connections):
+        raise FileNotFoundError("secret command argument")
+
+    monkeypatch.setattr(mcp_module, "_discover_tools", fail_discovery)
+
+    with pytest.raises(lifecycle.LifecycleError) as error:
+        asyncio.run(mcp_module.resolve_url_inspector(_config()))
+
+    assert error.value.metadata == {
+        "field": "mcp.servers",
+        "cause_type": "FileNotFoundError",
+        "servers": ["links"],
+    }
+    assert "secret command argument" not in error.value.message
+    assert "verify each stdio command" in error.value.message
+
+
 def test_example_url_inspector_is_deterministic():
     assert inspect_url("https://example.invalid/login") == {
         "hostname": "example.invalid",

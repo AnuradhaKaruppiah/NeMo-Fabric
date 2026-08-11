@@ -37,7 +37,7 @@ just build-all
   --input "Reply with exactly: NeMo Fabric works"
 ```
 
-## LangGraph custom agent
+## LangGraph Custom Agent
 
 [`langgraph_custom_agent`](langgraph_custom_agent/README.md) demonstrates how
 to build a dedicated NeMo Fabric adapter for a custom agent. It uses a small

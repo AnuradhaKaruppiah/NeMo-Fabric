@@ -80,15 +80,15 @@ def resolve_agent_dependencies(agent_config: AgentConfig) -> AgentDependencies:
             f"Credential environment variable {api_key_env!r} is not set",
         )
 
-    model_kwargs: dict[str, Any] = {
+    chat_model_options: dict[str, Any] = {
         "model": model_config.model,
         "api_key": api_key,
         "timeout": MODEL_REQUEST_TIMEOUT_SECONDS,
     }
     if model_config.base_url is not None:
-        model_kwargs["base_url"] = model_config.base_url
+        chat_model_options["base_url"] = model_config.base_url
     if model_config.temperature is not None:
-        model_kwargs["temperature"] = model_config.temperature
+        chat_model_options["temperature"] = model_config.temperature
 
     system_instruction = DEFAULT_SYSTEM_INSTRUCTION
     if agent_config.instructions is not None:
@@ -97,6 +97,6 @@ def resolve_agent_dependencies(agent_config: AgentConfig) -> AgentDependencies:
             system_instruction = system.content
 
     return AgentDependencies(
-        model=ChatOpenAI(**model_kwargs),
+        model=ChatOpenAI(**chat_model_options),
         system_instruction=system_instruction,
     )

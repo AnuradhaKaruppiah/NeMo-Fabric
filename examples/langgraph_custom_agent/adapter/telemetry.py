@@ -112,7 +112,7 @@ async def observe_invocation(
     agent_name: str,
     model_name: str,
 ) -> AsyncIterator[InvocationTelemetry]:
-    """Activate Relay only when Fabric supplies an enabled telemetry context."""
+    """Activate Relay when NeMo Fabric supplies an enabled telemetry context."""
 
     telemetry = context.telemetry
     if telemetry is None or not telemetry.relay_enabled:

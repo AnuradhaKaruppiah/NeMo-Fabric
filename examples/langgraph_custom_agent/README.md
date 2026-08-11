@@ -5,13 +5,12 @@ SPDX-License-Identifier: Apache-2.0
 
 # NVIDIA NeMo Fabric LangGraph Custom Agent Adapter
 
-This source-only example implements an email-phishing analyzer as a custom
-LangGraph agent with its own NeMo Fabric adapter. It is intentionally small:
-the graph owns application behavior, the adapter owns translation and
-lifecycle, and the consumer owns `FabricConfig`.
+This source-only example uses a small email-phishing analyzer to demonstrate
+the NeMo Fabric adapter contract for a custom LangGraph agent. The graph owns
+application behavior, the adapter owns translation and lifecycle, and the
+consumer owns `FabricConfig`.
 
-The phishing analyzer is a small application used to demonstrate the adapter
-contract.
+The following diagram shows those ownership boundaries:
 
 ```mermaid
 flowchart TD
@@ -23,9 +22,8 @@ flowchart TD
     Adapter -. "optional callback" .-> Relay["NeMo Relay"]
 ```
 
-The example separates consumer-owned configuration, adapter-owned translation
-and lifecycle, and an application-owned LangGraph agent that has no dependency
-on Fabric or Relay.
+The application-owned LangGraph agent has no dependency on NeMo Fabric or NeMo
+Relay.
 
 This is a dedicated custom-agent adapter: selecting its `adapter_id` selects
 this email analyzer. It is not a generic loader for arbitrary LangGraph agents
@@ -51,12 +49,12 @@ fields the adapter applies:
 ```
 
 The minimum path configures only a model and instruction; MCP is an optional
-extension described below. Fabric projects configured values from
+extension described below. NeMo Fabric projects configured values from
 `FabricConfig` into `AgentConfig`. The adapter resolves `models.default` into
 `ChatOpenAI`, applies the normalized system instruction, compiles one graph
 during `start`, and retains it for ordered invocations. The custom graph
-receives native dependencies; it does not parse either Fabric configuration
-type.
+receives native dependencies; it does not parse either NeMo Fabric
+configuration type.
 
 The local-host lifecycle transport carries invocation requests and results in
 JSON envelopes. That extraction stays at the edge of `adapter/runtime.py`;
@@ -68,7 +66,12 @@ A successful terminal output is deliberately small:
 {
   "classification": "phishing",
   "response": "The email combines several phishing signals.",
-  "signals": ["urgency", "credential_request", "external_link"]
+  "signals": [
+    "urgency",
+    "credential_request",
+    "external_link",
+    "account_threat"
+  ]
 }
 ```
 
@@ -76,7 +79,7 @@ A successful terminal output is deliberately small:
 
 Every variation returns an independent `FabricConfig`:
 
-| Variation | Consumer API or CLI | Southbound effect |
+| Variation | Consumer API or CLI | Southbound Effect |
 | --- | --- | --- |
 | Model | `--model` | `models.default.model` |
 | Instruction | `with_system_instruction(...)` or `--system-instruction` | `instructions.system` |
@@ -104,25 +107,26 @@ flowchart TD
 The adapter validates stdio transport, converts normalized server settings
 through the official LangChain MCP adapter, and applies each server's allow
 and block lists. The graph receives only the resulting native `BaseTool`; it
-does not know about Fabric or MCP configuration. The tool checks URL syntax
-locally and makes no network requests. Startup fails if the configured policy
-does not expose exactly one `inspect_url` tool.
+does not know about NeMo Fabric or MCP configuration. The tool checks URL
+syntax locally and makes no network requests. Startup fails if the configured
+policy does not expose exactly one `inspect_url` tool.
 
 Add `--mcp` to a live command to exercise this path. MCP sessions and stdio
 processes are scoped to discovery or tool calls by `MultiServerMCPClient`; the
-Fabric runtime retains the compiled graph and native tool between invocations.
+NeMo Fabric runtime retains the compiled graph and native tool between
+invocations.
 
 ## Optional Relay Telemetry
 
 `with_relay(config)` enables ATOF and ATIF without changing the adapter
-lifecycle. During `invoke`, Fabric supplies `RuntimeContext.telemetry`; the
+lifecycle. During `invoke`, NeMo Fabric supplies `RuntimeContext.telemetry`; the
 adapter loads that generated configuration, opens one invocation-level Agent
 scope, and passes `NemoRelayCallbackHandler` through LangGraph
 runnable config. Relay records the graph and its model-backed node, while the
 terminal result remains separate.
 
 Relay is imported only on the enabled path. This adapter does not implement a
-streaming operation: Fabric's Relay-backed `Runtime.invoke_stream()` still
+streaming operation: NeMo Fabric's Relay-backed `Runtime.invoke_stream()` still
 runs the ordinary adapter `invoke` operation.
 
 ## Run the Source Example
