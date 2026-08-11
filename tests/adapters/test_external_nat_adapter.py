@@ -1091,7 +1091,7 @@ def test_mcp_stdio_preserves_a_command_with_spaces_without_shell_parsing():
 
 def test_mcp_stdio_rejects_a_whitespace_only_command():
     server = _mcp_server(transport="stdio", url="placeholder")
-    server.url = " \t\n "
+    object.__setattr__(server, "url", " \t\n ")
 
     with pytest.raises(adapter.lifecycle.LifecycleError) as error:
         adapter.nat_mcp_server_config("calculator", server)
@@ -1105,7 +1105,7 @@ def test_mcp_stdio_rejects_a_whitespace_only_command():
 @pytest.mark.parametrize("transport", ["websocket", ""])
 def test_mcp_server_rejects_unsupported_transport(transport: str):
     server = _mcp_server(transport=transport or "placeholder", url="https://mcp.test")
-    server.transport = transport
+    object.__setattr__(server, "transport", transport)
     with pytest.raises(adapter.lifecycle.LifecycleError) as error:
         adapter.nat_mcp_server_config(
             "docs",
