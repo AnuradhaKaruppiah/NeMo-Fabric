@@ -99,7 +99,7 @@ an optional capability beyond the minimum adapter surface:
 flowchart TD
     FabricConfig["FabricConfig.mcp"] --> AgentConfig["AgentConfig.mcp"]
     AgentConfig --> Adapter["adapter/mcp.py"]
-    Adapter --> Client["MultiServerMCPClient"]
+    Adapter --> Client["MultiServerMCPClient<br/>(langchain_mcp_adapters)"]
     Client -->|"stdio"| Server["URL inspector MCP server"]
     Client -->|"native BaseTool"| Graph["Custom LangGraph"]
 ```

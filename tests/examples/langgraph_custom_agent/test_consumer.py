@@ -5,7 +5,8 @@
 
 from __future__ import annotations
 
-from examples.langgraph_custom_agent.consumer.config import DEFAULT_MODEL
+from examples.langgraph_custom_agent.consumer.config import FRONTIER_DEFAULT_MODEL
+from examples.langgraph_custom_agent.consumer.config import PUBLIC_DEFAULT_MODEL
 from examples.langgraph_custom_agent.consumer.config import frontier_config
 from examples.langgraph_custom_agent.consumer.config import public_config
 from examples.langgraph_custom_agent.consumer.config import with_relay
@@ -14,7 +15,7 @@ from examples.langgraph_custom_agent.consumer.config import with_temperature
 from examples.langgraph_custom_agent.consumer.config import with_url_inspector_mcp
 
 
-def test_public_and_frontier_configs_vary_only_endpoint_and_credential(monkeypatch):
+def test_public_and_frontier_configs_use_endpoint_specific_defaults(monkeypatch):
     monkeypatch.setenv(
         "NVIDIA_FRONTIER_BASE_URL",
         "https://frontier.example/v1",
@@ -23,8 +24,8 @@ def test_public_and_frontier_configs_vary_only_endpoint_and_credential(monkeypat
     public = public_config()
     frontier = frontier_config()
 
-    assert public.models["default"].model == frontier.models["default"].model
-    assert public.models["default"].model == DEFAULT_MODEL
+    assert public.models["default"].model == PUBLIC_DEFAULT_MODEL
+    assert frontier.models["default"].model == FRONTIER_DEFAULT_MODEL
     assert public.models["default"].api_key_env == "NVIDIA_API_KEY"
     assert frontier.models["default"].api_key_env == "NVIDIA_FRONTIER_API_KEY"
     assert public.models["default"].base_url == (
