@@ -28,6 +28,8 @@ def main() -> None:
 
 
 def _runtime_context(payload: dict[str, Any]) -> RuntimeContext:
+    """Decode the runtime context supplied with a lifecycle operation."""
+
     try:
         return RuntimeContext.from_mapping(payload.get("runtime_context"))
     except Exception as error:
@@ -41,6 +43,8 @@ class EmailPhishingRuntime:
     """One compiled email-phishing graph owned by one NeMo Fabric runtime."""
 
     def __init__(self) -> None:
+        """Initialize an unstarted custom-agent runtime."""
+
         self._runtime_id: str | None = None
         self._base_dir: Path | None = None
         self._agent_name: str | None = None
@@ -48,6 +52,8 @@ class EmailPhishingRuntime:
         self._graph: CompiledStateGraph | None = None
 
     async def start(self, payload: dict[str, Any]) -> None:
+        """Resolve native dependencies and retain one compiled graph."""
+
         if self._graph is not None:
             raise lifecycle.LifecycleError(
                 "email_phishing_runtime_already_started",
@@ -75,6 +81,8 @@ class EmailPhishingRuntime:
         self._graph = graph
 
     async def invoke(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Run one request against the retained graph and return terminal output."""
+
         if (
             self._graph is None
             or self._runtime_id is None
@@ -123,6 +131,8 @@ class EmailPhishingRuntime:
         return output
 
     async def stop(self) -> None:
+        """Release the compiled graph and all runtime-owned references."""
+
         self._runtime_id = None
         self._base_dir = None
         self._agent_name = None

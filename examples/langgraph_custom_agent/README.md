@@ -31,6 +31,11 @@ and therefore does not accept `workflow`.
 
 ## Minimum Contract
 
+Custom-agent adapter developers should start with `adapter/fabric-adapter.json`
+and `adapter/runtime.py`. The descriptor declares the adapter contract, while
+the runtime implements its lifecycle and delegates configuration translation
+and optional integrations to the adjacent modules.
+
 The descriptor selects typed southbound configuration and advertises only the
 fields the adapter applies:
 
