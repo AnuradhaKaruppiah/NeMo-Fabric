@@ -138,7 +138,7 @@ def validate_dataclass(instance: Any) -> None:
             path=(item.name,),
             field=item,
         )
-        setattr(instance, item.name, decoded)
+        object.__setattr__(instance, item.name, decoded)
 
 
 def encode_dataclass(instance: Any) -> dict[str, Any]:
@@ -249,7 +249,12 @@ def _decode_value(
     if annotation is float:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ContractValidationError("must be a number", path=path)
-        result = float(value)
+        try:
+            result = float(value)
+        except OverflowError as error:
+            raise ContractValidationError(
+                "must be a finite number", path=path
+            ) from error
         if not math.isfinite(result):
             raise ContractValidationError("must be a finite number", path=path)
         return result

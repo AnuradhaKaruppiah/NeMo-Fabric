@@ -162,6 +162,24 @@ def test_failed_agent_run_result_requires_error():
         AgentRunResult(status=AgentRunStatus.FAILED, output=None)
 
 
+def test_contract_dataclasses_validate_assignment():
+    usage = AgentUsage(input_tokens=1)
+    with pytest.raises(
+        ContractValidationError,
+        match="input_tokens: must be between 0",
+    ):
+        usage.input_tokens = -5
+    assert usage.input_tokens == 1
+
+    result = AgentRunResult(status=AgentRunStatus.SUCCEEDED, output=None)
+    with pytest.raises(
+        ContractValidationError,
+        match="failed result requires an error",
+    ):
+        result.status = AgentRunStatus.FAILED
+    assert result.status is AgentRunStatus.SUCCEEDED
+
+
 @pytest.mark.parametrize(
     "path",
     [

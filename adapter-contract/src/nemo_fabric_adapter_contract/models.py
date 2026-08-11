@@ -77,6 +77,21 @@ class ContractModel:
         validate_dataclass(self)
         self._validate()
 
+    def __setattr__(self, name: str, value: Any) -> None:
+        try:
+            previous = getattr(self, name)
+        except AttributeError:
+            object.__setattr__(self, name, value)
+            return
+
+        object.__setattr__(self, name, value)
+        try:
+            validate_dataclass(self)
+            self._validate()
+        except ContractValidationError:
+            object.__setattr__(self, name, previous)
+            raise
+
     def _validate(self) -> None:
         """Validate constraints that are more specific than field types."""
 

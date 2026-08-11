@@ -159,6 +159,18 @@ def test_agent_config_from_mapping_reports_nested_field_path():
         )
 
 
+def test_agent_model_config_rejects_float_overflow():
+    with pytest.raises(
+        ContractValidationError,
+        match="temperature: must be a finite number",
+    ):
+        AgentModelConfig(
+            provider="nvidia",
+            model="test-model",
+            temperature=10**1000,
+        )
+
+
 def test_agent_config_model_tracks_rust_schema_root_fields():
     rust_schema = json.loads(
         (ROOT / "schemas/adapter-contract/agent-config.schema.json").read_text(
