@@ -79,6 +79,8 @@ class ContractModel:
         self._validate()
 
     def __setattr__(self, name: str, value: Any) -> None:
+        if name not in self.__dataclass_fields__:
+            raise AttributeError(f"{type(self).__name__} has no field {name!r}")
         try:
             previous = getattr(self, name)
         except AttributeError:

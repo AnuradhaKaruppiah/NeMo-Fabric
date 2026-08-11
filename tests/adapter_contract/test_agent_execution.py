@@ -164,6 +164,9 @@ def test_failed_agent_run_result_requires_error():
 
 def test_contract_dataclasses_validate_assignment():
     usage = AgentUsage(input_tokens=1)
+    with pytest.raises(AttributeError, match="AgentUsage has no field 'unknown'"):
+        usage.unknown = 1  # type: ignore[attr-defined]
+
     with pytest.raises(
         ContractValidationError,
         match="input_tokens: must be between 0",
