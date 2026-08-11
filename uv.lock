@@ -2174,6 +2174,8 @@ langgraph-example = [
     { name = "langchain-mcp-adapters" },
     { name = "langchain-openai" },
     { name = "langgraph" },
+    { name = "mcp", version = "1.26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
+    { name = "mcp", version = "1.28.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
 ]
 package = [
     { name = "maturin" },
@@ -2234,8 +2236,9 @@ docs = [
 langgraph-example = [
     { name = "langchain", specifier = ">=1.3,<2.0" },
     { name = "langchain-mcp-adapters", specifier = ">=0.1,<0.3.0" },
-    { name = "langchain-openai", specifier = ">=0.3" },
+    { name = "langchain-openai", specifier = ">=0.3,<2.0" },
     { name = "langgraph", specifier = ">=1.2,<2.0" },
+    { name = "mcp", specifier = ">=1.2" },
 ]
 package = [
     { name = "maturin", marker = "sys_platform != 'linux'", specifier = ">=1.9.3,<2.0" },
