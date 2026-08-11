@@ -141,6 +141,19 @@ def validate_dataclass(instance: Any) -> None:
         object.__setattr__(instance, item.name, decoded)
 
 
+def decode_field(instance: Any, name: str, value: Any) -> Any:
+    """Validate and normalize one field assignment."""
+
+    item = next(item for item in fields(instance) if item.name == name)
+    annotation = _resolved_type_hints(type(instance))[name]
+    return _decode_value(
+        annotation,
+        value,
+        path=(name,),
+        field=item,
+    )
+
+
 def encode_dataclass(instance: Any) -> dict[str, Any]:
     """Return a detached JSON-compatible mapping for a contract dataclass."""
 

@@ -19,6 +19,7 @@ from typing import Self
 from nemo_fabric_adapter_contract.codec import ContractValidationError
 from nemo_fabric_adapter_contract.codec import JsonValue
 from nemo_fabric_adapter_contract.codec import decode_dataclass
+from nemo_fabric_adapter_contract.codec import decode_field
 from nemo_fabric_adapter_contract.codec import encode_dataclass
 from nemo_fabric_adapter_contract.codec import json_mapping
 from nemo_fabric_adapter_contract.codec import validate_dataclass
@@ -84,9 +85,9 @@ class ContractModel:
             object.__setattr__(self, name, value)
             return
 
-        object.__setattr__(self, name, value)
+        decoded = decode_field(self, name, value)
+        object.__setattr__(self, name, decoded)
         try:
-            validate_dataclass(self)
             self._validate()
         except ContractValidationError:
             object.__setattr__(self, name, previous)
