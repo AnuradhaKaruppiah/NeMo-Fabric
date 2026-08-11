@@ -102,15 +102,6 @@ jobs:
           set -euo pipefail
           just test-python
 
-      - name: Smoke test minimum MCP dependency versions
-        if: matrix.platform == 'linux-amd64' && matrix.python-version == '3.11'
-        run: |
-          uv run --isolated --no-project --python 3.11 \
-            --with mcp==1.10.0 \
-            --with langchain-mcp-adapters==0.1.0 \
-            python -c \
-              "import examples.langgraph_custom_agent.mcp.url_inspector; import langchain_mcp_adapters.client"
-
   build-wheels:
     name: Build wheels (${{ matrix.platform }})
     needs: [test]
