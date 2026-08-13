@@ -3,10 +3,25 @@ SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Contributing to NeMo Fabric
+# Contributing to NVIDIA NeMo Fabric
 
 Thank you for your interest in contributing to NeMo Fabric. This guide covers
 the development workflow, coding standards, and pull request process.
+
+## Contribution Access
+
+Anyone with a GitHub account may create or comment on an issue in this public
+repository. Pull request creation is limited to approved users in the
+`NeMo-Fabric-developers` group. General changes require CODEOWNER approval from
+`NeMo-Fabric-reviewers`, a subset of the developer group. Documentation and
+dependency changes use their specialized approver groups.
+
+For non-security contributions, external contributors should open an issue with
+a reproducer, proposed design, or patch description. A NeMo Fabric maintainer
+can adopt the work into a pull request when appropriate. Do not report security
+vulnerabilities through a public issue or pull request; follow the [security
+policy](SECURITY.md). Public issue and pull request comments remain welcome and
+do not require developer access.
 
 ## Development Setup
 
