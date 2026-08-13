@@ -11,19 +11,19 @@ the development workflow, coding standards, and pull request process.
 ## Contribution Access
 
 Anyone with a GitHub account may create or comment on an issue in this public
-repository. Pull request creation is limited to approved NVIDIA users in the
+repository. Pull request creation is limited to approved users in the
 `NeMo-Fabric-developers` group. General changes require CODEOWNER approval from
 `NeMo-Fabric-reviewers`, a subset of the developer group. Documentation and
 dependency changes use their specialized approver groups.
 
-NVIDIA users who need developer access should follow the internal **Requesting
-NeMo Fabric Developer Access** guide in the NeMo Fabric shared Drive. Do not
-request repository access through a public GitHub issue.
+Do not request repository access through a public GitHub issue.
 
-External contributors should open an issue with a reproducer, proposed design,
-or patch description. A NeMo Fabric maintainer can adopt the work into a pull
-request when appropriate. Public issue and pull request comments remain
-welcome and do not require developer access.
+For non-security contributions, external contributors should open an issue with
+a reproducer, proposed design, or patch description. A NeMo Fabric maintainer
+can adopt the work into a pull request when appropriate. Do not report security
+vulnerabilities through a public issue or pull request; follow the [security
+policy](SECURITY.md). Public issue and pull request comments remain welcome and
+do not require developer access.
 
 ## Development Setup
 
