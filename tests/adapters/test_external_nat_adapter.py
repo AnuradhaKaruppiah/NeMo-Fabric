@@ -502,6 +502,7 @@ def test_typed_examples_project_and_translate_through_one_nat_adapter(
     plan = Fabric().plan(namespace["build_config"](), base_dir=tmp_path)
 
     assert plan.config.workflow.target_id == target_id
+    assert plan["adapter_target_descriptor"]["descriptor"]["id"] == target_id
     assert plan.config.harness is None
     southbound = plan.to_mapping()["agent_config"]
     assert southbound["workflow"]["entrypoint"] == {

@@ -61,9 +61,9 @@ Use `add_tool_definition(...)` only when the selected adapter accepts
 Filtered per-server MCP configurations require adapter support for both `mcp`
 and `mcp.tool_filters`. An unfiltered server with `allowed_tools=None` and an
 empty or omitted `blocked_tools` list requires only `mcp`. `allowed_tools=None`
-exposes every discovered tool, while `allowed_tools=[]` exposes none. NeMo
-Fabric removes `blocked_tools` after applying the allowlist. Tool names in both
-lists must be non-blank, and planning rejects a tool that appears in both lists.
+exposes every discovered tool, while `allowed_tools=[]` exposes none. NeMo Fabric
+removes `blocked_tools` after applying the allowlist. Tool names in both lists
+must be non-blank, and planning rejects a tool that appears in both lists.
 MCP servers requiring authentication additionally require `mcp.auth.oauth2` or
 `mcp.auth.service_account`, matching the configured authentication type.
 
@@ -140,6 +140,8 @@ package or job layout, so nothing depends on the process working directory.
   supplies its entry point. `workflow.settings` contains only construction
   settings and is validated against that target's `spec.settings_schema`.
   Do not use workflow settings for caller-owned annotations.
+  Omit `harness` for a target-driven run. If both selectors are set,
+  `harness.adapter_id` must match the adapter selected by the target.
 - Use `metadata` and extension fields outside `workflow` for caller-owned
   annotations NeMo Fabric carries but does not interpret. Config `metadata` is not echoed into
   `RunResult.metadata`: the name surfaces as `RunResult.agent_name`, and for

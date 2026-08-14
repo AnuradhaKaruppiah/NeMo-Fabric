@@ -13,7 +13,7 @@ and planning succeed.
 
 An adapter package publishes one `*.fabric-adapter.json` record. A package that
 installs registered targets publishes one `*.fabric-target.json` record per
-target. A shared adapter and its targets may be distributed independently.
+target. A shared adapter and its targets can be distributed independently.
 
 ```text
 acme-fabric-package/
@@ -37,11 +37,11 @@ in `nemo-fabric-adapters-common`.
 
 ## Discovery Sources
 
-Fabric builds one registry from these sources, in deterministic order:
+NeMo Fabric builds one registry from these sources, in deterministic order:
 
-1. Descriptor records bundled with Fabric.
+1. Descriptor records bundled with NeMo Fabric.
 2. Records installed recursively below
-   `<sysconfig data>/share/nemo-fabric`. When `ADAPTER_PYTHON` is set, Fabric
+   `<sysconfig data>/share/nemo-fabric`. When `ADAPTER_PYTHON` is set, NeMo Fabric
    queries that Python environment instead of the current one.
 3. Files or directories listed explicitly in
    `FabricConfig.discovery.local_paths`. Relative paths resolve from
@@ -51,6 +51,9 @@ There is no implicit `<base_dir>/adapters` scan and no source override rule.
 Semantically identical records with the same ID are deduplicated and retain all
 provenance. Different records with the same ID are ambiguous and fail
 planning. A malformed record fails when selection depends on it.
+
+The current registry resolves an adapter or target by exact ID. It does not
+enumerate a human-facing catalog or attach presentation metadata to records.
 
 ```python
 config = FabricConfig(
@@ -92,7 +95,7 @@ FabricConfig(
 )
 ```
 
-Both selectors may be present when harness-wide settings are also needed. In
+Both selectors can be present when harness-wide settings are also needed. In
 that case `harness.adapter_id` must equal the adapter selected by the target.
 
 ## Resolution Stages

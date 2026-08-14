@@ -35,7 +35,7 @@ Adapter Descriptor filenames end in `.fabric-adapter.json`.
 | `telemetry` | Telemetry outputs and integration modes implemented by the adapter. |
 
 New adapters use `config.input: agent_config`. `config.accepts` declares only
-normalized fields the implementation can apply. Fabric rejects configured
+normalized fields the implementation can apply. NeMo Fabric rejects configured
 behavior outside that surface; it does not silently drop it.
 
 `config.accepts` lists normalized fields the adapter can enforce. Planning
@@ -126,15 +126,15 @@ plus consumer settings into `AgentConfig.workflow`.
 
 ## Schema Rules
 
-Descriptor schemas must be valid, self-contained JSON Schema objects. Fabric
-does not load HTTP or file references. Object-valued configuration schemas must
-accept an object root. Prefer `additionalProperties: false` so typos and stale
-settings fail during planning.
+Descriptor schemas must be valid, self-contained JSON Schema objects. NeMo
+Fabric does not load HTTP or file references. Object-valued configuration
+schemas must accept an object root. Prefer `additionalProperties: false` so
+typos and stale settings fail during planning.
 
 Do not advertise an optional capability merely because the underlying target
 supports it. Advertise only behavior implemented through the adapter boundary.
-Relay-backed ATOF streaming is Fabric-owned and does not require native adapter
-streaming.
+Relay-backed ATOF streaming is NeMo Fabric-owned and does not require native
+adapter streaming.
 
 See [Registration and Discovery](registration-and-discovery.md) for package and
 lookup rules and [Normalized Configuration](normalized-configuration.md) for

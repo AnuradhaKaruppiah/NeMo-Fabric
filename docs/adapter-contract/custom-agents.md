@@ -24,8 +24,8 @@ entry point and bounds its `workflow.settings`.
 ## Workflow
 
 `workflow` is the `AgentConfig` construct that configures one custom agent or
-workflow. Fabric projects it from the selected Adapter Target Descriptor and
-the consumer's `WorkflowConfig`:
+workflow. NeMo Fabric projects it from the selected Adapter Target Descriptor
+and the consumer's `WorkflowConfig`:
 
 - `workflow.entrypoint.kind` selects well-known resolution semantics.
 - `workflow.entrypoint.ref` identifies the factory within those semantics.
@@ -51,7 +51,7 @@ selects one kind, and the shared adapter implements its resolution semantics.
 `ref` is never a filesystem path. Resolution and module import occur in the
 task environment during `start`, not in the planning process.
 
-### Fabric Factory Intent
+### NeMo Fabric Factory Intent
 
 Use a NeMo Fabric-defined factory intent for portable agent behavior:
 
