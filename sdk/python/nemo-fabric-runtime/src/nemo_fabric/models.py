@@ -131,25 +131,18 @@ class HarnessConfig(FabricBaseModel):
     )
 
 
-class WorkflowEntrypointConfig(FabricBaseModel):
-    """Adapter-owned workflow entry point."""
-
-    kind: str = Field(min_length=1, pattern=r"\S")
-    ref: str = Field(min_length=1, pattern=r"\S")
-
-    @field_validator("kind", "ref")
-    @classmethod
-    def _validate_nonblank(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("workflow entrypoint values must be non-empty strings")
-        return value
-
-
 class WorkflowConfig(FabricBaseModel):
-    """Adapter-owned workflow selection and immutable construction settings."""
+    """Registered workflow target and immutable construction settings."""
 
-    entrypoint: WorkflowEntrypointConfig
+    target_id: str = Field(min_length=1, pattern=r"\S")
     settings: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("target_id")
+    @classmethod
+    def _validate_target_id(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("workflow target_id must be a non-empty string")
+        return value
 
     @model_serializer(mode="wrap")
     def _serialize_workflow(
@@ -159,6 +152,19 @@ class WorkflowConfig(FabricBaseModel):
         if not self.settings:
             data.pop("settings", None)
         return data
+
+
+class DiscoveryConfig(FabricBaseModel):
+    """Explicit local descriptor discovery paths."""
+
+    local_paths: list[str | Path] = Field(default_factory=list)
+
+    @field_validator("local_paths")
+    @classmethod
+    def _validate_local_paths(cls, value: list[str | Path]) -> list[str | Path]:
+        if any(not str(path).strip() for path in value):
+            raise ValueError("discovery local paths must not be empty")
+        return value
 
 
 class InstructionConfig(FabricBaseModel):
@@ -1024,8 +1030,9 @@ class FabricConfig(FabricBaseModel):
 
     schema_version: str = "fabric.agent/v1alpha1"
     metadata: MetadataConfig
-    harness: HarnessConfig
+    harness: HarnessConfig | None = None
     workflow: WorkflowConfig | None = None
+    discovery: DiscoveryConfig | None = None
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     environment: EnvironmentConfig | None = None
     models: dict[str, ModelConfig] = Field(default_factory=dict)
@@ -1035,6 +1042,14 @@ class FabricConfig(FabricBaseModel):
     telemetry: TelemetryConfig | None = None
     relay: RelayConfig | None = None
     tools: ToolsConfig | None = None
+
+    @model_validator(mode="after")
+    def _validate_selector(self) -> Self:
+        if self.harness is None and self.workflow is None:
+            raise ValueError(
+                "at least one of harness.adapter_id or workflow.target_id is required"
+            )
+        return self
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> Self:

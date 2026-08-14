@@ -1,8 +1,8 @@
 {
   "contract_version": "fabric.adapter/v1alpha2",
   "adapter_id": "nvidia.fabric.nat",
-  "harness": "nat",
   "adapter_kind": "python",
+  "target_types": ["workflow"],
   "runner": {
     "module": "nemo_fabric_adapters.nat.adapter"
   },
@@ -10,37 +10,6 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
     "properties": {},
-    "additionalProperties": false
-  },
-  "workflow_schema": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "type": "object",
-    "properties": {
-      "entrypoint": {
-        "type": "object",
-        "properties": {
-          "kind": {
-            "const": "factory",
-            "description": "Resolve a Fabric-enumerated agent intent through this adapter."
-          },
-          "ref": {
-            "const": "fabric.agent.react",
-            "description": "Build Fabric's ReAct agent intent with the NeMo Agent Toolkit react_agent factory."
-          }
-        },
-        "required": ["kind", "ref"],
-        "additionalProperties": false
-      },
-      "settings": {
-        "type": "object",
-        "properties": {
-          "_type": false
-        },
-        "additionalProperties": true,
-        "description": "NeMo Agent Toolkit workflow component settings; _type is derived from entrypoint.ref."
-      }
-    },
-    "required": ["entrypoint"],
     "additionalProperties": false
   },
   "tool_definition_schema": {

@@ -74,11 +74,6 @@
       "description": "Configuration object delivered to an adapter lifecycle host.",
       "oneOf": [
         {
-          "const": "fabric_config",
-          "description": "Deliver the complete northbound `FabricConfig` for legacy adapters.",
-          "type": "string"
-        },
-        {
           "const": "agent_config",
           "description": "Deliver the resolved southbound `AgentConfig` contract.",
           "type": "string"
@@ -105,7 +100,7 @@
         },
         "input": {
           "$ref": "#/$defs/AdapterConfigInput",
-          "default": "fabric_config",
+          "default": "agent_config",
           "description": "Configuration object delivered to the adapter lifecycle host."
         }
       },
@@ -138,7 +133,7 @@
         "config": {
           "$ref": "#/$defs/AdapterConfigSupport",
           "default": {
-            "input": "fabric_config"
+            "input": "agent_config"
           },
           "description": "NeMo Fabric config areas this adapter consumes or generates."
         },
@@ -178,12 +173,6 @@
           },
           "type": "object"
         },
-        "harness": {
-          "description": "Stable machine-readable harness identifier implemented by this adapter.",
-          "minLength": 1,
-          "pattern": "\\S",
-          "type": "string"
-        },
         "model_schema": {
           "additionalProperties": true,
           "description": "JSON Schema applied to every normalized `FabricConfig.models` entry.",
@@ -210,6 +199,13 @@
             "null"
           ]
         },
+        "target_types": {
+          "description": "Registered target categories this adapter can execute.",
+          "items": {
+            "$ref": "#/$defs/AdapterTargetType"
+          },
+          "type": "array"
+        },
         "telemetry": {
           "$ref": "#/$defs/AdapterTelemetrySupport",
           "default": {},
@@ -222,38 +218,14 @@
             "object",
             "null"
           ]
-        },
-        "workflow_schema": {
-          "additionalProperties": true,
-          "description": "JSON Schema for adapter-owned `FabricConfig.workflow`.",
-          "type": [
-            "object",
-            "null"
-          ]
         }
       },
       "required": [
         "contract_version",
         "adapter_id",
-        "harness",
         "adapter_kind"
       ],
       "type": "object"
-    },
-    "AdapterDescriptorSource": {
-      "description": "Where NeMo Fabric resolved an adapter descriptor from.",
-      "oneOf": [
-        {
-          "const": "repository",
-          "description": "Descriptor maintained in this NeMo Fabric repository.",
-          "type": "string"
-        },
-        {
-          "const": "local",
-          "description": "Descriptor registered by the agent package or local development config.",
-          "type": "string"
-        }
-      ]
     },
     "AdapterKind": {
       "description": "Adapter implementation kind.",
@@ -321,6 +293,65 @@
         }
       },
       "type": "object"
+    },
+    "AdapterTargetDescriptor": {
+      "description": "Independently registered target implemented by an adapter.",
+      "oneOf": [
+        {
+          "description": "Registered workflow target.",
+          "properties": {
+            "spec": {
+              "$ref": "#/$defs/WorkflowTargetSpec"
+            },
+            "type": {
+              "const": "workflow",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "spec"
+          ],
+          "type": "object"
+        }
+      ],
+      "properties": {
+        "adapter_id": {
+          "description": "Adapter implementation selected by this target.",
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "contract_version": {
+          "const": "fabric.adapter/v1alpha2",
+          "description": "Adapter Contract version shared with Adapter Descriptor.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "id": {
+          "description": "Unique registered target id.",
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        }
+      },
+      "required": [
+        "contract_version",
+        "id",
+        "adapter_id"
+      ],
+      "type": "object",
+      "unevaluatedProperties": true
+    },
+    "AdapterTargetType": {
+      "description": "Adapter target categories understood by this Adapter Contract version.",
+      "oneOf": [
+        {
+          "const": "workflow",
+          "description": "A separately registered custom-agent or workflow target.",
+          "type": "string"
+        }
+      ]
     },
     "AdapterTelemetryProviderSupport": {
       "additionalProperties": true,
@@ -1004,6 +1035,65 @@
         }
       ]
     },
+    "DescriptorProvenance": {
+      "description": "One physical source for a discovered descriptor record.",
+      "properties": {
+        "path": {
+          "description": "Canonical descriptor path.",
+          "type": "string"
+        },
+        "root": {
+          "description": "Directory used to resolve descriptor-local paths.",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/DescriptorSource",
+          "description": "Discovery provider that found this record."
+        }
+      },
+      "required": [
+        "source",
+        "path",
+        "root"
+      ],
+      "type": "object"
+    },
+    "DescriptorSource": {
+      "description": "Where NeMo Fabric discovered descriptor metadata.",
+      "oneOf": [
+        {
+          "const": "bundled",
+          "description": "Descriptor bundled with this NeMo Fabric build.",
+          "type": "string"
+        },
+        {
+          "const": "installed_package",
+          "description": "Descriptor installed as package data in the selected environment.",
+          "type": "string"
+        },
+        {
+          "const": "explicit_local",
+          "description": "Descriptor supplied through `FabricConfig.discovery.local_paths`.",
+          "type": "string"
+        }
+      ]
+    },
+    "DiscoveryConfig": {
+      "additionalProperties": true,
+      "description": "Explicit descriptor discovery inputs.",
+      "properties": {
+        "local_paths": {
+          "description": "Descriptor files or directories, resolved relative to the config base directory.",
+          "items": {
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "EnvironmentConfig": {
       "additionalProperties": true,
       "description": "Execution environment configuration.",
@@ -1145,6 +1235,17 @@
       "additionalProperties": true,
       "description": "Versioned NVIDIA NeMo Fabric agent config.\n\nNeMo Fabric-owned fields apply uniformly, while adapter-translated fields are\nvalidated against the selected adapter descriptor. See the\n[configuration compatibility matrix](https://github.com/NVIDIA/NeMo-Fabric/blob/main/docs/sdk/python.mdx#normalized-configuration-compatibility).",
       "properties": {
+        "discovery": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiscoveryConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional explicit descriptor discovery paths."
+        },
         "environment": {
           "anyOf": [
             {
@@ -1157,8 +1258,15 @@
           "description": "Environment where the harness or its tools execute."
         },
         "harness": {
-          "$ref": "#/$defs/HarnessConfig",
-          "description": "Harness selection and harness-specific settings."
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HarnessConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional direct adapter selection and harness-specific settings."
         },
         "instructions": {
           "anyOf": [
@@ -1254,13 +1362,12 @@
               "type": "null"
             }
           ],
-          "description": "Optional adapter-resolved workflow selection and construction settings."
+          "description": "Optional registered workflow target and construction settings."
         }
       },
       "required": [
         "schema_version",
         "metadata",
-        "harness",
         "runtime"
       ],
       "type": "object"
@@ -2499,23 +2606,39 @@
           "$ref": "#/$defs/AdapterDescriptor",
           "description": "Adapter-owned compatibility and capability metadata."
         },
-        "path": {
-          "description": "Path to the adapter descriptor.",
-          "type": "string"
-        },
-        "root": {
-          "description": "Directory used to resolve descriptor-local runner and requirement paths.",
-          "type": "string"
-        },
-        "source": {
-          "$ref": "#/$defs/AdapterDescriptorSource",
-          "description": "Registry source for this descriptor."
+        "provenance": {
+          "description": "Every semantically identical record discovered for this descriptor.",
+          "items": {
+            "$ref": "#/$defs/DescriptorProvenance"
+          },
+          "minItems": 1,
+          "type": "array"
         }
       },
       "required": [
-        "source",
-        "path",
-        "root",
+        "provenance",
+        "descriptor"
+      ],
+      "type": "object"
+    },
+    "ResolvedAdapterTargetDescriptor": {
+      "description": "Adapter target descriptor selected for a run plan.",
+      "properties": {
+        "descriptor": {
+          "$ref": "#/$defs/AdapterTargetDescriptor",
+          "description": "Target-specific resolution and validation metadata."
+        },
+        "provenance": {
+          "description": "Every semantically identical record discovered for this descriptor.",
+          "items": {
+            "$ref": "#/$defs/DescriptorProvenance"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "provenance",
         "descriptor"
       ],
       "type": "object"
@@ -2786,29 +2909,31 @@
     },
     "WorkflowConfig": {
       "additionalProperties": true,
-      "description": "Adapter-owned workflow selection and immutable construction settings.",
+      "description": "Registered workflow target and immutable construction settings.",
       "properties": {
-        "entrypoint": {
-          "$ref": "#/$defs/WorkflowEntrypointConfig",
-          "description": "Entry point resolved by the selected adapter."
-        },
         "settings": {
           "additionalProperties": true,
           "description": "Workflow-specific construction settings.",
           "type": "object"
+        },
+        "target_id": {
+          "description": "Registered Adapter Target Descriptor id.",
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
         }
       },
       "required": [
-        "entrypoint"
+        "target_id"
       ],
       "type": "object"
     },
     "WorkflowEntrypointConfig": {
       "additionalProperties": true,
-      "description": "Adapter-owned workflow entry point.",
+      "description": "Adapter-owned workflow entry point supplied by an Adapter Target Descriptor.",
       "properties": {
         "kind": {
-          "description": "Adapter-defined entry-point kind.",
+          "description": "Adapter-defined entry-point resolution semantics.",
           "minLength": 1,
           "pattern": "\\S",
           "type": "string"
@@ -2823,6 +2948,28 @@
       "required": [
         "kind",
         "ref"
+      ],
+      "type": "object"
+    },
+    "WorkflowTargetSpec": {
+      "additionalProperties": true,
+      "description": "Workflow-specific Adapter Target Descriptor fields.",
+      "properties": {
+        "entrypoint": {
+          "$ref": "#/$defs/WorkflowEntrypointConfig",
+          "description": "Entry point projected southbound to the adapter."
+        },
+        "settings_schema": {
+          "additionalProperties": true,
+          "description": "JSON Schema for `FabricConfig.workflow.settings`.",
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "entrypoint"
       ],
       "type": "object"
     }
@@ -2840,6 +2987,17 @@
         }
       ],
       "description": "Adapter descriptor resolved for this plan, when configured."
+    },
+    "adapter_target_descriptor": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ResolvedAdapterTargetDescriptor"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Adapter Target Descriptor resolved for this plan, when selected."
     },
     "agent_config": {
       "$ref": "#/$defs/AgentConfig",

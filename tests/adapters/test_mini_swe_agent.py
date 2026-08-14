@@ -104,14 +104,14 @@ def mini_payload_fixture(tmp_path: Path) -> dict:
 
 def test_mini_swe_agent_descriptor_is_narrow_and_versioned():
     descriptor = json.loads(
-        (ROOT / "adapters/mini-swe-agent/fabric-adapter.json").read_text(
-            encoding="utf-8"
-        )
+        (
+            ROOT
+            / "adapters/mini-swe-agent/mini-swe-agent.fabric-adapter.json"
+        ).read_text(encoding="utf-8")
     )
 
     assert descriptor["contract_version"] == "fabric.adapter/v1alpha2"
     assert descriptor["adapter_id"] == "nvidia.fabric.mini-swe-agent"
-    assert descriptor["harness"] == "mini-swe-agent"
     assert descriptor["runner"] == {
         "module": "nemo_fabric_adapters.mini_swe_agent.adapter"
     }

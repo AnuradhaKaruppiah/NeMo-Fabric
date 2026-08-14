@@ -50,7 +50,7 @@ where = ["src"]
 include = ["nemo_fabric_adapters.hermes*"]
 
 [tool.setuptools.data-files]
-"share/nemo-fabric/adapters/hermes" = ["fabric-adapter.json"]
+"share/nemo-fabric/adapters/hermes" = ["hermes.fabric-adapter.json"]
 
 [tool.uv.sources]
 nemo-fabric-adapter-contract = { path = "../../adapter-contract/python", editable = true }

@@ -15,29 +15,20 @@ configuration, its adapter-owned settings schema, and telemetry support.
 
 ## Descriptor Discovery
 
-As a stopgap until NeMo Fabric has a provider-backed adapter registry, the
-Python SDK discovers descriptors in three locations. Later locations take
-precedence:
+The Python SDK builds one descriptor registry from three sources:
 
-1. descriptors bundled in the NeMo Fabric source repository;
-2. `<sysconfig data>/share/nemo-fabric/adapters`, populated by adapter wheels
-   and queried from `ADAPTER_PYTHON` when set, otherwise from the current Python;
-3. `<base_dir>/adapters`, for agent-local and development overrides.
+1. records bundled with NeMo Fabric;
+2. records installed recursively below
+   `<sysconfig data>/share/nemo-fabric`, queried from `ADAPTER_PYTHON` when set;
+3. files and directories listed in `FabricConfig.discovery.local_paths`.
 
 NeMo Fabric resolves multi-component relative `ADAPTER_PYTHON` paths from
 `<base_dir>`. It resolves bare command names through `PATH`.
 
-The winning descriptor supplies its runner metadata, `settings_schema`, and
-optional `workflow_schema` atomically. Planning validates `harness.settings`
-and `FabricConfig.workflow` against those exact schemas. An agent-local
-descriptor therefore replaces installed schemas rather than merging with them.
-Descriptor schemas must be self-contained; NeMo Fabric does not resolve HTTP or
-file references from adapter descriptors.
-
-This scan only discovers installed metadata. It is not the final registry
-contract for resolving or installing third-party adapters. Installed and
-agent-local descriptors both currently report `source: local`; a registry
-provider should expose more precise provenance.
+Identical records with the same ID are deduplicated and retain every source as
+provenance. Different records with the same ID fail as ambiguous; discovery
+does not merge fields or choose an override. Workflow entry points and settings
+schemas come from independently registered Adapter Target Descriptors.
 
 ## Bundled Adapter Packages
 
@@ -89,7 +80,7 @@ and additive extension maps because their support does not vary by adapter:
 | `metadata.name`, `.description` | Core | Core | Core | Core | Core |
 | `harness.adapter_id`, `.resolution` | Core | Core | Core | Core | Core |
 | `harness.settings` | Closed adapter schema | Closed adapter schema | Closed adapter schema | Closed adapter schema | Closed `timeout` schema |
-| `workflow.entrypoint`, `.settings` | No | No | No | No | No |
+| `workflow.target_id`, `.settings` | No | No | No | No | No |
 | `models.<role>.provider` | `anthropic` uses native auth; custom names require an Anthropic Messages-compatible `base_url` and `api_key_env` | `openai` uses native auth; custom names require a Responses-compatible `base_url` and `api_key_env` | Dynamic LangChain provider; custom OpenAI-compatible endpoints require `base_url` and `api_key_env` | Dynamic Hermes provider | Configured provider |
 | `models.<role>.model` | Yes | Yes | Yes | Yes | Yes |
 | `models.<role>.api_key_env` | Yes | Yes | Yes | Yes | Yes |

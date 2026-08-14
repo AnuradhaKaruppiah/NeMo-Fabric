@@ -18,7 +18,8 @@ Import these from the top-level `nemo_fabric` package:
 | `FabricConfig` | Root config passed to every `Fabric` call. |
 | `MetadataConfig` | Agent name and description. |
 | `HarnessConfig` | `adapter_id`, `resolution`, and adapter-owned `settings`. |
-| `WorkflowConfig` / `WorkflowEntrypointConfig` | Optional adapter-owned workflow selection and immutable construction settings. |
+| `WorkflowConfig` | Registered `target_id` and immutable construction settings. |
+| `DiscoveryConfig` | Explicit local descriptor files and directories. |
 | `ModelConfig` | Provider, model, credentials (`api_key_env`), endpoint, and sampling. |
 | `InstructionsConfig` / `InstructionConfig` | Portable agent instructions and replacement mode. |
 | `RuntimeConfig` | Input/output labels, artifact location, invocation timeout, and harness turn limit. |
@@ -60,9 +61,9 @@ Use `add_tool_definition(...)` only when the selected adapter accepts
 Filtered per-server MCP configurations require adapter support for both `mcp`
 and `mcp.tool_filters`. An unfiltered server with `allowed_tools=None` and an
 empty or omitted `blocked_tools` list requires only `mcp`. `allowed_tools=None`
-exposes every discovered tool, while `allowed_tools=[]` exposes none. NeMo
-Fabric removes `blocked_tools` after applying the allowlist. Tool names in both
-lists must be non-blank, and planning rejects a tool that appears in both lists.
+exposes every discovered tool, while `allowed_tools=[]` exposes none. NeMo Fabric
+removes `blocked_tools` after applying the allowlist. Tool names in both lists
+must be non-blank, and planning rejects a tool that appears in both lists.
 MCP servers requiring authentication additionally require `mcp.auth.oauth2` or
 `mcp.auth.service_account`, matching the configured authentication type.
 
@@ -134,15 +135,13 @@ package or job layout, so nothing depends on the process working directory.
   portable. Planning and `doctor(...)` validate them against the schema embedded
   in the exact resolved adapter descriptor; a descriptor without a schema
   accepts only an empty settings map.
-- Use `workflow` when an adapter exposes selectable executable workflows.
-  `workflow.entrypoint.kind` selects the adapter-defined resolution mechanism,
-  `workflow.entrypoint.ref` identifies the workflow, and `workflow.settings`
-  contains only its construction settings. Planning validates the complete
-  block against the selected descriptor's `workflow_schema`. A configured
-  workflow fails when the descriptor does not declare that schema. Workflow and
-  entry-point extensions are adapter-owned and must be declared by that schema;
-  a closed schema rejects undeclared fields. Do not use them for caller-owned
-  annotations.
+- Use `workflow` to select a registered executable target. Set
+  `workflow.target_id`; the Adapter Target Descriptor selects the adapter and
+  supplies its entry point. `workflow.settings` contains only construction
+  settings and is validated against that target's `spec.settings_schema`.
+  Do not use workflow settings for caller-owned annotations.
+  Omit `harness` for a target-driven run. If both selectors are set,
+  `harness.adapter_id` must match the adapter selected by the target.
 - Use `metadata` and extension fields outside `workflow` for caller-owned
   annotations NeMo Fabric carries but does not interpret. Config `metadata` is not echoed into
   `RunResult.metadata`: the name surfaces as `RunResult.agent_name`, and for

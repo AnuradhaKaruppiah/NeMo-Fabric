@@ -2,30 +2,22 @@
 title: "Struct Resolved Adapter Descriptor"
 sidebar-title: "ResolvedAdapterDescriptor"
 description: "Adapter descriptor selected for a run plan."
-position: 52
+position: 57
 ---
 {/* SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0 */}
 
 Generated from `cargo doc --no-deps -p nemo-fabric-core`.
 
-<pre className="rust-signature"><code dangerouslySetInnerHTML={{"__html": "pub struct ResolvedAdapterDescriptor &#123;\n    pub source: <a href=\"enum-adapterdescriptorsource.mdx\">AdapterDescriptorSource</a>,\n    pub path: <a href=\"https://doc.rust-lang.org/1.94.0/std/path/struct.PathBuf.html\">PathBuf</a>,\n    pub root: <a href=\"https://doc.rust-lang.org/1.94.0/std/path/struct.PathBuf.html\">PathBuf</a>,\n    pub descriptor: <a href=\"struct-adapterdescriptor.mdx\">AdapterDescriptor</a>,\n&#125;"}} /></pre>
+<pre className="rust-signature"><code dangerouslySetInnerHTML={{"__html": "pub struct ResolvedAdapterDescriptor &#123;\n    pub provenance: <a href=\"https://doc.rust-lang.org/1.94.0/alloc/vec/struct.Vec.html\">Vec</a>&lt;<a href=\"struct-descriptorprovenance.mdx\">DescriptorProvenance</a>&gt;,\n    pub descriptor: <a href=\"struct-adapterdescriptor.mdx\">AdapterDescriptor</a>,\n&#125;"}} /></pre>
 
 Adapter descriptor selected for a run plan.
 
 ## Fields
 
-### `source: AdapterDescriptorSource`
+### `provenance: Vec<DescriptorProvenance>`
 
-Registry source for this descriptor.
-
-### `path: PathBuf`
-
-Path to the adapter descriptor.
-
-### `root: PathBuf`
-
-Directory used to resolve descriptor-local runner and requirement paths.
+Every semantically identical record discovered for this descriptor.
 
 ### `descriptor: AdapterDescriptor`
 

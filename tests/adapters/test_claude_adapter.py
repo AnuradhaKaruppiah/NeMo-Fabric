@@ -122,13 +122,12 @@ def install_fake_client(
 
 
 def test_claude_descriptor_is_narrow_and_versioned():
-    descriptor_path = ROOT / "adapters" / "claude" / "fabric-adapter.json"
+    descriptor_path = ROOT / "adapters" / "claude" / "claude.fabric-adapter.json"
     descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
 
     assert descriptor == {
         "contract_version": "fabric.adapter/v1alpha2",
         "adapter_id": "nvidia.fabric.claude",
-        "harness": "claude",
         "adapter_kind": "python",
         "runner": {
             "module": "nemo_fabric_adapters.claude.adapter",

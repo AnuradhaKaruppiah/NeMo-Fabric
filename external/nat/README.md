@@ -16,15 +16,17 @@ its contract boundary.
 
 ## Configuration Boundary
 
-NeMo Fabric owns portable configuration. `workflow` selects a Fabric-enumerated
-agent factory and `tools.definitions` supplies named functions and function
-groups that the adapter resolves as installed NeMo Agent Toolkit components.
+NeMo Fabric owns portable configuration. `FabricConfig.workflow.target_id`
+selects a registered target. Planning projects that target's entry point and
+the consumer's settings into `AgentConfig.workflow`. `tools.definitions`
+supplies named functions and function groups that the adapter resolves as
+installed NeMo Agent Toolkit components.
 
-| NeMo Fabric input | NeMo Agent Toolkit configuration |
+| `AgentConfig` field | NeMo Agent Toolkit configuration |
 | --- | --- |
 | `models.<role>` | `llms.<role>`; every NeMo Fabric model-role name is preserved |
 | `instructions.system` | Built-in `react_agent` workflow `additional_instructions`; other workflow types reject this field in the initial adapter |
-| `workflow.entrypoint.kind=factory` | Resolve a Fabric-enumerated agent intent |
+| `workflow.entrypoint.kind=factory` | Resolve a NeMo Fabric-defined agent intent |
 | `workflow.entrypoint.ref=fabric.agent.react` | NeMo Agent Toolkit `react_agent` workflow factory |
 | `workflow.settings` | Remaining `workflow` component fields |
 | `tools.definitions.<name>` with `kind=function` | NeMo Agent Toolkit `functions.<name>`; `ref` becomes `_type` |
@@ -36,8 +38,8 @@ The adapter loads installed `nat.components` entry points before validating the
 generated configuration with NeMo Agent Toolkit. A custom function or function
 group is supplied as an installed NeMo Agent Toolkit component package and
 selected by `tools.definitions.ref`. No Python callable crosses the configuration
-contract. A custom adapter may publish a broader workflow schema without
-changing this shared NeMo Agent Toolkit adapter.
+contract. A target package can publish a different workflow settings schema
+without changing this shared NeMo Agent Toolkit adapter.
 
 At runtime, `start` loads components, enters one `WorkflowBuilder`, creates a
 `SessionManager` with that shared builder, and retains both resources. Each
@@ -100,10 +102,10 @@ policy selects across the effective native NeMo Agent Toolkit tool surface.
 
 ## Development Bootstrap
 
-This directory intentionally has no package metadata or discovery wiring. Until
-source resolution and third-party descriptor discovery are available, use one
-Python environment for NeMo Fabric, the common adapter host, NeMo Agent Toolkit,
-and every NeMo Agent Toolkit component referenced by the config:
+This directory intentionally has no package metadata. For this source-only
+example, use one Python environment for NeMo Fabric, the common adapter host,
+NeMo Agent Toolkit, and every NeMo Agent Toolkit component referenced by the
+config:
 
 ```bash
 uv pip install \
@@ -116,13 +118,8 @@ export PYTHONPATH="$PWD/external/nat/src${PYTHONPATH:+:$PYTHONPATH}"
 ```
 
 `PYTHONPATH` is a development bootstrap limitation, not the target installation
-contract. Stage the descriptor in the current agent-local discovery location:
-
-```bash
-mkdir -p .tmp/nat-reference/adapters/nat
-cp external/nat/fabric-adapter.json \
-  .tmp/nat-reference/adapters/nat/fabric-adapter.json
-```
+contract. The example config discovers `nat.fabric-adapter.json` and the
+adjacent target records through an explicit local path.
 
 The calculator example starts its source-only MCP server over stdio, so it does
 not require a separately managed endpoint. Run the typed `FabricConfig` example:

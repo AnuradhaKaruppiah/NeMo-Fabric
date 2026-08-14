@@ -51,7 +51,7 @@ where = ["src"]
 include = ["nemo_fabric_adapters.codex*"]
 
 [tool.setuptools.data-files]
-"share/nemo-fabric/adapters/codex" = ["fabric-adapter.json"]
+"share/nemo-fabric/adapters/codex" = ["codex.fabric-adapter.json"]
 
 [tool.uv.sources]
 nemo-fabric-adapter-contract = { path = "../../adapter-contract/python", editable = true }

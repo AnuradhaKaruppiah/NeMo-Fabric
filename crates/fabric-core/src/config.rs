@@ -9,7 +9,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use schemars::{JsonSchema, Schema, SchemaGenerator};
-use serde::{Deserialize, Serialize};
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 pub use crate::adapter_contract::{ADAPTER_CONTRACT_VERSION, AdapterExtensionPoint};
@@ -32,11 +33,15 @@ pub struct FabricConfig {
     pub schema_version: String,
     /// Human-readable metadata.
     pub metadata: MetadataConfig,
-    /// Harness selection and harness-specific settings.
-    pub harness: HarnessConfig,
-    /// Optional adapter-resolved workflow selection and construction settings.
+    /// Optional direct adapter selection and harness-specific settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness: Option<HarnessConfig>,
+    /// Optional registered workflow target and construction settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow: Option<WorkflowConfig>,
+    /// Optional explicit descriptor discovery paths.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovery: Option<DiscoveryConfig>,
     /// Named model roles.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub models: BTreeMap<String, ModelConfig>,
@@ -165,10 +170,68 @@ pub struct HarnessConfig {
     pub extensions: BTreeMap<String, Value>,
 }
 
-/// Adapter-owned workflow entry point.
+/// Registered workflow target and immutable construction settings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct WorkflowConfig {
+    /// Registered Adapter Target Descriptor id.
+    #[schemars(length(min = 1), regex(pattern = r"\S"))]
+    pub target_id: String,
+    /// Workflow-specific construction settings.
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub settings: serde_json::Map<String, Value>,
+    /// Additive workflow fields.
+    #[serde(default, flatten)]
+    pub extensions: BTreeMap<String, Value>,
+}
+
+/// Explicit descriptor discovery inputs.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct DiscoveryConfig {
+    /// Descriptor files or directories, resolved relative to the config base directory.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(schema_with = "discovery_local_paths_schema")]
+    pub local_paths: Vec<PathBuf>,
+    /// Additive discovery fields.
+    #[serde(default, flatten)]
+    pub extensions: BTreeMap<String, Value>,
+}
+
+fn discovery_local_paths_schema(generator: &mut SchemaGenerator) -> Schema {
+    let mut schema = Vec::<PathBuf>::json_schema(generator);
+    schema.insert(
+        "items".into(),
+        serde_json::json!({
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S",
+        }),
+    );
+    schema
+}
+
+/// Adapter target categories understood by this Adapter Contract version.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AdapterTargetType {
+    /// A separately registered custom-agent or workflow target.
+    Workflow,
+}
+
+impl AdapterTargetType {
+    /// Stable wire name for this target category.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Workflow => "workflow",
+        }
+    }
+}
+
+/// Adapter-owned workflow entry point supplied by an Adapter Target Descriptor.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkflowEntrypointConfig {
-    /// Adapter-defined entry-point kind.
+    /// Adapter-defined entry-point resolution semantics.
     #[schemars(length(min = 1), regex(pattern = r"\S"))]
     pub kind: String,
     /// Adapter-defined workflow reference.
@@ -179,17 +242,66 @@ pub struct WorkflowEntrypointConfig {
     pub extensions: BTreeMap<String, Value>,
 }
 
-/// Adapter-owned workflow selection and immutable construction settings.
+/// Workflow-specific Adapter Target Descriptor fields.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct WorkflowConfig {
-    /// Entry point resolved by the selected adapter.
+pub struct WorkflowTargetSpec {
+    /// Entry point projected southbound to the adapter.
     pub entrypoint: WorkflowEntrypointConfig,
-    /// Workflow-specific construction settings.
-    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
-    pub settings: serde_json::Map<String, Value>,
-    /// Additive workflow fields.
+    /// JSON Schema for `FabricConfig.workflow.settings`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings_schema: Option<serde_json::Map<String, Value>>,
+    /// Additive workflow target fields.
     #[serde(default, flatten)]
     pub extensions: BTreeMap<String, Value>,
+}
+
+/// Type-specific Adapter Target Descriptor payload.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", content = "spec", rename_all = "snake_case")]
+pub enum AdapterTarget {
+    /// Registered workflow target.
+    Workflow(WorkflowTargetSpec),
+}
+
+impl AdapterTarget {
+    fn target_type(&self) -> AdapterTargetType {
+        match self {
+            Self::Workflow(_) => AdapterTargetType::Workflow,
+        }
+    }
+
+    pub(crate) fn workflow(&self) -> &WorkflowTargetSpec {
+        match self {
+            Self::Workflow(workflow) => workflow,
+        }
+    }
+}
+
+/// Independently registered target implemented by an adapter.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AdapterTargetDescriptor {
+    /// Adapter Contract version shared with Adapter Descriptor.
+    #[schemars(schema_with = "adapter_contract_version_schema")]
+    pub contract_version: String,
+    /// Unique registered target id.
+    #[schemars(length(min = 1), regex(pattern = r"\S"))]
+    pub id: String,
+    /// Adapter implementation selected by this target.
+    #[schemars(length(min = 1), regex(pattern = r"\S"))]
+    pub adapter_id: String,
+    /// Type-specific target fields.
+    #[serde(flatten)]
+    pub target: AdapterTarget,
+    /// Additive target descriptor fields.
+    #[serde(default, flatten)]
+    pub extensions: BTreeMap<String, Value>,
+}
+
+impl AdapterTargetDescriptor {
+    /// Return this target's category.
+    pub fn target_type(&self) -> AdapterTargetType {
+        self.target.target_type()
+    }
 }
 
 /// Language-neutral adapter descriptor for a harness integration.
@@ -201,11 +313,11 @@ pub struct AdapterDescriptor {
     /// Unique id for this adapter implementation.
     #[schemars(length(min = 1), regex(pattern = r"\S"))]
     pub adapter_id: String,
-    /// Stable machine-readable harness identifier implemented by this adapter.
-    #[schemars(length(min = 1), regex(pattern = r"\S"))]
-    pub harness: String,
     /// Adapter implementation kind.
     pub adapter_kind: AdapterKind,
+    /// Registered target categories this adapter can execute.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub target_types: Vec<AdapterTargetType>,
     /// Generic runner defaults consumed by the selected runtime adapter.
     #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
     pub runner: serde_json::Map<String, Value>,
@@ -215,9 +327,6 @@ pub struct AdapterDescriptor {
     /// JSON Schema applied to every normalized `FabricConfig.models` entry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_schema: Option<serde_json::Map<String, Value>>,
-    /// JSON Schema for adapter-owned `FabricConfig.workflow`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workflow_schema: Option<serde_json::Map<String, Value>>,
     /// JSON Schema applied to every normalized `FabricConfig.tools.definitions` entry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_definition_schema: Option<serde_json::Map<String, Value>>,
@@ -261,133 +370,345 @@ fn adapter_extension_schemas_schema(generator: &mut SchemaGenerator) -> Schema {
     schema
 }
 
-/// Where NeMo Fabric resolved an adapter descriptor from.
+/// Where NeMo Fabric discovered descriptor metadata.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum AdapterDescriptorSource {
-    /// Descriptor maintained in this NeMo Fabric repository.
-    Repository,
-    /// Descriptor registered by the agent package or local development config.
-    Local,
+pub enum DescriptorSource {
+    /// Descriptor bundled with this NeMo Fabric build.
+    Bundled,
+    /// Descriptor installed as package data in the selected environment.
+    InstalledPackage,
+    /// Descriptor supplied through `FabricConfig.discovery.local_paths`.
+    ExplicitLocal,
+}
+
+impl DescriptorSource {
+    /// Stable serialized name used in diagnostics.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Bundled => "bundled",
+            Self::InstalledPackage => "installed_package",
+            Self::ExplicitLocal => "explicit_local",
+        }
+    }
+}
+
+/// One physical source for a discovered descriptor record.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct DescriptorProvenance {
+    /// Discovery provider that found this record.
+    pub source: DescriptorSource,
+    /// Canonical descriptor path.
+    pub path: PathBuf,
+    /// Directory used to resolve descriptor-local paths.
+    pub root: PathBuf,
 }
 
 /// Adapter descriptor selected for a run plan.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ResolvedAdapterDescriptor {
-    /// Registry source for this descriptor.
-    pub source: AdapterDescriptorSource,
-    /// Path to the adapter descriptor.
-    pub path: PathBuf,
-    /// Directory used to resolve descriptor-local runner and requirement paths.
-    pub root: PathBuf,
+    /// Every semantically identical record discovered for this descriptor.
+    #[serde(deserialize_with = "deserialize_non_empty_provenance")]
+    #[schemars(length(min = 1))]
+    pub provenance: Vec<DescriptorProvenance>,
     /// Adapter-owned compatibility and capability metadata.
     pub descriptor: AdapterDescriptor,
 }
 
+impl ResolvedAdapterDescriptor {
+    pub(crate) fn primary(&self) -> &DescriptorProvenance {
+        self.provenance
+            .first()
+            .expect("resolved descriptors always retain provenance")
+    }
+}
+
+/// Adapter target descriptor selected for a run plan.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ResolvedAdapterTargetDescriptor {
+    /// Every semantically identical record discovered for this descriptor.
+    #[serde(deserialize_with = "deserialize_non_empty_provenance")]
+    #[schemars(length(min = 1))]
+    pub provenance: Vec<DescriptorProvenance>,
+    /// Target-specific resolution and validation metadata.
+    pub descriptor: AdapterTargetDescriptor,
+}
+
+fn deserialize_non_empty_provenance<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Vec<DescriptorProvenance>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let provenance = Vec::<DescriptorProvenance>::deserialize(deserializer)?;
+    if provenance.is_empty() {
+        return Err(D::Error::custom("descriptor provenance must not be empty"));
+    }
+    Ok(provenance)
+}
+
+impl ResolvedAdapterTargetDescriptor {
+    pub(crate) fn primary(&self) -> &DescriptorProvenance {
+        self.provenance
+            .first()
+            .expect("resolved descriptors always retain provenance")
+    }
+}
+
 #[derive(Debug, Clone)]
-struct AdapterRegistryEntry {
-    source: AdapterDescriptorSource,
+struct DescriptorRecord<T> {
+    provenance: Vec<DescriptorProvenance>,
+    descriptor: T,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DescriptorKind {
+    Adapter,
+    Target,
+}
+
+#[derive(Debug, Clone)]
+struct DescriptorDiagnostic {
+    kind: DescriptorKind,
+    id: Option<String>,
     path: PathBuf,
-    root: PathBuf,
-    descriptor: AdapterDescriptor,
+    message: String,
 }
 
 #[derive(Debug, Clone, Default)]
-struct AdapterRegistry {
-    entries: BTreeMap<String, AdapterRegistryEntry>,
+struct DescriptorRegistry {
+    adapters: BTreeMap<String, Vec<DescriptorRecord<AdapterDescriptor>>>,
+    targets: BTreeMap<String, Vec<DescriptorRecord<AdapterTargetDescriptor>>>,
+    diagnostics: Vec<DescriptorDiagnostic>,
 }
 
-impl AdapterRegistry {
+impl DescriptorRegistry {
     fn from_config(
-        _config: &FabricConfig,
+        config: &FabricConfig,
         base_dir: &Path,
-        additional_directories: &[PathBuf],
+        installed_roots: &[PathBuf],
     ) -> Result<Self> {
         let mut registry = Self::default();
-        registry.register_repository_directory(&repository_adapter_dir())?;
-        for directory in additional_directories {
-            registry.register_local_directory(directory)?;
+        registry.register_path(&repository_adapter_dir(), DescriptorSource::Bundled, false)?;
+        for root in installed_roots {
+            registry.register_path(root, DescriptorSource::InstalledPackage, false)?;
         }
-        registry.register_local_directory(&base_dir.join("adapters"))?;
+        for path in config
+            .discovery
+            .iter()
+            .flat_map(|discovery| &discovery.local_paths)
+        {
+            registry.register_path(
+                &resolve_path(base_dir, path),
+                DescriptorSource::ExplicitLocal,
+                true,
+            )?;
+        }
         Ok(registry)
     }
 
-    fn register_repository_directory(&mut self, directory: &Path) -> Result<()> {
-        self.register_directory_tree(directory, AdapterDescriptorSource::Repository)
-    }
-
-    fn register_local_directory(&mut self, directory: &Path) -> Result<()> {
-        self.register_directory_tree(directory, AdapterDescriptorSource::Local)
+    fn register_path(
+        &mut self,
+        path: &Path,
+        source: DescriptorSource,
+        required: bool,
+    ) -> Result<()> {
+        if !path.exists() {
+            if required {
+                return Err(FabricError::PathNotFound(path.to_path_buf()));
+            }
+            return Ok(());
+        }
+        if path.is_dir() {
+            return self.register_directory_tree(path, source);
+        }
+        let Some(kind) = descriptor_kind(path) else {
+            return if required {
+                invalid_config(
+                    "discovery.local_paths",
+                    format!(
+                        "descriptor file `{}` must end in .fabric-adapter.json or .fabric-target.json",
+                        path.display()
+                    ),
+                )
+            } else {
+                Ok(())
+            };
+        };
+        self.register_file(path, source, kind);
+        Ok(())
     }
 
     fn register_directory_tree(
         &mut self,
         directory: &Path,
-        source: AdapterDescriptorSource,
+        source: DescriptorSource,
     ) -> Result<()> {
-        if !directory.is_dir() {
-            return Ok(());
-        }
         let entries = fs::read_dir(directory).map_err(|source| FabricError::Read {
             path: directory.to_path_buf(),
             source,
         })?;
-        for entry in entries {
-            let entry = entry.map_err(|source| FabricError::Read {
-                path: directory.to_path_buf(),
-                source,
-            })?;
-            let path = entry.path();
-            if path.is_dir() {
+        let mut paths = entries
+            .map(|entry| {
+                let entry = entry.map_err(|source| FabricError::Read {
+                    path: directory.to_path_buf(),
+                    source,
+                })?;
+                let file_type = entry.file_type().map_err(|source| FabricError::Read {
+                    path: directory.to_path_buf(),
+                    source,
+                })?;
+                Ok((entry.path(), file_type))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        paths.sort_by(|(left, _), (right, _)| left.cmp(right));
+        for (path, file_type) in paths {
+            if file_type.is_dir() {
                 self.register_directory_tree(&path, source)?;
                 continue;
             }
-            if !is_adapter_descriptor_file(&path) {
+            if file_type.is_symlink() && path.is_dir() {
                 continue;
             }
-            let descriptor = load_adapter_descriptor(&path)?;
-            self.register_descriptor(path, source, descriptor)?;
+            if let Some(kind) = descriptor_kind(&path) {
+                self.register_file(&path, source, kind);
+            }
         }
         Ok(())
     }
 
-    fn register_descriptor(
-        &mut self,
-        path: PathBuf,
-        source: AdapterDescriptorSource,
-        descriptor: AdapterDescriptor,
-    ) -> Result<()> {
-        validate_adapter_descriptor_shape(&descriptor, &path)?;
-        let path = path.canonicalize().unwrap_or(path);
+    fn register_file(&mut self, path: &Path, source: DescriptorSource, kind: DescriptorKind) {
+        let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         let root = path.parent().unwrap_or(Path::new(".")).to_path_buf();
-        self.entries.insert(
-            descriptor.adapter_id.clone(),
-            AdapterRegistryEntry {
-                source,
-                path,
-                root,
-                descriptor,
+        let provenance = DescriptorProvenance {
+            source,
+            path: path.clone(),
+            root,
+        };
+        match kind {
+            DescriptorKind::Adapter => match load_adapter_descriptor(&path) {
+                Ok(descriptor) => {
+                    let id = descriptor.adapter_id.clone();
+                    Self::insert_record(&mut self.adapters, id, descriptor, provenance);
+                }
+                Err(error) => self.diagnostics.push(DescriptorDiagnostic {
+                    kind,
+                    id: read_descriptor_id(&path, "adapter_id"),
+                    path,
+                    message: error.to_string(),
+                }),
             },
-        );
-        Ok(())
+            DescriptorKind::Target => match load_adapter_target_descriptor(&path) {
+                Ok(descriptor) => {
+                    let id = descriptor.id.clone();
+                    Self::insert_record(&mut self.targets, id, descriptor, provenance);
+                }
+                Err(error) => self.diagnostics.push(DescriptorDiagnostic {
+                    kind,
+                    id: read_descriptor_id(&path, "id"),
+                    path,
+                    message: error.to_string(),
+                }),
+            },
+        }
     }
 
-    fn get(&self, adapter_id: &str) -> Option<&AdapterRegistryEntry> {
-        self.entries.get(adapter_id)
+    fn insert_record<T: PartialEq>(
+        records: &mut BTreeMap<String, Vec<DescriptorRecord<T>>>,
+        id: String,
+        descriptor: T,
+        provenance: DescriptorProvenance,
+    ) {
+        let candidates = records.entry(id).or_default();
+        if let Some(candidate) = candidates
+            .iter_mut()
+            .find(|candidate| candidate.descriptor == descriptor)
+        {
+            candidate.provenance.push(provenance);
+        } else {
+            candidates.push(DescriptorRecord {
+                provenance: vec![provenance],
+                descriptor,
+            });
+        }
     }
 
-    fn ids(&self) -> Vec<String> {
-        let mut ids: Vec<String> = self.entries.keys().cloned().collect();
-        ids.sort();
-        ids
+    fn adapter(&self, adapter_id: &str) -> Result<&DescriptorRecord<AdapterDescriptor>> {
+        if let Some(diagnostic) = self.diagnostic(DescriptorKind::Adapter, adapter_id) {
+            return Err(FabricError::InvalidAdapterDescriptor {
+                path: diagnostic.path.clone(),
+                message: diagnostic.message.clone(),
+            });
+        }
+        let Some(candidates) = self.adapters.get(adapter_id) else {
+            return Err(FabricError::UnknownAdapter {
+                adapter_id: adapter_id.to_string(),
+                available: self.adapters.keys().cloned().collect(),
+            });
+        };
+        if candidates.len() != 1 {
+            return Err(FabricError::AmbiguousDescriptor {
+                descriptor_kind: "adapter",
+                id: adapter_id.to_string(),
+                paths: descriptor_paths(candidates),
+            });
+        }
+        Ok(&candidates[0])
+    }
+
+    fn target(&self, target_id: &str) -> Result<&DescriptorRecord<AdapterTargetDescriptor>> {
+        if let Some(diagnostic) = self.diagnostic(DescriptorKind::Target, target_id) {
+            return Err(FabricError::InvalidAdapterTargetDescriptor {
+                path: diagnostic.path.clone(),
+                message: diagnostic.message.clone(),
+            });
+        }
+        let Some(candidates) = self.targets.get(target_id) else {
+            return Err(FabricError::UnknownAdapterTarget {
+                target_id: target_id.to_string(),
+                available: self.targets.keys().cloned().collect(),
+            });
+        };
+        if candidates.len() != 1 {
+            return Err(FabricError::AmbiguousDescriptor {
+                descriptor_kind: "adapter target",
+                id: target_id.to_string(),
+                paths: descriptor_paths(candidates),
+            });
+        }
+        Ok(&candidates[0])
+    }
+
+    fn diagnostic(&self, kind: DescriptorKind, id: &str) -> Option<&DescriptorDiagnostic> {
+        self.diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.kind == kind && diagnostic.id.as_deref() == Some(id))
     }
 }
 
-fn is_adapter_descriptor_file(path: &Path) -> bool {
-    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-        return false;
-    };
-    name == "fabric-adapter.json"
+fn descriptor_paths<T>(candidates: &[DescriptorRecord<T>]) -> Vec<PathBuf> {
+    candidates
+        .iter()
+        .flat_map(|candidate| candidate.provenance.iter())
+        .map(|provenance| provenance.path.clone())
+        .collect()
+}
+
+fn read_descriptor_id(path: &Path, field: &str) -> Option<String> {
+    let raw = fs::read_to_string(path).ok()?;
+    let value: Value = serde_json::from_str(&raw).ok()?;
+    value.get(field)?.as_str().map(ToString::to_string)
+}
+
+fn descriptor_kind(path: &Path) -> Option<DescriptorKind> {
+    let name = path.file_name()?.to_str()?;
+    if name.ends_with(".fabric-adapter.json") {
+        Some(DescriptorKind::Adapter)
+    } else if name.ends_with(".fabric-target.json") {
+        Some(DescriptorKind::Target)
+    } else {
+        None
+    }
 }
 
 fn repository_adapter_dir() -> PathBuf {
@@ -480,10 +801,8 @@ pub struct AdapterConfigSupport {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AdapterConfigInput {
-    /// Deliver the complete northbound `FabricConfig` for legacy adapters.
-    #[default]
-    FabricConfig,
     /// Deliver the resolved southbound `AgentConfig` contract.
+    #[default]
     AgentConfig,
 }
 
@@ -1439,19 +1758,39 @@ pub fn load_adapter_descriptor(path: impl AsRef<Path>) -> Result<AdapterDescript
     Ok(descriptor)
 }
 
+/// Load an Adapter Target Descriptor from declarative JSON metadata.
+pub fn load_adapter_target_descriptor(path: impl AsRef<Path>) -> Result<AdapterTargetDescriptor> {
+    let path = path.as_ref();
+    let descriptor = read_json(path)?;
+    validate_adapter_target_descriptor_shape(&descriptor, path)?;
+    Ok(descriptor)
+}
+
 pub(crate) fn validate_config(config: &FabricConfig) -> Result<()> {
-    if config.harness.adapter_id.trim().is_empty() {
-        return Err(FabricError::UnknownAdapter {
-            adapter_id: config.harness.adapter_id.clone(),
-            available: Vec::new(),
-        });
+    if config.harness.is_none() && config.workflow.is_none() {
+        return invalid_config(
+            "harness",
+            "at least one of harness.adapter_id or workflow.target_id is required",
+        );
     }
-    if let Some(workflow) = &config.workflow {
-        if workflow.entrypoint.kind.trim().is_empty() {
-            return invalid_config("workflow.entrypoint.kind", "must be a non-empty string");
-        }
-        if workflow.entrypoint.r#ref.trim().is_empty() {
-            return invalid_config("workflow.entrypoint.ref", "must be a non-empty string");
+    if let Some(harness) = &config.harness
+        && harness.adapter_id.trim().is_empty()
+    {
+        return invalid_config("harness.adapter_id", "must be a non-empty string");
+    }
+    if let Some(workflow) = &config.workflow
+        && workflow.target_id.trim().is_empty()
+    {
+        return invalid_config("workflow.target_id", "must be a non-empty string");
+    }
+    if let Some(discovery) = &config.discovery {
+        for (index, path) in discovery.local_paths.iter().enumerate() {
+            if path.to_string_lossy().trim().is_empty() {
+                return invalid_config(
+                    format!("discovery.local_paths.{index}"),
+                    "must contain at least one non-whitespace character",
+                );
+            }
         }
     }
     if config.runtime.max_turns == Some(0) {
@@ -1964,12 +2303,13 @@ where
 fn resolve_run_plan(
     config: FabricConfig,
     base_dir: PathBuf,
-    adapter_directories: &[PathBuf],
+    installed_roots: &[PathBuf],
     enforce_compatibility: bool,
 ) -> Result<RunPlan> {
-    let adapter_descriptor = resolve_adapter_descriptor(&config, &base_dir, adapter_directories)?;
+    let registry = DescriptorRegistry::from_config(&config, &base_dir, installed_roots)?;
+    let (adapter_descriptor, adapter_target_descriptor) = resolve_descriptors(&config, &registry)?;
     validate_harness_settings(&config, adapter_descriptor.as_ref())?;
-    validate_workflow(&config, adapter_descriptor.as_ref())?;
+    validate_workflow(&config, adapter_target_descriptor.as_ref())?;
     let descriptor = adapter_descriptor
         .as_ref()
         .map(|adapter| &adapter.descriptor);
@@ -1977,7 +2317,11 @@ fn resolve_run_plan(
         validate_adapter_config_compatibility(&config, descriptor)?;
     }
     validate_tool_definitions(&config, adapter_descriptor.as_ref())?;
-    validate_agent_config_extensions(&config, adapter_descriptor.as_ref())?;
+    validate_agent_config_extensions(
+        &config,
+        adapter_descriptor.as_ref(),
+        adapter_target_descriptor.as_ref(),
+    )?;
     let resolution = resolve_resolution(&config, descriptor)?;
     let environment_plan = resolve_environment_plan(&config, &base_dir);
     validate_control_location(descriptor, environment_plan.as_ref())?;
@@ -1987,13 +2331,19 @@ fn resolve_run_plan(
     }
     let capabilities = resolve_runtime_capabilities(&config, descriptor);
     let telemetry_plan = resolve_telemetry_plan(&config, descriptor)?;
-    let agent_config = project_agent_config(&config, &capability_plan, descriptor);
+    let agent_config = project_agent_config(
+        &config,
+        &capability_plan,
+        descriptor,
+        adapter_target_descriptor.as_ref(),
+    );
     Ok(RunPlan {
         agent_name: config.metadata.name.clone(),
         base_dir,
         config,
         agent_config,
         adapter_descriptor,
+        adapter_target_descriptor,
         resolution,
         environment_plan,
         capability_plan,
@@ -2183,43 +2533,62 @@ pub(crate) fn adapter_config_compatibility_issues(
     issues
 }
 
-fn resolve_adapter_descriptor(
+fn resolve_descriptors(
     config: &FabricConfig,
-    base_dir: &Path,
-    adapter_directories: &[PathBuf],
-) -> Result<Option<ResolvedAdapterDescriptor>> {
-    let adapter_id = &config.harness.adapter_id;
-    let registry = AdapterRegistry::from_config(config, base_dir, adapter_directories)?;
-    let Some(entry) = registry.get(adapter_id) else {
-        return Err(FabricError::UnknownAdapter {
-            adapter_id: adapter_id.clone(),
-            available: registry.ids(),
-        });
-    };
-    validate_adapter_descriptor(config, adapter_id, &entry.descriptor, entry.path.clone())?;
-    Ok(Some(ResolvedAdapterDescriptor {
-        source: entry.source,
-        path: entry.path.clone(),
-        root: entry.root.clone(),
-        descriptor: entry.descriptor.clone(),
-    }))
-}
-
-fn validate_adapter_descriptor(
-    _config: &FabricConfig,
-    expected_adapter_id: &str,
-    descriptor: &AdapterDescriptor,
-    path: PathBuf,
-) -> Result<()> {
-    if descriptor.adapter_id != expected_adapter_id {
-        return Err(FabricError::AdapterDescriptorMismatch {
-            path,
-            field: "adapter_id",
-            expected: expected_adapter_id.to_string(),
-            actual: descriptor.adapter_id.clone(),
-        });
+    registry: &DescriptorRegistry,
+) -> Result<(
+    Option<ResolvedAdapterDescriptor>,
+    Option<ResolvedAdapterTargetDescriptor>,
+)> {
+    let target_record = config
+        .workflow
+        .as_ref()
+        .map(|workflow| registry.target(&workflow.target_id))
+        .transpose()?;
+    let target_adapter_id = target_record.map(|record| record.descriptor.adapter_id.as_str());
+    let harness_adapter_id = config
+        .harness
+        .as_ref()
+        .map(|harness| harness.adapter_id.as_str());
+    if let (Some(harness_adapter_id), Some(target_adapter_id)) =
+        (harness_adapter_id, target_adapter_id)
+        && harness_adapter_id != target_adapter_id
+    {
+        return invalid_config(
+            "harness.adapter_id",
+            format!(
+                "selects `{harness_adapter_id}` but workflow target selects `{target_adapter_id}`"
+            ),
+        );
     }
-    Ok(())
+    let adapter_id = target_adapter_id
+        .or(harness_adapter_id)
+        .expect("config validation requires an adapter selector");
+    let adapter_record = registry.adapter(adapter_id)?;
+    if let Some(target_record) = target_record {
+        let target_type = target_record.descriptor.target_type();
+        if !adapter_record
+            .descriptor
+            .target_types
+            .contains(&target_type)
+        {
+            return Err(FabricError::AdapterDescriptorUnsupported {
+                adapter_id: adapter_id.to_string(),
+                field: "target_types",
+                value: target_type.as_str().to_string(),
+            });
+        }
+    }
+    Ok((
+        Some(ResolvedAdapterDescriptor {
+            provenance: adapter_record.provenance.clone(),
+            descriptor: adapter_record.descriptor.clone(),
+        }),
+        target_record.map(|record| ResolvedAdapterTargetDescriptor {
+            provenance: record.provenance.clone(),
+            descriptor: record.descriptor.clone(),
+        }),
+    ))
 }
 
 fn validate_adapter_descriptor_shape(descriptor: &AdapterDescriptor, path: &Path) -> Result<()> {
@@ -2236,13 +2605,17 @@ fn validate_adapter_descriptor_shape(descriptor: &AdapterDescriptor, path: &Path
     if descriptor.adapter_id.trim().is_empty() {
         return invalid_adapter_descriptor(path, "adapter_id must not be empty");
     }
-    if descriptor.harness.trim().is_empty() {
-        return invalid_adapter_descriptor(path, "harness must not be empty");
+    for legacy_field in ["harness", "workflow_schema"] {
+        if descriptor.extensions.contains_key(legacy_field) {
+            return invalid_adapter_descriptor(
+                path,
+                format!("legacy field `{legacy_field}` is not part of the adapter contract"),
+            );
+        }
     }
     for (field, schema) in [
         ("settings_schema", descriptor.settings_schema.as_ref()),
         ("model_schema", descriptor.model_schema.as_ref()),
-        ("workflow_schema", descriptor.workflow_schema.as_ref()),
         (
             "tool_definition_schema",
             descriptor.tool_definition_schema.as_ref(),
@@ -2259,18 +2632,80 @@ fn validate_adapter_descriptor_shape(descriptor: &AdapterDescriptor, path: &Path
     Ok(())
 }
 
+fn validate_adapter_target_descriptor_shape(
+    descriptor: &AdapterTargetDescriptor,
+    path: &Path,
+) -> Result<()> {
+    if descriptor.contract_version != ADAPTER_CONTRACT_VERSION {
+        return invalid_adapter_target_descriptor(
+            path,
+            format!(
+                "contract_version must be `{ADAPTER_CONTRACT_VERSION}`, found `{}`",
+                descriptor.contract_version
+            ),
+        );
+    }
+    if descriptor.id.trim().is_empty() {
+        return invalid_adapter_target_descriptor(path, "id must not be empty");
+    }
+    if descriptor.adapter_id.trim().is_empty() {
+        return invalid_adapter_target_descriptor(path, "adapter_id must not be empty");
+    }
+    let workflow = descriptor.target.workflow();
+    if workflow.entrypoint.kind.trim().is_empty() {
+        return invalid_adapter_target_descriptor(path, "spec.entrypoint.kind must not be empty");
+    }
+    if workflow.entrypoint.r#ref.trim().is_empty() {
+        return invalid_adapter_target_descriptor(path, "spec.entrypoint.ref must not be empty");
+    }
+    if let Some(schema) = &workflow.settings_schema {
+        validate_adapter_target_object_schema(path, "spec.settings_schema", schema)?;
+    }
+    Ok(())
+}
+
 fn validate_adapter_object_schema(
     path: &Path,
     field: &str,
     schema: &serde_json::Map<String, Value>,
 ) -> Result<()> {
+    validate_descriptor_object_schema(field, schema, |message| {
+        FabricError::InvalidAdapterDescriptor {
+            path: path.to_path_buf(),
+            message,
+        }
+    })
+}
+
+fn invalid_adapter_descriptor<T>(path: &Path, message: impl Into<String>) -> Result<T> {
+    Err(FabricError::InvalidAdapterDescriptor {
+        path: path.to_path_buf(),
+        message: message.into(),
+    })
+}
+
+fn validate_adapter_target_object_schema(
+    path: &Path,
+    field: &str,
+    schema: &serde_json::Map<String, Value>,
+) -> Result<()> {
+    validate_descriptor_object_schema(field, schema, |message| {
+        FabricError::InvalidAdapterTargetDescriptor {
+            path: path.to_path_buf(),
+            message,
+        }
+    })
+}
+
+fn validate_descriptor_object_schema(
+    field: &str,
+    schema: &serde_json::Map<String, Value>,
+    invalid: impl Fn(String) -> FabricError,
+) -> Result<()> {
     let schema = Value::Object(schema.clone());
     jsonschema::meta::options()
         .validate(&schema)
-        .map_err(|error| FabricError::InvalidAdapterDescriptor {
-            path: path.to_path_buf(),
-            message: format!("{field} is not valid JSON Schema: {error}"),
-        })?;
+        .map_err(|error| invalid(format!("{field} is not valid JSON Schema: {error}")))?;
     let allows_object_instances = match schema.get("type") {
         Some(Value::String(root_type)) => root_type == "object",
         Some(Value::Array(root_types)) => root_types
@@ -2279,20 +2714,17 @@ fn validate_adapter_object_schema(
         _ => true,
     };
     if !allows_object_instances {
-        return invalid_adapter_descriptor(
-            path,
-            format!("{field} root type must allow object instances"),
-        );
+        return Err(invalid(format!(
+            "{field} root type must allow object instances"
+        )));
     }
-    jsonschema::validator_for(&schema).map_err(|error| FabricError::InvalidAdapterDescriptor {
-        path: path.to_path_buf(),
-        message: format!("{field} could not be compiled: {error}"),
-    })?;
+    jsonschema::validator_for(&schema)
+        .map_err(|error| invalid(format!("{field} could not be compiled: {error}")))?;
     Ok(())
 }
 
-fn invalid_adapter_descriptor<T>(path: &Path, message: impl Into<String>) -> Result<T> {
-    Err(FabricError::InvalidAdapterDescriptor {
+fn invalid_adapter_target_descriptor<T>(path: &Path, message: impl Into<String>) -> Result<T> {
+    Err(FabricError::InvalidAdapterTargetDescriptor {
         path: path.to_path_buf(),
         message: message.into(),
     })
@@ -2305,12 +2737,14 @@ pub(crate) fn validate_harness_settings(
     let Some(resolved) = resolved else {
         return Ok(());
     };
+    let Some(harness) = &config.harness else {
+        return Ok(());
+    };
     let Some(schema) = &resolved.descriptor.settings_schema else {
-        if config.harness.settings.is_empty() {
+        if harness.settings.is_empty() {
             return Ok(());
         }
-        let name = config
-            .harness
+        let name = harness
             .settings
             .keys()
             .min()
@@ -2323,10 +2757,10 @@ pub(crate) fn validate_harness_settings(
     };
 
     let schema = Value::Object(schema.clone());
-    let settings = Value::Object(config.harness.settings.clone());
+    let settings = Value::Object(harness.settings.clone());
     let validator = jsonschema::validator_for(&schema).map_err(|error| {
         FabricError::InvalidAdapterDescriptor {
-            path: resolved.path.clone(),
+            path: resolved.primary().path.clone(),
             message: format!("settings_schema could not be compiled: {error}"),
         }
     })?;
@@ -2340,34 +2774,39 @@ pub(crate) fn validate_harness_settings(
 
 pub(crate) fn validate_workflow(
     config: &FabricConfig,
-    resolved: Option<&ResolvedAdapterDescriptor>,
+    resolved: Option<&ResolvedAdapterTargetDescriptor>,
 ) -> Result<()> {
-    let Some(resolved) = resolved else {
+    let (Some(workflow), Some(resolved)) = (&config.workflow, resolved) else {
         return Ok(());
     };
-    let schema = match (&config.workflow, &resolved.descriptor.workflow_schema) {
-        (None, None) => return Ok(()),
-        (Some(_), None) => {
-            return invalid_workflow(
-                resolved,
-                "workflow".to_string(),
-                "the resolved descriptor does not declare a workflow_schema",
-            );
+    let target = resolved.descriptor.target.workflow();
+    let Some(schema) = &target.settings_schema else {
+        if workflow.settings.is_empty() {
+            return Ok(());
         }
-        (_, Some(schema)) => schema,
+        let name = workflow
+            .settings
+            .keys()
+            .min()
+            .expect("non-empty settings have a key");
+        return invalid_workflow(
+            resolved,
+            format!("workflow.settings.{name}"),
+            "the resolved target descriptor does not declare a settings_schema",
+        );
     };
 
     let schema = Value::Object(schema.clone());
-    let workflow = serde_json::to_value(&config.workflow).map_err(FabricError::SerializeJson)?;
+    let settings = Value::Object(workflow.settings.clone());
     let validator = jsonschema::validator_for(&schema).map_err(|error| {
-        FabricError::InvalidAdapterDescriptor {
-            path: resolved.path.clone(),
-            message: format!("workflow_schema could not be compiled: {error}"),
+        FabricError::InvalidAdapterTargetDescriptor {
+            path: resolved.primary().path.clone(),
+            message: format!("spec.settings_schema could not be compiled: {error}"),
         }
     })?;
-    if let Some(error) = validator.iter_errors(&workflow).next() {
-        let workflow_path = schema_error_path(&error, "workflow");
-        let reason = schema_error_reason(&error, "adapter workflow schema");
+    if let Some(error) = validator.iter_errors(&settings).next() {
+        let workflow_path = schema_error_path(&error, "workflow.settings");
+        let reason = schema_error_reason(&error, "adapter target settings schema");
         return invalid_workflow(resolved, workflow_path, reason);
     }
     Ok(())
@@ -2403,7 +2842,7 @@ pub(crate) fn validate_tool_definitions(
     let schema = Value::Object(schema.clone());
     let validator = jsonschema::validator_for(&schema).map_err(|error| {
         FabricError::InvalidAdapterDescriptor {
-            path: resolved.path.clone(),
+            path: resolved.primary().path.clone(),
             message: format!("tool_definition_schema could not be compiled: {error}"),
         }
     })?;
@@ -2427,14 +2866,11 @@ pub(crate) fn validate_tool_definitions(
 pub(crate) fn validate_agent_config_extensions(
     config: &FabricConfig,
     resolved: Option<&ResolvedAdapterDescriptor>,
+    target: Option<&ResolvedAdapterTargetDescriptor>,
 ) -> Result<()> {
     let Some(resolved) = resolved else {
         return Ok(());
     };
-    if resolved.descriptor.config.input != AdapterConfigInput::AgentConfig {
-        return Ok(());
-    }
-
     let mut validators = BTreeMap::new();
 
     validate_extension_block(
@@ -2444,13 +2880,15 @@ pub(crate) fn validate_agent_config_extensions(
         &config.extensions,
         &mut validators,
     )?;
-    validate_extension_block(
-        resolved,
-        AdapterExtensionPoint::Harness,
-        "harness",
-        &config.harness.extensions,
-        &mut validators,
-    )?;
+    if let Some(harness) = &config.harness {
+        validate_extension_block(
+            resolved,
+            AdapterExtensionPoint::Harness,
+            "harness",
+            &harness.extensions,
+            &mut validators,
+        )?;
+    }
     for (name, model) in &config.models {
         validate_extension_block(
             resolved,
@@ -2538,11 +2976,13 @@ pub(crate) fn validate_agent_config_extensions(
             &workflow.extensions,
             &mut validators,
         )?;
+    }
+    if let Some(target) = target {
         validate_extension_block(
             resolved,
             AdapterExtensionPoint::WorkflowEntrypoint,
             "workflow.entrypoint",
-            &workflow.entrypoint.extensions,
+            &target.descriptor.target.workflow().entrypoint.extensions,
             &mut validators,
         )?;
     }
@@ -2575,7 +3015,7 @@ fn validate_extension_block(
             let schema = Value::Object(schema.clone());
             let validator = jsonschema::validator_for(&schema).map_err(|error| {
                 FabricError::InvalidAdapterDescriptor {
-                    path: resolved.path.clone(),
+                    path: resolved.primary().path.clone(),
                     message: format!(
                         "extension_schemas.{} could not be compiled: {error}",
                         point.as_str()
@@ -2589,8 +3029,8 @@ fn validate_extension_block(
     if let Some(error) = validator.iter_errors(&value).next() {
         return Err(FabricError::InvalidAdapterExtension {
             adapter_id: resolved.descriptor.adapter_id.clone(),
-            descriptor_source: resolved.source,
-            descriptor_path: resolved.path.clone(),
+            descriptor_source: resolved.primary().source,
+            descriptor_path: resolved.primary().path.clone(),
             extension_path: schema_error_path(&error, path),
             reason: schema_error_reason(&error, "adapter extension schema"),
         });
@@ -2605,22 +3045,22 @@ fn invalid_harness_settings<T>(
 ) -> Result<T> {
     Err(FabricError::InvalidHarnessSettings {
         adapter_id: resolved.descriptor.adapter_id.clone(),
-        descriptor_source: resolved.source,
-        descriptor_path: resolved.path.clone(),
+        descriptor_source: resolved.primary().source,
+        descriptor_path: resolved.primary().path.clone(),
         settings_path,
         reason: reason.into(),
     })
 }
 
 fn invalid_workflow<T>(
-    resolved: &ResolvedAdapterDescriptor,
+    resolved: &ResolvedAdapterTargetDescriptor,
     workflow_path: String,
     reason: impl Into<String>,
 ) -> Result<T> {
     Err(FabricError::InvalidWorkflow {
         adapter_id: resolved.descriptor.adapter_id.clone(),
-        descriptor_source: resolved.source,
-        descriptor_path: resolved.path.clone(),
+        descriptor_source: resolved.primary().source,
+        descriptor_path: resolved.primary().path.clone(),
         workflow_path,
         reason: reason.into(),
     })
@@ -2633,8 +3073,8 @@ fn invalid_tool_definition<T>(
 ) -> Result<T> {
     Err(FabricError::InvalidToolDefinition {
         adapter_id: resolved.descriptor.adapter_id.clone(),
-        descriptor_source: resolved.source,
-        descriptor_path: resolved.path.clone(),
+        descriptor_source: resolved.primary().source,
+        descriptor_path: resolved.primary().path.clone(),
         definition_path,
         reason: reason.into(),
     })
@@ -2728,7 +3168,10 @@ fn resolve_resolution(
     config: &FabricConfig,
     _adapter_descriptor: Option<&AdapterDescriptor>,
 ) -> Result<Option<ResolutionStrategy>> {
-    Ok(config.harness.resolution)
+    Ok(config
+        .harness
+        .as_ref()
+        .and_then(|harness| harness.resolution))
 }
 
 fn resolve_environment_plan(config: &FabricConfig, base_dir: &Path) -> Option<EnvironmentPlan> {
@@ -3073,6 +3516,9 @@ pub struct RunPlan {
     /// Adapter descriptor resolved for this plan, when configured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adapter_descriptor: Option<ResolvedAdapterDescriptor>,
+    /// Adapter Target Descriptor resolved for this plan, when selected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adapter_target_descriptor: Option<ResolvedAdapterTargetDescriptor>,
     /// Selected install or availability strategy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolution: Option<ResolutionStrategy>,
@@ -3382,10 +3828,7 @@ mod tests {
 
     fn typed_workflow() -> WorkflowConfig {
         serde_json::from_value(serde_json::json!({
-            "entrypoint": {
-                "kind": "workflow_registry",
-                "ref": "test_agent"
-            },
+            "target_id": "test.fabric.workflow",
             "settings": {
                 "llm_name": "default"
             }
@@ -3393,33 +3836,56 @@ mod tests {
         .expect("typed workflow")
     }
 
-    fn workflow_schema() -> serde_json::Map<String, Value> {
+    fn workflow_settings_schema() -> serde_json::Map<String, Value> {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "entrypoint": {
-                    "type": "object",
-                    "properties": {
-                        "kind": {"const": "workflow_registry"},
-                        "ref": {"type": "string", "minLength": 1}
-                    },
-                    "required": ["kind", "ref"],
-                    "additionalProperties": false
-                },
-                "settings": {
-                    "type": "object",
-                    "properties": {
-                        "llm_name": {"type": "string"}
-                    },
-                    "additionalProperties": false
-                }
+                "llm_name": {"type": "string"}
             },
-            "required": ["entrypoint"],
             "additionalProperties": false
         })
         .as_object()
-        .expect("object workflow schema")
+        .expect("object workflow settings schema")
         .clone()
+    }
+
+    fn resolved_adapter(path: PathBuf, descriptor: AdapterDescriptor) -> ResolvedAdapterDescriptor {
+        ResolvedAdapterDescriptor {
+            provenance: vec![DescriptorProvenance {
+                source: DescriptorSource::Bundled,
+                root: path.parent().expect("descriptor directory").to_path_buf(),
+                path,
+            }],
+            descriptor,
+        }
+    }
+
+    fn resolved_workflow_target(
+        path: PathBuf,
+        settings_schema: Option<serde_json::Map<String, Value>>,
+    ) -> ResolvedAdapterTargetDescriptor {
+        ResolvedAdapterTargetDescriptor {
+            provenance: vec![DescriptorProvenance {
+                source: DescriptorSource::Bundled,
+                root: path.parent().expect("descriptor directory").to_path_buf(),
+                path,
+            }],
+            descriptor: AdapterTargetDescriptor {
+                contract_version: ADAPTER_CONTRACT_VERSION.to_string(),
+                id: "test.fabric.workflow".to_string(),
+                adapter_id: "test.fabric.adapter".to_string(),
+                target: AdapterTarget::Workflow(WorkflowTargetSpec {
+                    entrypoint: WorkflowEntrypointConfig {
+                        kind: "workflow_registry".to_string(),
+                        r#ref: "test_agent".to_string(),
+                        extensions: BTreeMap::new(),
+                    },
+                    settings_schema,
+                    extensions: BTreeMap::new(),
+                }),
+                extensions: BTreeMap::new(),
+            },
+        }
     }
 
     fn tool_definition_schema() -> serde_json::Map<String, Value> {
@@ -4024,14 +4490,9 @@ mod tests {
 
     #[test]
     fn agent_config_projects_only_harness_native_mcp_servers() {
-        let path = repository_root().join("adapters/hermes/fabric-adapter.json");
+        let path = repository_root().join("adapters/hermes/hermes.fabric-adapter.json");
         let descriptor = load_adapter_descriptor(&path).expect("Hermes descriptor");
-        let resolved = ResolvedAdapterDescriptor {
-            descriptor,
-            source: AdapterDescriptorSource::Repository,
-            path: path.clone(),
-            root: path.parent().expect("descriptor directory").to_path_buf(),
-        };
+        let resolved = resolved_adapter(path.clone(), descriptor);
         let mut config = typed_config("nvidia.fabric.hermes");
         config.skills = None;
         config.mcp = Some(
@@ -4055,7 +4516,7 @@ mod tests {
         let capability_plan =
             resolve_capability_plan(&config, Path::new("/tmp/mixed-mcp"), Some(&resolved));
         let agent_config =
-            project_agent_config(&config, &capability_plan, Some(&resolved.descriptor));
+            project_agent_config(&config, &capability_plan, Some(&resolved.descriptor), None);
         let projected = &agent_config.mcp.expect("projected MCP config").servers;
 
         assert!(projected.contains_key("native"));
@@ -4240,6 +4701,87 @@ mod tests {
         assert_eq!(value["base_dir"], "/tmp/fabric-base");
         assert_eq!(value["config"]["metadata"]["name"], "typed-agent");
         assert!(value.get("effective_config").is_none());
+    }
+
+    #[test]
+    fn resolved_descriptors_reject_empty_provenance() {
+        let adapter_path = repository_root().join("adapters/hermes/hermes.fabric-adapter.json");
+        let descriptor = load_adapter_descriptor(&adapter_path).expect("Hermes descriptor");
+        let mut adapter = serde_json::to_value(resolved_adapter(adapter_path, descriptor))
+            .expect("resolved adapter JSON");
+        adapter["provenance"] = serde_json::json!([]);
+
+        let adapter_error = serde_json::from_value::<ResolvedAdapterDescriptor>(adapter)
+            .expect_err("empty adapter provenance must fail");
+        assert!(
+            adapter_error
+                .to_string()
+                .contains("provenance must not be empty")
+        );
+
+        let mut target = serde_json::to_value(resolved_workflow_target(
+            PathBuf::from("workflow.fabric-target.json"),
+            None,
+        ))
+        .expect("resolved target JSON");
+        target["provenance"] = serde_json::json!([]);
+
+        let target_error = serde_json::from_value::<ResolvedAdapterTargetDescriptor>(target)
+            .expect_err("empty target provenance must fail");
+        assert!(
+            target_error
+                .to_string()
+                .contains("provenance must not be empty")
+        );
+    }
+
+    #[test]
+    fn discovery_rejects_whitespace_only_local_paths() {
+        let mut config = typed_config("nvidia.fabric.hermes");
+        config.discovery = Some(DiscoveryConfig {
+            local_paths: vec![PathBuf::from(" \t ")],
+            extensions: BTreeMap::new(),
+        });
+
+        let error = validate_config(&config).expect_err("blank discovery path must fail");
+
+        assert!(matches!(
+            error,
+            FabricError::InvalidConfig { field, .. }
+                if field == "discovery.local_paths.0"
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn descriptor_discovery_skips_symlinked_directory_cycles() {
+        use std::os::unix::fs::symlink;
+
+        struct RemoveDirOnDrop(PathBuf);
+
+        impl Drop for RemoveDirOnDrop {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let root = std::env::temp_dir().join(format!(
+            "nemo-fabric-adapter-symlink-cycle-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create descriptor root");
+        let _cleanup = RemoveDirOnDrop(root.clone());
+        symlink(&root, root.join("cycle")).expect("create directory symlink");
+
+        let mut config = typed_config("nvidia.fabric.hermes");
+        config.discovery = Some(DiscoveryConfig {
+            local_paths: vec![root.clone()],
+            extensions: BTreeMap::new(),
+        });
+
+        DescriptorRegistry::from_config(&config, &root, &[])
+            .expect("symlinked directories must not be traversed");
     }
 
     #[test]
@@ -4429,7 +4971,7 @@ mod tests {
                 extensions: BTreeMap::new(),
             },
         );
-        let path = repository_root().join("adapters/claude/fabric-adapter.json");
+        let path = repository_root().join("adapters/claude/claude.fabric-adapter.json");
         let mut descriptor = load_adapter_descriptor(&path).expect("Claude descriptor");
         descriptor
             .config
@@ -4493,8 +5035,8 @@ mod tests {
                 },
             );
             let path = repository_root().join(match adapter_id {
-                "nvidia.fabric.claude" => "adapters/claude/fabric-adapter.json",
-                "nvidia.fabric.codex" => "adapters/codex/fabric-adapter.json",
+                "nvidia.fabric.claude" => "adapters/claude/claude.fabric-adapter.json",
+                "nvidia.fabric.codex" => "adapters/codex/codex.fabric-adapter.json",
                 _ => unreachable!("test adapter"),
             });
             let descriptor = load_adapter_descriptor(&path).expect("adapter descriptor");
@@ -4746,18 +5288,13 @@ mod tests {
 
     #[test]
     fn mcp_tool_filters_survive_capability_planning() {
-        let path = repository_root().join("adapters/claude/fabric-adapter.json");
+        let path = repository_root().join("adapters/claude/claude.fabric-adapter.json");
         let mut descriptor = load_adapter_descriptor(&path).expect("Claude descriptor");
         descriptor
             .config
             .accepts
             .push(AdapterConfigField::McpToolFilters);
-        let resolved = ResolvedAdapterDescriptor {
-            descriptor,
-            source: AdapterDescriptorSource::Repository,
-            path: path.clone(),
-            root: path.parent().expect("descriptor directory").to_path_buf(),
-        };
+        let resolved = resolved_adapter(path, descriptor);
         let mut config = typed_config("nvidia.fabric.claude");
         config.mcp = Some(McpConfig {
             servers: BTreeMap::from([(
@@ -4950,18 +5487,39 @@ mod tests {
 
     #[test]
     fn loads_and_validates_json_adapter_descriptor() {
-        let descriptor =
-            load_adapter_descriptor(repository_root().join("adapters/hermes/fabric-adapter.json"))
-                .expect("adapter descriptor");
+        let descriptor = load_adapter_descriptor(
+            repository_root().join("adapters/hermes/hermes.fabric-adapter.json"),
+        )
+        .expect("adapter descriptor");
 
         assert_eq!(descriptor.contract_version, ADAPTER_CONTRACT_VERSION);
         assert_eq!(descriptor.adapter_kind, AdapterKind::Python);
     }
 
     #[test]
+    fn rejects_removed_adapter_descriptor_fields() {
+        let path = repository_root().join("adapters/hermes/hermes.fabric-adapter.json");
+        let descriptor = load_adapter_descriptor(&path).expect("adapter descriptor");
+
+        for field in ["harness", "workflow_schema"] {
+            let mut invalid = descriptor.clone();
+            invalid
+                .extensions
+                .insert(field.to_string(), serde_json::json!({}));
+            let error = validate_adapter_descriptor_shape(&invalid, &path)
+                .expect_err("removed field must fail");
+            assert!(matches!(
+                error,
+                FabricError::InvalidAdapterDescriptor { message, .. }
+                    if message.contains(field)
+            ));
+        }
+    }
+
+    #[test]
     fn validates_repository_claude_settings_without_applying_defaults() {
         let mut config = typed_config("nvidia.fabric.claude");
-        config.harness.settings = serde_json::Map::from_iter([
+        config.harness.as_mut().expect("harness").settings = serde_json::Map::from_iter([
             (
                 "setting_sources".to_string(),
                 serde_json::json!(["user", "project", "local"]),
@@ -4969,7 +5527,7 @@ mod tests {
             ("max_budget_usd".to_string(), serde_json::json!(1.5)),
             ("permission_mode".to_string(), serde_json::json!("dontAsk")),
         ]);
-        let expected = config.harness.settings.clone();
+        let expected = config.harness.as_ref().expect("harness").settings.clone();
 
         let plan = resolve_run_plan_from_config(
             config,
@@ -4977,14 +5535,19 @@ mod tests {
         )
         .expect("valid Claude settings");
 
-        assert_eq!(plan.config.harness.settings, expected);
+        assert_eq!(
+            plan.config.harness.as_ref().expect("harness").settings,
+            expected
+        );
         let resolved = plan.adapter_descriptor.expect("resolved Claude descriptor");
-        assert_eq!(resolved.source, AdapterDescriptorSource::Repository);
+        assert_eq!(resolved.primary().source, DescriptorSource::Bundled);
         assert_eq!(resolved.descriptor.adapter_id, "nvidia.fabric.claude");
 
         let mut config_without_default = typed_config("nvidia.fabric.claude");
         config_without_default
             .harness
+            .as_mut()
+            .expect("harness")
             .settings
             .insert("permission_mode".to_string(), serde_json::json!("default"));
         let plan = resolve_run_plan_from_config(
@@ -4992,20 +5555,21 @@ mod tests {
             ResolveContext::new("/tmp/nemo-fabric-claude-settings"),
         )
         .expect("valid Claude settings without optional default");
-        assert!(!plan.config.harness.settings.contains_key("setting_sources"));
+        assert!(
+            !plan
+                .config
+                .harness
+                .as_ref()
+                .expect("harness")
+                .settings
+                .contains_key("setting_sources")
+        );
     }
 
     #[test]
-    fn validates_workflow_against_resolved_adapter_schema() {
-        let path = repository_root().join("adapters/claude/fabric-adapter.json");
-        let mut descriptor = load_adapter_descriptor(&path).expect("Claude descriptor");
-        descriptor.workflow_schema = Some(workflow_schema());
-        let resolved = ResolvedAdapterDescriptor {
-            descriptor,
-            source: AdapterDescriptorSource::Repository,
-            path: path.clone(),
-            root: path.parent().expect("descriptor directory").to_path_buf(),
-        };
+    fn validates_workflow_against_resolved_target_schema() {
+        let path = repository_root().join("adapters/claude/claude.fabric-adapter.json");
+        let resolved = resolved_workflow_target(path.clone(), Some(workflow_settings_schema()));
         let mut config = typed_config("nvidia.fabric.claude");
         config.workflow = Some(typed_workflow());
 
@@ -5023,20 +5587,20 @@ mod tests {
             error,
             FabricError::InvalidWorkflow {
                 adapter_id,
-                descriptor_source: AdapterDescriptorSource::Repository,
+                descriptor_source: DescriptorSource::Bundled,
                 descriptor_path,
                 workflow_path,
                 reason,
-            } if adapter_id == "nvidia.fabric.claude"
+            } if adapter_id == "test.fabric.adapter"
                 && descriptor_path == path
                 && workflow_path == "workflow.settings.llm_name"
-                && reason.contains("adapter workflow schema")
+                && reason.contains("adapter target settings schema")
         ));
     }
 
     #[test]
     fn validates_and_projects_normalized_tool_definitions() {
-        let path = repository_root().join("adapters/claude/fabric-adapter.json");
+        let path = repository_root().join("adapters/claude/claude.fabric-adapter.json");
         let mut descriptor = load_adapter_descriptor(&path).expect("Claude descriptor");
         descriptor
             .config
@@ -5056,12 +5620,7 @@ mod tests {
             .expect("tool extension schema")
             .clone(),
         );
-        let resolved = ResolvedAdapterDescriptor {
-            descriptor,
-            source: AdapterDescriptorSource::Repository,
-            path: path.clone(),
-            root: path.parent().expect("descriptor directory").to_path_buf(),
-        };
+        let resolved = resolved_adapter(path, descriptor);
         let mut config = typed_config("nvidia.fabric.claude");
         config.skills = None;
         config.tools = Some(ToolsConfig {
@@ -5086,7 +5645,7 @@ mod tests {
         });
 
         validate_tool_definitions(&config, Some(&resolved)).expect("valid definition");
-        validate_agent_config_extensions(&config, Some(&resolved))
+        validate_agent_config_extensions(&config, Some(&resolved), None)
             .expect("valid definition extension");
         let capability_plan = resolve_capability_plan(
             &config,
@@ -5094,7 +5653,7 @@ mod tests {
             Some(&resolved),
         );
         let agent_config =
-            project_agent_config(&config, &capability_plan, Some(&resolved.descriptor));
+            project_agent_config(&config, &capability_plan, Some(&resolved.descriptor), None);
         let definition = agent_config
             .tools
             .as_ref()
@@ -5137,15 +5696,10 @@ mod tests {
 
     #[test]
     fn adapter_extensions_are_fail_closed_and_schema_validated() {
-        let path = repository_root().join("adapters/claude/fabric-adapter.json");
+        let path = repository_root().join("adapters/claude/claude.fabric-adapter.json");
         let mut descriptor = load_adapter_descriptor(&path).expect("Claude descriptor");
         descriptor.config.input = AdapterConfigInput::AgentConfig;
-        let resolved = ResolvedAdapterDescriptor {
-            descriptor: descriptor.clone(),
-            source: AdapterDescriptorSource::Repository,
-            path: path.clone(),
-            root: path.parent().expect("descriptor directory").to_path_buf(),
-        };
+        let resolved = resolved_adapter(path.clone(), descriptor.clone());
         let mut config = typed_config("nvidia.fabric.claude");
         config.skills = None;
         config.models.insert(
@@ -5158,7 +5712,7 @@ mod tests {
             .expect("model extension"),
         );
 
-        let error = validate_agent_config_extensions(&config, Some(&resolved))
+        let error = validate_agent_config_extensions(&config, Some(&resolved), None)
             .expect_err("undeclared extension schema");
         assert!(matches!(
             error,
@@ -5177,13 +5731,8 @@ mod tests {
             .expect("model extension schema")
             .clone(),
         );
-        let resolved = ResolvedAdapterDescriptor {
-            descriptor,
-            source: AdapterDescriptorSource::Repository,
-            path,
-            root: repository_root().join("adapters/claude"),
-        };
-        validate_agent_config_extensions(&config, Some(&resolved))
+        let resolved = resolved_adapter(path.clone(), descriptor);
+        validate_agent_config_extensions(&config, Some(&resolved), None)
             .expect("declared extension is valid");
 
         config
@@ -5192,7 +5741,7 @@ mod tests {
             .expect("default model")
             .extensions
             .insert("profile".to_string(), serde_json::json!("slow"));
-        let error = validate_agent_config_extensions(&config, Some(&resolved))
+        let error = validate_agent_config_extensions(&config, Some(&resolved), None)
             .expect_err("invalid extension value");
         assert!(matches!(
             error,
@@ -5202,73 +5751,51 @@ mod tests {
     }
 
     #[test]
-    fn workflow_support_is_fail_closed() {
-        let path = repository_root().join("adapters/claude/fabric-adapter.json");
-        let descriptor = load_adapter_descriptor(&path).expect("Claude descriptor");
-        let mut resolved = ResolvedAdapterDescriptor {
-            descriptor,
-            source: AdapterDescriptorSource::Repository,
-            path: path.clone(),
-            root: path.parent().expect("descriptor directory").to_path_buf(),
-        };
+    fn workflow_settings_are_fail_closed() {
+        let path = repository_root().join("adapters/claude/claude.fabric-adapter.json");
+        let resolved = resolved_workflow_target(path, None);
         let mut config = typed_config("nvidia.fabric.claude");
         config.workflow = Some(typed_workflow());
 
         let error = validate_workflow(&config, Some(&resolved))
-            .expect_err("workflow without a descriptor schema must fail");
+            .expect_err("settings without a target schema must fail");
         assert!(matches!(
             error,
             FabricError::InvalidWorkflow { workflow_path, .. }
-                if workflow_path == "workflow"
+                if workflow_path == "workflow.settings.llm_name"
         ));
 
-        config.workflow = None;
-        resolved.descriptor.workflow_schema = Some(workflow_schema());
-        let error = validate_workflow(&config, Some(&resolved))
-            .expect_err("required workflow must fail when omitted");
-        assert!(matches!(
-            error,
-            FabricError::InvalidWorkflow { workflow_path, .. }
-                if workflow_path == "workflow"
-        ));
-
-        resolved.descriptor.workflow_schema = Some(
-            serde_json::json!({
-                "type": ["object", "null"]
-            })
-            .as_object()
-            .expect("optional workflow schema")
-            .clone(),
-        );
-        validate_workflow(&config, Some(&resolved)).expect("optional workflow may be omitted");
+        config.workflow.as_mut().expect("workflow").settings.clear();
+        validate_workflow(&config, Some(&resolved)).expect("empty settings need no schema");
     }
 
     #[test]
-    fn rejects_blank_workflow_entrypoint_values() {
-        for (field, value) in [
-            ("workflow.entrypoint.kind", serde_json::json!(" ")),
-            ("workflow.entrypoint.ref", serde_json::json!("\t")),
-        ] {
-            let mut config = typed_config("nvidia.fabric.claude");
-            config.workflow = Some(typed_workflow());
-            let entrypoint = &mut config.workflow.as_mut().expect("workflow").entrypoint;
-            if field.ends_with("kind") {
-                entrypoint.kind = value.as_str().expect("string").to_string();
+    fn rejects_blank_target_entrypoint_values() {
+        for (field, value) in [("kind", " "), ("ref", "\t")] {
+            let path = PathBuf::from("target.fabric-target.json");
+            let mut resolved = resolved_workflow_target(path.clone(), None);
+            let entrypoint = match &mut resolved.descriptor.target {
+                AdapterTarget::Workflow(workflow) => &mut workflow.entrypoint,
+            };
+            if field == "kind" {
+                entrypoint.kind = value.to_string();
             } else {
-                entrypoint.r#ref = value.as_str().expect("string").to_string();
+                entrypoint.r#ref = value.to_string();
             }
 
-            let error = validate_config(&config).expect_err("blank entrypoint must fail");
+            let error = validate_adapter_target_descriptor_shape(&resolved.descriptor, &path)
+                .expect_err("blank entrypoint must fail");
             assert!(matches!(
                 error,
-                FabricError::InvalidConfig { field: actual, .. } if actual == field
+                FabricError::InvalidAdapterTargetDescriptor { message, .. }
+                    if message.contains(&format!("spec.entrypoint.{field}"))
             ));
         }
     }
 
     #[test]
     fn validates_empty_settings_against_a_present_schema() {
-        let path = repository_root().join("adapters/claude/fabric-adapter.json");
+        let path = repository_root().join("adapters/claude/claude.fabric-adapter.json");
         let mut descriptor = load_adapter_descriptor(&path).expect("Claude descriptor");
         descriptor.settings_schema = Some(
             serde_json::json!({
@@ -5286,16 +5813,13 @@ mod tests {
             .expect("object schema")
             .clone(),
         );
-        let resolved = ResolvedAdapterDescriptor {
-            descriptor,
-            source: AdapterDescriptorSource::Repository,
-            path: path.clone(),
-            root: path.parent().expect("descriptor directory").to_path_buf(),
-        };
+        let resolved = resolved_adapter(path.clone(), descriptor);
 
         let mut valid_config = typed_config("nvidia.fabric.claude");
         valid_config
             .harness
+            .as_mut()
+            .expect("harness")
             .settings
             .insert("token".to_string(), serde_json::json!("valid"));
         validate_harness_settings(&valid_config, Some(&resolved))
@@ -5309,7 +5833,7 @@ mod tests {
             error,
             FabricError::InvalidHarnessSettings {
                 adapter_id,
-                descriptor_source: AdapterDescriptorSource::Repository,
+                descriptor_source: DescriptorSource::Bundled,
                 descriptor_path,
                 settings_path,
                 ..
@@ -5321,7 +5845,7 @@ mod tests {
 
     #[test]
     fn reports_item_path_after_prefix_items() {
-        let path = repository_root().join("adapters/claude/fabric-adapter.json");
+        let path = repository_root().join("adapters/claude/claude.fabric-adapter.json");
         let mut descriptor = load_adapter_descriptor(&path).expect("Claude descriptor");
         descriptor.settings_schema = Some(
             serde_json::json!({
@@ -5342,14 +5866,9 @@ mod tests {
             .expect("object schema")
             .clone(),
         );
-        let resolved = ResolvedAdapterDescriptor {
-            descriptor,
-            source: AdapterDescriptorSource::Repository,
-            path,
-            root: repository_root().join("adapters/claude"),
-        };
+        let resolved = resolved_adapter(path, descriptor);
         let mut config = typed_config("nvidia.fabric.claude");
-        config.harness.settings.insert(
+        config.harness.as_mut().expect("harness").settings.insert(
             "values".to_string(),
             serde_json::json!(["first", "second", "invalid"]),
         );
@@ -5396,7 +5915,12 @@ mod tests {
 
         for (name, value, expected_path) in cases {
             let mut config = typed_config("nvidia.fabric.claude");
-            config.harness.settings.insert(name.to_string(), value);
+            config
+                .harness
+                .as_mut()
+                .expect("harness")
+                .settings
+                .insert(name.to_string(), value);
 
             let error = resolve_run_plan_from_config(
                 config,
@@ -5408,12 +5932,12 @@ mod tests {
                 error,
                 FabricError::InvalidHarnessSettings {
                     adapter_id,
-                    descriptor_source: AdapterDescriptorSource::Repository,
+                    descriptor_source: DescriptorSource::Bundled,
                     descriptor_path,
                     settings_path,
                     ..
                 } if adapter_id == "nvidia.fabric.claude"
-                    && descriptor_path.ends_with("adapters/claude/fabric-adapter.json")
+                    && descriptor_path.ends_with("adapters/claude/claude.fabric-adapter.json")
                     && settings_path == expected_path
             ));
         }
@@ -5424,6 +5948,8 @@ mod tests {
         let mut config = typed_config("test.fabric.missing");
         config
             .harness
+            .as_mut()
+            .expect("harness")
             .settings
             .insert("unknown".to_string(), serde_json::json!(true));
 
@@ -5456,7 +5982,6 @@ mod tests {
             serde_json::to_vec_pretty(&serde_json::json!({
                 "contract_version": ADAPTER_CONTRACT_VERSION,
                 "adapter_id": "test.fabric.malformed",
-                "harness": "malformed-test",
                 "adapter_kind": "python",
                 "settings_schema": {"type": 7}
             }))
@@ -5477,7 +6002,7 @@ mod tests {
 
     #[test]
     fn adapter_settings_schema_root_type_must_allow_objects() {
-        let path = repository_root().join("adapters/claude/fabric-adapter.json");
+        let path = repository_root().join("adapters/claude/claude.fabric-adapter.json");
         let valid_descriptor = load_adapter_descriptor(&path).expect("Claude descriptor");
 
         for root_type in ["string", "array"] {
@@ -5507,7 +6032,7 @@ mod tests {
 
     #[test]
     fn adapter_model_schema_must_be_valid_and_allow_objects() {
-        let path = repository_root().join("adapters/claude/fabric-adapter.json");
+        let path = repository_root().join("adapters/claude/claude.fabric-adapter.json");
         let valid_descriptor = load_adapter_descriptor(&path).expect("Claude descriptor");
 
         for (schema, expected) in [
@@ -5537,29 +6062,33 @@ mod tests {
     }
 
     #[test]
-    fn adapter_workflow_schema_must_be_valid_and_allow_objects() {
-        let path = repository_root().join("adapters/claude/fabric-adapter.json");
-        let valid_descriptor = load_adapter_descriptor(&path).expect("Claude descriptor");
+    fn adapter_target_settings_schema_must_be_valid_and_allow_objects() {
+        let path = repository_root().join("adapters/claude/claude.fabric-adapter.json");
 
         for (schema, expected) in [
             (
                 serde_json::json!({"type": 7}),
-                "workflow_schema is not valid JSON Schema",
+                "spec.settings_schema is not valid JSON Schema",
             ),
             (
                 serde_json::json!({"type": "string"}),
-                "workflow_schema root type must allow object instances",
+                "spec.settings_schema root type must allow object instances",
             ),
         ] {
-            let mut descriptor = valid_descriptor.clone();
-            descriptor.workflow_schema =
-                Some(schema.as_object().expect("workflow schema object").clone());
+            let mut descriptor = resolved_workflow_target(path.clone(), None).descriptor;
+            let AdapterTarget::Workflow(workflow) = &mut descriptor.target;
+            workflow.settings_schema = Some(
+                schema
+                    .as_object()
+                    .expect("workflow settings schema object")
+                    .clone(),
+            );
 
-            let error = validate_adapter_descriptor_shape(&descriptor, &path)
-                .expect_err("invalid workflow schema");
+            let error = validate_adapter_target_descriptor_shape(&descriptor, &path)
+                .expect_err("invalid workflow settings schema");
             assert!(matches!(
                 error,
-                FabricError::InvalidAdapterDescriptor {
+                FabricError::InvalidAdapterTargetDescriptor {
                     path: error_path,
                     message,
                 } if error_path == path && message.contains(expected)
@@ -5587,7 +6116,6 @@ mod tests {
             serde_json::to_vec_pretty(&serde_json::json!({
                 "contract_version": ADAPTER_CONTRACT_VERSION,
                 "adapter_id": "test.fabric.external-schema",
-                "harness": "external-schema-test",
                 "adapter_kind": "python",
                 "settings_schema": {
                     "$ref": "https://schemas.example.test/settings.json"
@@ -5609,7 +6137,7 @@ mod tests {
     }
 
     #[test]
-    fn resolves_additional_adapter_directory_before_agent_local_override() {
+    fn descriptor_registry_deduplicates_identical_records_and_rejects_conflicts() {
         struct RemoveDirOnDrop(PathBuf);
 
         impl Drop for RemoveDirOnDrop {
@@ -5625,13 +6153,13 @@ mod tests {
         let _cleanup = RemoveDirOnDrop(root.clone());
         let installed_directory = root.join("installed");
         let base_dir = root.join("agent");
-        let installed_descriptor = installed_directory.join("stopgap/fabric-adapter.json");
-        let local_descriptor = base_dir.join("adapters/stopgap/fabric-adapter.json");
+        let installed_descriptor =
+            installed_directory.join("stopgap/installed.fabric-adapter.json");
+        let local_descriptor = base_dir.join("metadata/local.fabric-adapter.json");
         let descriptor = |module: &str, setting: &str| {
             serde_json::json!({
                 "contract_version": ADAPTER_CONTRACT_VERSION,
                 "adapter_id": "test.fabric.installed",
-                "harness": "installed-test",
                 "adapter_kind": "python",
                 "runner": {"module": module},
                 "config": {"accepts": ["skills"]},
@@ -5657,6 +6185,8 @@ mod tests {
         let mut installed_config = typed_config("test.fabric.installed");
         installed_config
             .harness
+            .as_mut()
+            .expect("harness")
             .settings
             .insert("installed_only".to_string(), serde_json::json!(true));
         let plan = resolve_run_plan_from_config_with_adapter_directories(
@@ -5671,7 +6201,7 @@ mod tests {
         assert_eq!(
             plan.adapter_descriptor
                 .as_ref()
-                .map(|adapter| adapter.path.as_path()),
+                .map(|adapter| adapter.primary().path.as_path()),
             Some(expected_installed_descriptor.as_path())
         );
 
@@ -5679,49 +6209,46 @@ mod tests {
             .expect("create local adapter directory");
         std::fs::write(
             &local_descriptor,
-            serde_json::to_vec_pretty(&descriptor("local.adapter", "local_only"))
+            serde_json::to_vec_pretty(&descriptor("installed.adapter", "installed_only"))
                 .expect("descriptor JSON"),
         )
         .expect("write local descriptor");
 
-        let mut local_config = typed_config("test.fabric.installed");
-        local_config
-            .harness
-            .settings
-            .insert("local_only".to_string(), serde_json::json!(true));
+        let mut local_config = installed_config.clone();
+        local_config.discovery = Some(DiscoveryConfig {
+            local_paths: vec![local_descriptor.clone()],
+            extensions: BTreeMap::new(),
+        });
         let plan = resolve_run_plan_from_config_with_adapter_directories(
-            local_config,
+            local_config.clone(),
             ResolveContext::new(&base_dir),
             std::slice::from_ref(&installed_directory),
         )
-        .expect("agent-local adapter plan");
+        .expect("semantically identical records are deduplicated");
         let resolved = plan.adapter_descriptor.expect("resolved adapter");
-        assert_eq!(
-            resolved.path,
-            local_descriptor
-                .canonicalize()
-                .expect("canonical local descriptor")
-        );
-        assert_eq!(
-            resolved.descriptor.runner["module"],
-            serde_json::json!("local.adapter")
-        );
+        assert_eq!(resolved.provenance.len(), 2);
+
+        std::fs::write(
+            &local_descriptor,
+            serde_json::to_vec_pretty(&descriptor("local.adapter", "local_only"))
+                .expect("descriptor JSON"),
+        )
+        .expect("write conflicting local descriptor");
 
         let error = resolve_run_plan_from_config_with_adapter_directories(
-            installed_config,
+            local_config,
             ResolveContext::new(&base_dir),
             &[installed_directory],
         )
-        .expect_err("local schema replaces installed schema");
+        .expect_err("distinct records with one id are ambiguous");
         assert!(matches!(
             error,
-            FabricError::InvalidHarnessSettings {
-                descriptor_source: AdapterDescriptorSource::Local,
-                descriptor_path,
-                settings_path,
-                ..
-            } if descriptor_path == resolved.path
-                && settings_path == "harness.settings.installed_only"
+            FabricError::AmbiguousDescriptor {
+                descriptor_kind: "adapter",
+                id,
+                paths,
+            } if id == "test.fabric.installed"
+                && paths.len() == 2
         ));
     }
 }

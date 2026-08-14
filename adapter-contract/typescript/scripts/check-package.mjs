@@ -34,6 +34,8 @@ try {
     "README.md",
     "dist/generated/adapter-descriptor.d.ts",
     "dist/generated/adapter-descriptor.js",
+    "dist/generated/adapter-target-descriptor.d.ts",
+    "dist/generated/adapter-target-descriptor.js",
     "dist/generated/agent-config.d.ts",
     "dist/generated/agent-config.js",
     "dist/generated/agent-run-request.d.ts",
@@ -50,6 +52,7 @@ try {
     "dist/version.js",
     "package.json",
     "schemas/adapter-descriptor.schema.json",
+    "schemas/adapter-target-descriptor.schema.json",
     "schemas/agent-config.schema.json",
     "schemas/agent-run-request.schema.json",
     "schemas/agent-run-result.schema.json",
@@ -120,13 +123,20 @@ try {
     `import { ADAPTER_CONTRACT_VERSION } from "nemo-fabric-adapter-contract";
 import agentConfigSchema from "nemo-fabric-adapter-contract/schemas/agent-config" with { type: "json" };
 import type { AdapterDescriptor } from "nemo-fabric-adapter-contract";
+import type { AdapterTargetDescriptor } from "nemo-fabric-adapter-contract";
 import type { AgentRunResult } from "nemo-fabric-adapter-contract";
 
 const descriptor: AdapterDescriptor = {
   adapter_id: "example",
   adapter_kind: "process",
   contract_version: ADAPTER_CONTRACT_VERSION,
-  harness: "example",
+};
+const target: AdapterTargetDescriptor = {
+  adapter_id: "example",
+  contract_version: ADAPTER_CONTRACT_VERSION,
+  id: "example.workflow",
+  spec: { entrypoint: { kind: "factory", ref: "example.agent" } },
+  type: "workflow",
 };
 const result: AgentRunResult = {
   output: ["ok", null],
@@ -134,6 +144,7 @@ const result: AgentRunResult = {
 };
 if (
   descriptor.contract_version !== ADAPTER_CONTRACT_VERSION ||
+  target.adapter_id !== descriptor.adapter_id ||
   result.status !== "succeeded" ||
   agentConfigSchema.title !== "AgentConfig"
 ) {

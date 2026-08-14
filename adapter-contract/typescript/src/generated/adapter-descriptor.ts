@@ -49,6 +49,10 @@ export type AdapterConfigField =
   | "mcp.auth.service_account"
   | "mcp.tool_filters"
   | "skills";
+/**
+ * Adapter target categories understood by this Adapter Contract version.
+ */
+export type AdapterTargetType = "workflow";
 
 /**
  * Language-neutral adapter descriptor for a harness integration.
@@ -73,10 +77,6 @@ export type AdapterDescriptor = {
    */
   extension_schemas?: Partial<Record<AdapterExtensionPoint, JsonObject>>;
   /**
-   * Stable machine-readable harness identifier implemented by this adapter.
-   */
-  harness: string;
-  /**
    * JSON Schema applied to every normalized `FabricConfig.models` entry.
    */
   model_schema?: JsonObject | null;
@@ -89,15 +89,15 @@ export type AdapterDescriptor = {
    * JSON Schema for adapter-owned `harness.settings`.
    */
   settings_schema?: JsonObject | null;
+  /**
+   * Registered target categories this adapter can execute.
+   */
+  target_types?: AdapterTargetType[];
   telemetry?: AdapterTelemetrySupport;
   /**
    * JSON Schema applied to every normalized `FabricConfig.tools.definitions` entry.
    */
   tool_definition_schema?: JsonObject | null;
-  /**
-   * JSON Schema for adapter-owned `FabricConfig.workflow`.
-   */
-  workflow_schema?: JsonObject | null;
 } & JsonObject;
 /**
  * Runtime lifecycle operations supported by this adapter.
@@ -139,7 +139,7 @@ export type AdapterConfigSupport = {
   /**
    * Configuration object delivered to the adapter lifecycle host.
    */
-  input?: "fabric_config" | "agent_config";
+  input?: "agent_config";
 } & JsonObject;
 /**
  * Runtime requirements.

@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from nemo_fabric import FabricConfig
+from nemo_fabric import DiscoveryConfig
 from nemo_fabric import HarnessConfig
 from nemo_fabric import InstructionConfig
 from nemo_fabric import InstructionsConfig
@@ -28,6 +29,7 @@ PUBLIC_BASE_URL = "https://integrate.api.nvidia.com/v1"
 URL_INSPECTOR_SERVER = (
     Path(__file__).parents[1] / "mcp" / "url_inspector.py"
 ).resolve()
+DESCRIPTOR_DIRECTORY = (Path(__file__).parents[1] / "adapter").resolve()
 
 
 def _config(*, model: str, api_key_env: str, base_url: str) -> FabricConfig:
@@ -36,6 +38,7 @@ def _config(*, model: str, api_key_env: str, base_url: str) -> FabricConfig:
             name="langgraph-email-phishing",
             description="Classifies email risk with a dedicated LangGraph agent.",
         ),
+        discovery=DiscoveryConfig(local_paths=[DESCRIPTOR_DIRECTORY]),
         harness=HarnessConfig(
             adapter_id=ADAPTER_ID,
             resolution="preinstalled",

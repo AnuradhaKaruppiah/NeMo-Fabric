@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use crate::config::{AdapterDescriptorSource, AdapterKind};
+use crate::config::{AdapterKind, DescriptorSource};
 
 /// Core NeMo Fabric result type.
 pub type Result<T> = std::result::Result<T, FabricError>;
@@ -31,6 +31,24 @@ pub enum FabricError {
         adapter_id: String,
         /// Available adapter ids.
         available: Vec<String>,
+    },
+    /// A requested Adapter Target Descriptor id was not discovered.
+    #[error("unknown adapter target `{target_id}`; available targets: {available:?}")]
+    UnknownAdapterTarget {
+        /// Requested target id.
+        target_id: String,
+        /// Available target ids.
+        available: Vec<String>,
+    },
+    /// More than one distinct descriptor record was discovered for one id.
+    #[error("ambiguous {descriptor_kind} descriptor `{id}`; conflicting paths: {paths:?}")]
+    AmbiguousDescriptor {
+        /// Human-readable descriptor category.
+        descriptor_kind: &'static str,
+        /// Conflicting descriptor id.
+        id: String,
+        /// Every conflicting descriptor path.
+        paths: Vec<PathBuf>,
     },
     /// An adapter descriptor did not match the selected harness config.
     #[error(
@@ -64,6 +82,14 @@ pub enum FabricError {
         /// Validation message.
         message: String,
     },
+    /// An Adapter Target Descriptor is malformed.
+    #[error("invalid adapter target descriptor in {path}: {message}")]
+    InvalidAdapterTargetDescriptor {
+        /// Adapter Target Descriptor path.
+        path: PathBuf,
+        /// Validation message.
+        message: String,
+    },
     /// Adapter-owned harness settings do not satisfy the resolved descriptor schema.
     #[error(
         "invalid harness settings for adapter `{adapter_id}` from {descriptor_source:?} descriptor {descriptor_path} at `{settings_path}`: {reason}"
@@ -72,7 +98,7 @@ pub enum FabricError {
         /// Selected adapter id.
         adapter_id: String,
         /// Registry source of the selected descriptor.
-        descriptor_source: AdapterDescriptorSource,
+        descriptor_source: DescriptorSource,
         /// Path to the selected descriptor.
         descriptor_path: PathBuf,
         /// Canonical path to the invalid setting.
@@ -88,7 +114,7 @@ pub enum FabricError {
         /// Selected adapter id.
         adapter_id: String,
         /// Registry source of the selected descriptor.
-        descriptor_source: AdapterDescriptorSource,
+        descriptor_source: DescriptorSource,
         /// Path to the selected descriptor.
         descriptor_path: PathBuf,
         /// Canonical path to the invalid workflow field.
@@ -104,7 +130,7 @@ pub enum FabricError {
         /// Selected adapter id.
         adapter_id: String,
         /// Registry source of the selected descriptor.
-        descriptor_source: AdapterDescriptorSource,
+        descriptor_source: DescriptorSource,
         /// Path to the selected descriptor.
         descriptor_path: PathBuf,
         /// Canonical path to the invalid definition field.
@@ -120,7 +146,7 @@ pub enum FabricError {
         /// Selected adapter id.
         adapter_id: String,
         /// Registry source of the selected descriptor.
-        descriptor_source: AdapterDescriptorSource,
+        descriptor_source: DescriptorSource,
         /// Path to the selected descriptor.
         descriptor_path: PathBuf,
         /// Canonical path to the invalid extension field.

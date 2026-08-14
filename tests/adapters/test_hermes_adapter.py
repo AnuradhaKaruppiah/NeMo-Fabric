@@ -100,7 +100,10 @@ def test_validate_hermes_telemetry_provider_rejects_mixed_native_and_relay():
 
 def test_descriptor_uses_the_typed_agent_config_contract():
     descriptor_path = (
-        Path(__file__).parents[2] / "adapters" / "hermes" / "fabric-adapter.json"
+        Path(__file__).parents[2]
+        / "adapters"
+        / "hermes"
+        / "hermes.fabric-adapter.json"
     )
     descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
 

@@ -31,7 +31,8 @@ and therefore does not accept `workflow`.
 
 ## Minimum Contract
 
-Custom-agent adapter developers should start with `adapter/fabric-adapter.json`
+Custom-agent adapter developers should start with
+`adapter/email-phishing.fabric-adapter.json`
 and `adapter/runtime.py`. The descriptor declares the adapter contract, while
 the runtime implements its lifecycle and delegates configuration translation
 and optional integrations to the adjacent modules.
@@ -136,15 +137,13 @@ runs the ordinary adapter `invoke` operation.
 
 ## Run the Source Example
 
-Because this is a source-only example, stage its descriptor under a development
-adapter directory and make the repository importable:
+Because this is a source-only example, make the repository importable. The
+consumer config discovers the adjacent descriptor through an explicit local
+path:
 
 ```bash
 uv sync --group langgraph-example
 export FABRIC_LANGGRAPH_EXAMPLE="$PWD/.tmp/langgraph-custom-agent"
-mkdir -p "$FABRIC_LANGGRAPH_EXAMPLE/adapters/langgraph-email-phishing"
-cp examples/langgraph_custom_agent/adapter/fabric-adapter.json \
-  "$FABRIC_LANGGRAPH_EXAMPLE/adapters/langgraph-email-phishing/"
 export PYTHONPATH="$PWD"
 export ADAPTER_PYTHON="$PWD/.venv/bin/python"
 ```

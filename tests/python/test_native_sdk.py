@@ -158,6 +158,7 @@ async def smoke(client: Fabric, fixture_agent: Path) -> None:
                 "resolution": "preinstalled",
                 "settings": {},
             },
+            "discovery": {"local_paths": ["adapters"]},
             "models": {
                 "default": {
                     "provider": "test",
@@ -205,7 +206,10 @@ async def smoke(client: Fabric, fixture_agent: Path) -> None:
         base_dir=fixture_agent,
     )
     assert typed_plan["agent_name"] == "typed-hermes-shim-agent"
-    assert typed_plan["adapter_descriptor"]["source"] == "local"
+    assert (
+        typed_plan["adapter_descriptor"]["provenance"][0]["source"]
+        == "explicit_local"
+    )
     assert typed_plan["telemetry_plan"]["relay_enabled"] is True
     native_mcp = typed_plan["capability_plan"]["native"]["mcp_servers"]["github"]
     assert native_mcp["custom_headers"] == {"X-Tenant": "fabric"}
@@ -248,7 +252,7 @@ async def smoke(client: Fabric, fixture_agent: Path) -> None:
         empty_result = await empty_stream.result()
 
     assert result["status"] == "succeeded"
-    assert result.harness == "hermes"
+    assert result.harness == "test.fabric.hermes_shim"
     assert result["adapter_kind"] == "python"
     assert result["metadata"]["adapter_runner"] == "persistent_local_host"
     assert result["output"]["received"] == "hello native"
@@ -256,7 +260,7 @@ async def smoke(client: Fabric, fixture_agent: Path) -> None:
     assert any(artifact.name == "stdout" for artifact in result.artifacts.artifacts)
     assert first["status"] == "succeeded"
     assert second["status"] == "succeeded"
-    assert first.harness == "hermes"
+    assert first.harness == "test.fabric.hermes_shim"
     assert first["runtime_id"] == second["runtime_id"]
     assert runtime.handle["runtime_id"] == first["runtime_id"]
     assert runtime.supports_openai_streaming is True

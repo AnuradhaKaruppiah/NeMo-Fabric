@@ -17,6 +17,7 @@ from typing import Literal
 from typing import cast
 
 from nemo_fabric import EnvironmentConfig
+from nemo_fabric import DiscoveryConfig
 from nemo_fabric import FabricConfig
 from nemo_fabric import HarnessConfig
 from nemo_fabric import InstructionConfig
@@ -292,6 +293,7 @@ else:
                     HarborMcpServer.model_validate(server.model_dump(mode="python"))
                     for server in self.mcp_servers
                 ),
+                discovery_paths=("adapters",) if self.fabric_config_bundle else (),
             )
 
         def _resolve_environment_config_base_dir(self) -> str:
@@ -376,6 +378,7 @@ def build_harbor_config(
     model_name: str | None = None,
     skills_dir: str | Path | None = None,
     mcp_servers: tuple[HarborMcpServer, ...] = (),
+    discovery_paths: tuple[str | Path, ...] = (),
 ) -> FabricConfig:
     """Construct the typed config controlled by Harbor agent inputs."""
 
@@ -401,6 +404,11 @@ def build_harbor_config(
             adapter_id=adapter_id,
             resolution="preinstalled",
             settings=settings,
+        ),
+        discovery=(
+            DiscoveryConfig(local_paths=list(discovery_paths))
+            if discovery_paths
+            else None
         ),
         runtime=RuntimeConfig(
             input_schema="text",

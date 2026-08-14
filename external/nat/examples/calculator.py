@@ -13,14 +13,13 @@ from pathlib import Path
 
 from nemo_fabric import Fabric
 from nemo_fabric import FabricConfig
-from nemo_fabric import HarnessConfig
+from nemo_fabric import DiscoveryConfig
 from nemo_fabric import InstructionConfig
 from nemo_fabric import InstructionsConfig
 from nemo_fabric import MetadataConfig
 from nemo_fabric import ModelConfig
 from nemo_fabric import RuntimeConfig
 from nemo_fabric import WorkflowConfig
-from nemo_fabric import WorkflowEntrypointConfig
 
 
 def build_config() -> FabricConfig:
@@ -31,15 +30,9 @@ def build_config() -> FabricConfig:
             name="nat-calculator",
             description="Uses calculator tools exposed by an MCP server.",
         ),
-        harness=HarnessConfig(
-            adapter_id="nvidia.fabric.nat",
-            resolution="preinstalled",
-        ),
+        discovery=DiscoveryConfig(local_paths=[Path(__file__).parents[1]]),
         workflow=WorkflowConfig(
-            entrypoint=WorkflowEntrypointConfig(
-                kind="factory",
-                ref="fabric.agent.react",
-            ),
+            target_id="nvidia.examples.nat.calculator",
             settings={"llm_name": "default"},
         ),
         models={

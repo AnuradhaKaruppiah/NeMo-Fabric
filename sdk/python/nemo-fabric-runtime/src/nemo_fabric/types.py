@@ -214,58 +214,22 @@ class _HarnessConfig(_ConfigMapping):
         )
 
 
-class _WorkflowEntrypointConfig(_ConfigMapping):
-    """Adapter-owned workflow entry point."""
-
-    _fields = frozenset({"kind", "ref"})
-
-    def __init__(
-        self,
-        *,
-        kind: str,
-        ref: str,
-        extra_fields: Mapping[str, Any] | None = None,
-    ) -> None:
-        super().__init__(
-            {
-                "kind": _required_text(kind, "workflow entrypoint kind"),
-                "ref": _required_text(ref, "workflow entrypoint ref"),
-            },
-            extra_fields=extra_fields,
-        )
-
-    @classmethod
-    def from_mapping(cls, value: Mapping[str, Any]) -> "_WorkflowEntrypointConfig":
-        """Validate a workflow entry-point mapping."""
-
-        data = _mapping(value, "workflow entrypoint")
-        return cls(
-            kind=data.get("kind"),
-            ref=data.get("ref"),
-            extra_fields={key: item for key, item in data.items() if key not in cls._fields},
-        )
-
-
 class _WorkflowConfig(_ConfigMapping):
-    """Adapter-owned workflow selection and construction settings."""
+    """Registered workflow target and construction settings."""
 
-    _fields = frozenset({"entrypoint", "settings"})
+    _fields = frozenset({"target_id", "settings"})
     _omit_if_empty = frozenset({"settings"})
 
     def __init__(
         self,
         *,
-        entrypoint: _WorkflowEntrypointConfig | Mapping[str, Any],
+        target_id: str,
         settings: Mapping[str, Any] | None = None,
         extra_fields: Mapping[str, Any] | None = None,
     ) -> None:
         super().__init__(
             {
-                "entrypoint": _coerce(
-                    _WorkflowEntrypointConfig,
-                    entrypoint,
-                    "workflow entrypoint",
-                ),
+                "target_id": _required_text(target_id, "workflow target_id"),
                 "settings": _mapping(
                     {} if settings is None else settings,
                     "workflow settings",
@@ -279,11 +243,39 @@ class _WorkflowConfig(_ConfigMapping):
         """Validate a workflow mapping."""
 
         data = _mapping(value, "workflow")
-        if "entrypoint" not in data:
-            raise FabricConfigError("workflow entrypoint is required")
+        if "target_id" not in data:
+            raise FabricConfigError("workflow target_id is required")
         return cls(
-            entrypoint=data["entrypoint"],
+            target_id=data["target_id"],
             settings=data.get("settings"),
+            extra_fields={key: item for key, item in data.items() if key not in cls._fields},
+        )
+
+
+class _DiscoveryConfig(_ConfigMapping):
+    """Explicit local descriptor discovery paths."""
+
+    _fields = frozenset({"local_paths"})
+    _omit_if_empty = frozenset({"local_paths"})
+
+    def __init__(
+        self,
+        *,
+        local_paths: Sequence[str | Path] = (),
+        extra_fields: Mapping[str, Any] | None = None,
+    ) -> None:
+        paths = [str(path) for path in local_paths]
+        if any(not path.strip() for path in paths):
+            raise FabricConfigError("discovery local paths must not be empty")
+        super().__init__({"local_paths": paths}, extra_fields=extra_fields)
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> "_DiscoveryConfig":
+        """Validate descriptor discovery configuration."""
+
+        data = _mapping(value, "discovery")
+        return cls(
+            local_paths=data.get("local_paths", ()),
             extra_fields={key: item for key, item in data.items() if key not in cls._fields},
         )
 
@@ -880,8 +872,9 @@ class _FabricConfigSnapshot(_ConfigMapping):
     Attributes:
         schema_version: Agent schema identifier.
         metadata: Required ``MetadataConfig`` agent identity.
-        harness: Required ``HarnessConfig`` adapter selection.
-        workflow: Optional adapter-owned workflow selection and construction settings.
+        harness: Optional direct adapter selection and settings.
+        workflow: Optional registered workflow target and construction settings.
+        discovery: Optional explicit descriptor discovery paths.
         runtime: Invocation runtime configuration.
         environment: Optional execution environment configuration.
         models: Named, JSON-compatible model configurations.
@@ -900,6 +893,7 @@ class _FabricConfigSnapshot(_ConfigMapping):
             "metadata",
             "harness",
             "workflow",
+            "discovery",
             "runtime",
             "environment",
             "models",
@@ -917,8 +911,9 @@ class _FabricConfigSnapshot(_ConfigMapping):
         self,
         *,
         metadata: _MetadataConfig | Mapping[str, Any],
-        harness: _HarnessConfig | Mapping[str, Any],
+        harness: _HarnessConfig | Mapping[str, Any] | None = None,
         workflow: _WorkflowConfig | Mapping[str, Any] | None = None,
+        discovery: _DiscoveryConfig | Mapping[str, Any] | None = None,
         runtime: _RuntimeConfig | Mapping[str, Any] | None = None,
         schema_version: str = "fabric.agent/v1alpha1",
         environment: _EnvironmentConfig | Mapping[str, Any] | None = None,
@@ -932,10 +927,17 @@ class _FabricConfigSnapshot(_ConfigMapping):
         extra_fields: Mapping[str, Any] | None = None,
     ) -> None:
         metadata_value = _coerce(_MetadataConfig, metadata, "metadata")
-        harness_value = _coerce(_HarnessConfig, harness, "harness")
+        harness_value = None if harness is None else _coerce(_HarnessConfig, harness, "harness")
         workflow_value = (
             None if workflow is None else _coerce(_WorkflowConfig, workflow, "workflow")
         )
+        discovery_value = (
+            None if discovery is None else _coerce(_DiscoveryConfig, discovery, "discovery")
+        )
+        if harness_value is None and workflow_value is None:
+            raise FabricConfigError(
+                "at least one of harness.adapter_id or workflow.target_id is required"
+            )
         runtime_value = _coerce(
             _RuntimeConfig,
             _RuntimeConfig() if runtime is None else runtime,
@@ -955,13 +957,14 @@ class _FabricConfigSnapshot(_ConfigMapping):
         values: dict[str, Any] = {
             "schema_version": _required_text(schema_version, "schema_version"),
             "metadata": metadata_value,
-            "harness": harness_value,
             "runtime": runtime_value,
             "models": _mapping({} if models is None else models, "models"),
         }
         for key, item in (
+            ("harness", harness_value),
             ("environment", environment_value),
             ("workflow", workflow_value),
+            ("discovery", discovery_value),
             ("instructions", instructions_value),
             ("mcp", mcp_value),
             ("skills", skills_value),
@@ -985,13 +988,16 @@ class _FabricConfigSnapshot(_ConfigMapping):
             )
         if "metadata" not in data:
             raise FabricConfigError("FabricConfig metadata is required")
-        if "harness" not in data:
-            raise FabricConfigError("FabricConfig harness is required")
+        if "harness" not in data and "workflow" not in data:
+            raise FabricConfigError(
+                "at least one of harness.adapter_id or workflow.target_id is required"
+            )
         return cls(
             schema_version=data.get("schema_version", "fabric.agent/v1alpha1"),
             metadata=data["metadata"],
-            harness=data["harness"],
+            harness=data.get("harness"),
             workflow=data.get("workflow"),
+            discovery=data.get("discovery"),
             runtime=data.get("runtime"),
             environment=data.get("environment"),
             models=data.get("models"),
@@ -1256,22 +1262,19 @@ class AdapterInfo(FabricMapping):
 
     Attributes:
         adapter_id: Stable identifier of the NeMo Fabric adapter implementation.
-        harness: Stable machine-readable harness identifier.
         adapter_kind: Execution mechanism used by the adapter.
         metadata: Adapter-specific, JSON-compatible metadata.
     """
 
     adapter_id: str
-    harness: str
     adapter_kind: str
     metadata: Mapping[str, Any]
-    _fields = frozenset({"adapter_id", "harness", "adapter_kind", "metadata"})
+    _fields = frozenset({"adapter_id", "adapter_kind", "metadata"})
     _json_fields = frozenset({"metadata"})
 
     @classmethod
     def _normalize(cls, data: dict[str, Any]) -> dict[str, Any]:
         data["adapter_id"] = _required_text(data.get("adapter_id"), "adapter_id")
-        data["harness"] = _required_text(data.get("harness"), "harness")
         data["adapter_kind"] = _required_text(data.get("adapter_kind"), "adapter_kind")
         data["metadata"] = _mapping(data.get("metadata", {}), "adapter metadata")
         return data

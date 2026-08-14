@@ -1,7 +1,6 @@
 {
   "contract_version": "fabric.adapter/v1alpha2",
   "adapter_id": "test.fabric.hermes_shim",
-  "harness": "hermes",
   "adapter_kind": "python",
   "capabilities": {
     "streaming": true
@@ -39,6 +38,20 @@
       }
     },
     "additionalProperties": false
+  },
+  "extension_schemas": {
+    "agent_config": {
+      "type": "object",
+      "properties": {
+        "consumer_extension": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "consumer_extension"
+      ],
+      "additionalProperties": false
+    }
   },
   "requirements": {
     "binaries": [

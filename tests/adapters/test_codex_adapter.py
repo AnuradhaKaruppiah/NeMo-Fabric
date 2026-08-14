@@ -1648,7 +1648,10 @@ def test_adapter_rejects_structured_input(codex_payload):
 def test_descriptor_has_no_codex_binary_requirement():
     descriptor = json.loads(
         (
-            Path(__file__).parents[2] / "adapters" / "codex" / "fabric-adapter.json"
+            Path(__file__).parents[2]
+            / "adapters"
+            / "codex"
+            / "codex.fabric-adapter.json"
         ).read_text(encoding="utf-8")
     )
 
@@ -1694,7 +1697,6 @@ def test_codex_config_resolves_sdk_adapter():
     plan = Fabric().plan(config, base_dir=BASE_DIR)
 
     assert plan.adapter.adapter_id == "nvidia.fabric.codex"
-    assert plan.adapter.harness == "codex"
     assert plan.config.runtime.input_schema == "text"
     assert plan.config.harness.settings["reasoning_effort"] == "high"
     native = plan["capability_plan"]["native"]

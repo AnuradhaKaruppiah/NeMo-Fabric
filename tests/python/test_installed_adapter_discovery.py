@@ -20,6 +20,7 @@ import pytest
 from _utils.configs import minimal_config
 from nemo_fabric import Fabric
 from nemo_fabric import FabricConfigError
+from nemo_fabric import DiscoveryConfig
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -39,12 +40,11 @@ def _write_descriptor(
     adapter_id: str = "test.fabric.installed",
     settings_schema: dict[str, Any] | None = None,
 ) -> Path:
-    descriptor = root / "share/nemo-fabric/adapters/test/fabric-adapter.json"
+    descriptor = root / "share/nemo-fabric/adapters/test/test.fabric-adapter.json"
     descriptor.parent.mkdir(parents=True)
     data: dict[str, Any] = {
         "contract_version": "fabric.adapter/v1alpha2",
         "adapter_id": adapter_id,
-        "harness": "installed-test",
         "adapter_kind": "python",
         "runner": {"module": module},
     }
@@ -99,6 +99,16 @@ def _python_sysconfig_path(python: Path, name: str) -> Path:
         )
     )
 
+
+def _assert_path_in_rust_debug(message: str, path: Path) -> None:
+    resolved = str(path.resolve())
+    candidates = {resolved, json.dumps(resolved)[1:-1]}
+    if os.name == "nt":
+        verbatim = rf"\\?\{resolved}"
+        candidates.add(json.dumps(verbatim)[1:-1])
+    assert any(candidate in message for candidate in candidates)
+
+
 def _create_venv(venv_dir: Path):
     # Use `symlinks=True` on Posix systems to work-around for
     # https://github.com/astral-sh/uv/issues/8879
@@ -136,7 +146,7 @@ def installed_claude_wheel_fixture(
     )
     descriptor = (
         _python_sysconfig_path(python, "data")
-        / "share/nemo-fabric/adapters/claude/fabric-adapter.json"
+        / "share/nemo-fabric/adapters/claude/claude.fabric-adapter.json"
     )
     assert descriptor.is_file()
     return python, descriptor
@@ -152,11 +162,13 @@ def test_plan_discovers_adapter_from_python_data_directory(
 
     plan = Fabric().plan(_config(), base_dir=tmp_path / "agent")
 
-    assert Path(plan["adapter_descriptor"]["path"]).samefile(descriptor)
-    assert plan["adapter_descriptor"]["source"] == "local"
+    provenance = plan["adapter_descriptor"]["provenance"]
+    installed = [item for item in provenance if item["source"] == "installed_package"]
+    assert len(installed) == 1
+    assert Path(installed[0]["path"]).samefile(descriptor)
 
 
-def test_agent_local_descriptor_overrides_installed_descriptor(
+def test_explicit_local_descriptor_conflicts_with_distinct_installed_descriptor(
     tmp_path: Path,
     patch_sysconfig_data: Callable[[Path], None],
 ):
@@ -167,14 +179,13 @@ def test_agent_local_descriptor_overrides_installed_descriptor(
         settings_schema=_closed_settings_schema(installed_only={"type": "boolean"}),
     )
     base_dir = tmp_path / "agent"
-    local_descriptor = base_dir / "adapters/test/fabric-adapter.json"
+    local_descriptor = base_dir / "metadata/test.fabric-adapter.json"
     local_descriptor.parent.mkdir(parents=True)
     local_descriptor.write_text(
         json.dumps(
             {
                 "contract_version": "fabric.adapter/v1alpha2",
                 "adapter_id": "test.fabric.installed",
-                "harness": "installed-test",
                 "adapter_kind": "python",
                 "runner": {"module": "local.adapter"},
                 "settings_schema": _closed_settings_schema(
@@ -185,23 +196,13 @@ def test_agent_local_descriptor_overrides_installed_descriptor(
     )
     patch_sysconfig_data(data_root)
 
-    plan = Fabric().plan(
-        _config(settings={"local_only": True}),
-        base_dir=base_dir,
-    )
-
-    assert Path(plan["adapter_descriptor"]["path"]).samefile(local_descriptor)
-    assert (
-        plan["adapter_descriptor"]["descriptor"]["runner"]["module"] == "local.adapter"
-    )
     with pytest.raises(FabricConfigError) as caught:
-        Fabric().plan(
-            _config(settings={"installed_only": True}),
-            base_dir=base_dir,
-        )
+        config = _config(settings={"local_only": True})
+        config.discovery = DiscoveryConfig(local_paths=[local_descriptor])
+        Fabric().plan(config, base_dir=base_dir)
     message = str(caught.value)
-    assert str(local_descriptor.resolve()) in message
-    assert "harness.settings.installed_only" in message
+    _assert_path_in_rust_debug(message, local_descriptor)
+    assert "ambiguous adapter descriptor" in message
 
 
 def test_adapter_python_data_directory_replaces_current_data_directory(
@@ -234,7 +235,9 @@ def test_adapter_python_data_directory_replaces_current_data_directory(
         base_dir=tmp_path / "agent",
     )
 
-    assert Path(plan["adapter_descriptor"]["path"]).samefile(adapter_descriptor)
+    assert Path(plan["adapter_descriptor"]["provenance"][0]["path"]).samefile(
+        adapter_descriptor
+    )
     assert (
         plan["adapter_descriptor"]["descriptor"]["runner"]["module"]
         == "adapter.environment"
@@ -258,7 +261,9 @@ def test_schema_less_descriptor_rejects_non_empty_settings(
     patch_sysconfig_data(data_root)
 
     plan = Fabric().plan(_config(), base_dir=tmp_path / "empty-agent")
-    assert Path(plan["adapter_descriptor"]["path"]).samefile(descriptor)
+    assert Path(plan["adapter_descriptor"]["provenance"][0]["path"]).samefile(
+        descriptor
+    )
 
     with pytest.raises(FabricConfigError) as caught:
         Fabric().plan(
@@ -288,11 +293,15 @@ def test_installed_claude_wheel_supplies_metadata_and_settings_schema(
         base_dir=tmp_path / "agent",
     )
 
-    assert Path(plan["adapter_descriptor"]["path"]).samefile(descriptor)
-    assert plan["adapter_descriptor"]["source"] == "local"
+    provenance = plan["adapter_descriptor"]["provenance"]
+    installed = [item for item in provenance if item["source"] == "installed_package"]
+    assert len(installed) == 1
+    assert Path(installed[0]["path"]).samefile(descriptor)
     assert plan.config.harness.settings == settings
     canonical_descriptor = json.loads(
-        (ROOT / "adapters/claude/fabric-adapter.json").read_text(encoding="utf-8")
+        (ROOT / "adapters/claude/claude.fabric-adapter.json").read_text(
+            encoding="utf-8"
+        )
     )
     assert json.loads(descriptor.read_text(encoding="utf-8")) == canonical_descriptor
     assert (
@@ -313,5 +322,5 @@ def test_installed_claude_wheel_supplies_metadata_and_settings_schema(
             base_dir=tmp_path / "invalid-agent",
         )
     message = str(caught.value)
-    assert str(descriptor.resolve()) in message
+    assert str((ROOT / "adapters/claude/claude.fabric-adapter.json").resolve()) in message
     assert "harness.settings.unknown" in message
