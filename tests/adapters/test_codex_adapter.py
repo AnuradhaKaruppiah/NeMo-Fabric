@@ -1697,7 +1697,6 @@ def test_codex_config_resolves_sdk_adapter():
     plan = Fabric().plan(config, base_dir=BASE_DIR)
 
     assert plan.adapter.adapter_id == "nvidia.fabric.codex"
-    assert plan.adapter.harness == "codex"
     assert plan.config.runtime.input_schema == "text"
     assert plan.config.harness.settings["reasoning_effort"] == "high"
     native = plan["capability_plan"]["native"]

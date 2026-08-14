@@ -128,7 +128,6 @@ def test_claude_descriptor_is_narrow_and_versioned():
     assert descriptor == {
         "contract_version": "fabric.adapter/v1alpha2",
         "adapter_id": "nvidia.fabric.claude",
-        "harness": "claude",
         "adapter_kind": "python",
         "runner": {
             "module": "nemo_fabric_adapters.claude.adapter",

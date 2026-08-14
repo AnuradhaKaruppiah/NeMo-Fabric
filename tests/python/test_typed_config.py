@@ -75,6 +75,7 @@ def _shim_adapter_config() -> FabricConfig:
         "adapter_id": "test.fabric.hermes_shim",
         "resolution": "preinstalled",
     }
+    config["discovery"] = {"local_paths": ["adapters"]}
     config["models"] = {
         "default": {"provider": "test", "model": "test-model", "temperature": 0.0}
     }
@@ -95,7 +96,7 @@ async def resolves_and_diagnoses_typed_config(client: Fabric) -> None:
 
     descriptor = plan["adapter_descriptor"]
     assert descriptor["descriptor"]["adapter_id"] == "nvidia.fabric.hermes"
-    assert descriptor["source"] == "repository", descriptor["source"]
+    assert descriptor["provenance"][0]["source"] == "bundled"
 
     assert report["agent_name"] == "typed-only-agent"
     assert report.checks, "doctor produced no checks"
