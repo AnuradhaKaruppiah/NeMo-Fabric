@@ -57,6 +57,10 @@ Adapter-owned schemas are static:
 | `tool_definition_schema` | Every normalized named tool definition |
 | `extension_schemas` | Named southbound extension points |
 
+## Minimal Python Descriptor
+
+The following is a complete minimal descriptor for an in-process Python adapter:
+
 ```json
 {
   "contract_version": "fabric.adapter/v1alpha2",
