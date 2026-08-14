@@ -1,7 +1,6 @@
 {
   "contract_version": "fabric.adapter/v1alpha2",
   "adapter_id": "nvidia.fabric.example.langgraph.email-phishing",
-  "harness": "langgraph-email-phishing",
   "adapter_kind": "python",
   "runner": {
     "module": "examples.langgraph_custom_agent.adapter.runtime"

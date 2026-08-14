@@ -12,6 +12,7 @@ from pathlib import Path
 
 from nemo_fabric import Fabric
 from nemo_fabric import FabricConfig
+from nemo_fabric import DiscoveryConfig
 from nemo_fabric import HarnessConfig
 from nemo_fabric import InstructionConfig
 from nemo_fabric import InstructionsConfig
@@ -30,17 +31,8 @@ DESCRIPTOR = (
     / "examples"
     / "langgraph_custom_agent"
     / "adapter"
-    / "fabric-adapter.json"
+    / "email-phishing.fabric-adapter.json"
 )
-
-
-def _stage_descriptor(tmp_path: Path) -> None:
-    staged = tmp_path / "adapters" / "langgraph-email-phishing"
-    staged.mkdir(parents=True)
-    (staged / "fabric-adapter.json").write_text(
-        DESCRIPTOR.read_text(encoding="utf-8"),
-        encoding="utf-8",
-    )
 
 
 def test_descriptor_freezes_the_custom_agent_contract_surface():
@@ -49,7 +41,6 @@ def test_descriptor_freezes_the_custom_agent_contract_surface():
     assert descriptor == {
         "contract_version": "fabric.adapter/v1alpha2",
         "adapter_id": ADAPTER_ID,
-        "harness": "langgraph-email-phishing",
         "adapter_kind": "python",
         "runner": {"module": "examples.langgraph_custom_agent.adapter.runtime"},
         "requirements": {},
@@ -82,13 +73,13 @@ def test_descriptor_freezes_the_custom_agent_contract_surface():
 
 
 def test_plan_projects_only_the_advertised_agent_config(tmp_path: Path):
-    _stage_descriptor(tmp_path)
     config = FabricConfig(
         metadata=MetadataConfig(name="langgraph-email-phishing"),
         harness=HarnessConfig(
             adapter_id=ADAPTER_ID,
             resolution="preinstalled",
         ),
+        discovery=DiscoveryConfig(local_paths=[DESCRIPTOR.parent]),
         models={
             "default": ModelConfig(
                 provider="nvidia",
@@ -126,8 +117,6 @@ def test_plan_projects_only_the_advertised_agent_config(tmp_path: Path):
 
 
 def test_plan_accepts_only_the_verified_relay_output(tmp_path: Path):
-    _stage_descriptor(tmp_path)
-
     plan = Fabric().plan(with_relay(public_config()), base_dir=tmp_path).to_mapping()
 
     assert plan["telemetry_plan"]["relay_enabled"] is True
@@ -136,8 +125,6 @@ def test_plan_accepts_only_the_verified_relay_output(tmp_path: Path):
 
 
 def test_plan_projects_optional_stdio_mcp_to_agent_config(tmp_path: Path):
-    _stage_descriptor(tmp_path)
-
     plan = (
         Fabric()
         .plan(

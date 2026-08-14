@@ -1648,7 +1648,10 @@ def test_adapter_rejects_structured_input(codex_payload):
 def test_descriptor_has_no_codex_binary_requirement():
     descriptor = json.loads(
         (
-            Path(__file__).parents[2] / "adapters" / "codex" / "fabric-adapter.json"
+            Path(__file__).parents[2]
+            / "adapters"
+            / "codex"
+            / "codex.fabric-adapter.json"
         ).read_text(encoding="utf-8")
     )
 

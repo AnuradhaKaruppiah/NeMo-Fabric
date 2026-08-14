@@ -21,10 +21,10 @@ use serde_json::{Map, Value};
 
 use crate::agent_config::validate_agent_config;
 use crate::config::{
-    AdapterConfigInput, AdapterKind, AgentConfig, CapabilityPlan, CapabilityTarget,
-    ControlLocation, EnvironmentOwnership, FabricConfig, RunPlan, TelemetryPlan,
-    validate_adapter_config_compatibility, validate_agent_config_extensions, validate_config,
-    validate_harness_settings, validate_tool_definitions, validate_workflow,
+    AdapterKind, AgentConfig, CapabilityPlan, CapabilityTarget, ControlLocation,
+    EnvironmentOwnership, RunPlan, TelemetryPlan, validate_adapter_config_compatibility,
+    validate_agent_config_extensions, validate_config, validate_harness_settings,
+    validate_tool_definitions, validate_workflow,
 };
 use crate::error::{FabricError, Result};
 
@@ -591,18 +591,11 @@ impl AdapterLifecycleOperation {
 struct AdapterLifecycleStart {
     agent_name: String,
     base_dir: PathBuf,
-    config: AdapterLifecycleConfig,
+    config: AgentConfig,
     runtime_context: RuntimeContext,
     capability_plan: CapabilityPlan,
     #[serde(skip_serializing_if = "Option::is_none")]
     telemetry_plan: Option<TelemetryPlan>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(untagged)]
-enum AdapterLifecycleConfig {
-    FabricConfig(Box<FabricConfig>),
-    AgentConfig(Box<AgentConfig>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -803,10 +796,14 @@ pub fn start_runtime(plan: &RunPlan) -> Result<RuntimeHandle> {
     validate_config(&plan.config)?;
     validate_agent_config(&plan.agent_config)?;
     validate_harness_settings(&plan.config, plan.adapter_descriptor.as_ref())?;
-    validate_workflow(&plan.config, plan.adapter_descriptor.as_ref())?;
+    validate_workflow(&plan.config, plan.adapter_target_descriptor.as_ref())?;
     validate_adapter_compatibility(plan)?;
     validate_tool_definitions(&plan.config, plan.adapter_descriptor.as_ref())?;
-    validate_agent_config_extensions(&plan.config, plan.adapter_descriptor.as_ref())?;
+    validate_agent_config_extensions(
+        &plan.config,
+        plan.adapter_descriptor.as_ref(),
+        plan.adapter_target_descriptor.as_ref(),
+    )?;
     let environment = prepare_environment(plan)?;
     if uses_local_host(plan) {
         return LocalHostAdapter.start(plan, environment);
@@ -2014,14 +2011,16 @@ fn adapter_id(plan: &RunPlan) -> Option<String> {
     plan.adapter_descriptor
         .as_ref()
         .map(|adapter| adapter.descriptor.adapter_id.clone())
-        .or_else(|| Some(plan.config.harness.adapter_id.clone()))
+        .or_else(|| {
+            plan.config
+                .harness
+                .as_ref()
+                .map(|harness| harness.adapter_id.clone())
+        })
 }
 
 fn harness(plan: &RunPlan) -> String {
-    plan.adapter_descriptor
-        .as_ref()
-        .map(|adapter| adapter.descriptor.harness.clone())
-        .unwrap_or_else(|| "unknown".to_string())
+    adapter_id(plan).unwrap_or_else(|| "unknown".to_string())
 }
 
 fn adapter_kind(plan: &RunPlan) -> AdapterKind {
@@ -2067,17 +2066,24 @@ fn merged_adapter_settings(plan: &RunPlan) -> Map<String, Value> {
         .as_ref()
         .map(|adapter| adapter.descriptor.runner.clone())
         .unwrap_or_default();
-    settings.extend(plan.config.harness.settings.clone());
+    if let Some(harness) = &plan.config.harness {
+        settings.extend(harness.settings.clone());
+    }
     settings
 }
 
 fn adapter_setting_root<'a>(plan: &'a RunPlan, key: &str) -> &'a Path {
-    if plan.config.harness.settings.contains_key(key) {
+    if plan
+        .config
+        .harness
+        .as_ref()
+        .is_some_and(|harness| harness.settings.contains_key(key))
+    {
         return &plan.base_dir;
     }
     plan.adapter_descriptor
         .as_ref()
-        .map(|adapter| adapter.root.as_path())
+        .map(|adapter| adapter.primary().root.as_path())
         .unwrap_or(&plan.base_dir)
 }
 
@@ -2105,20 +2111,8 @@ fn adapter_lifecycle_start(
     })
 }
 
-fn adapter_lifecycle_config(plan: &RunPlan) -> AdapterLifecycleConfig {
-    match plan
-        .adapter_descriptor
-        .as_ref()
-        .map(|resolved| resolved.descriptor.config.input)
-        .unwrap_or_default()
-    {
-        AdapterConfigInput::FabricConfig => {
-            AdapterLifecycleConfig::FabricConfig(Box::new(plan.config.clone()))
-        }
-        AdapterConfigInput::AgentConfig => {
-            AdapterLifecycleConfig::AgentConfig(Box::new(plan.agent_config.clone()))
-        }
-    }
+fn adapter_lifecycle_config(plan: &RunPlan) -> AgentConfig {
+    plan.agent_config.clone()
 }
 
 fn adapter_invocation(
@@ -2869,11 +2863,10 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("adapters/local-host")).expect("create adapters dir");
         fs::write(
-            root.join("adapters/local-host/fabric-adapter.json"),
+            root.join("adapters/local-host/local-host.fabric-adapter.json"),
             r#"{
   "contract_version": "fabric.adapter/v1alpha2",
   "adapter_id": "acme.fabric.local-host",
-  "harness": "local-host-test",
   "adapter_kind": "python",
   "runner": {"module": "fake_host"},
   "settings_schema": {
@@ -3066,6 +3059,7 @@ for line in sys.stdin:
                     "env": {"FABRIC_FAKE_HOST_MODE": mode},
                 },
             },
+            "discovery": {"local_paths": ["adapters"]},
             "runtime": {
                 "input_schema": "text",
                 "output_schema": "text",
@@ -3084,7 +3078,8 @@ for line in sys.stdin:
                 "observability": {"atif": {"enabled": true}},
             });
         }
-        let config: FabricConfig = serde_json::from_value(config_value).expect("typed config");
+        let config: crate::config::FabricConfig =
+            serde_json::from_value(config_value).expect("typed config");
         let plan = resolve_run_plan_from_config(config, ResolveContext::new(&root))
             .expect("resolve local-host plan");
         (root, plan)
@@ -3185,20 +3180,9 @@ for line in sys.stdin:
     }
 
     #[test]
-    fn adapter_config_input_selects_southbound_payload_without_changing_legacy_default() {
-        let (root, mut plan) = local_host_plan("success");
+    fn adapter_lifecycle_always_receives_southbound_agent_config() {
+        let (root, plan) = local_host_plan("success");
 
-        let legacy = serde_json::to_value(adapter_lifecycle_config(&plan))
-            .expect("serialize legacy adapter config");
-        assert_eq!(legacy["schema_version"], "fabric.agent/v1alpha1");
-        assert_eq!(legacy["metadata"]["name"], "local-host-test-agent");
-
-        plan.adapter_descriptor
-            .as_mut()
-            .expect("resolved descriptor")
-            .descriptor
-            .config
-            .input = AdapterConfigInput::AgentConfig;
         let southbound = serde_json::to_value(adapter_lifecycle_config(&plan))
             .expect("serialize southbound adapter config");
         assert!(southbound.get("schema_version").is_none());
@@ -3608,6 +3592,8 @@ for line in sys.stdin:
         invalid_plan
             .config
             .harness
+            .as_mut()
+            .expect("harness")
             .settings
             .insert("unknown".to_string(), Value::Bool(true));
 
@@ -3655,32 +3641,37 @@ for line in sys.stdin:
         let (root, mut plan) = local_host_plan("success");
         plan.config.workflow = Some(
             serde_json::from_value(serde_json::json!({
-                "entrypoint": {
-                    "kind": "workflow_registry",
-                    "ref": "test_agent"
-                },
+                "target_id": "test.fabric.workflow",
                 "settings": {"llm_name": 7}
             }))
             .expect("typed workflow"),
         );
-        plan.adapter_descriptor
-            .as_mut()
-            .expect("adapter descriptor")
-            .descriptor
-            .workflow_schema = Some(
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "settings": {
+        let descriptor: crate::config::AdapterTargetDescriptor =
+            serde_json::from_value(serde_json::json!({
+                "contract_version": crate::ADAPTER_CONTRACT_VERSION,
+                "type": "workflow",
+                "id": "test.fabric.workflow",
+                "adapter_id": "acme.fabric.local-host",
+                "spec": {
+                    "entrypoint": {
+                        "kind": "workflow_registry",
+                        "ref": "test_agent"
+                    },
+                    "settings_schema": {
                         "type": "object",
                         "properties": {"llm_name": {"type": "string"}}
                     }
                 }
-            })
-            .as_object()
-            .expect("object schema")
-            .clone(),
-        );
+            }))
+            .expect("target descriptor");
+        plan.adapter_target_descriptor = Some(crate::config::ResolvedAdapterTargetDescriptor {
+            provenance: vec![crate::config::DescriptorProvenance {
+                source: crate::config::DescriptorSource::ExplicitLocal,
+                path: root.join("workflow.fabric-target.json"),
+                root: root.clone(),
+            }],
+            descriptor,
+        });
 
         let error = start_runtime(&plan).expect_err("start must reject invalid workflow");
         assert!(matches!(
@@ -3692,23 +3683,21 @@ for line in sys.stdin:
     }
 
     #[test]
-    fn local_host_revalidates_workflow_entrypoint_before_runtime_start() {
+    fn local_host_revalidates_projected_workflow_entrypoint_before_runtime_start() {
         for (field, value) in [
-            ("workflow.entrypoint.kind", " "),
-            ("workflow.entrypoint.ref", "\t"),
+            ("agent_config.workflow.entrypoint.kind", " "),
+            ("agent_config.workflow.entrypoint.ref", "\t"),
         ] {
             let (root, plan) = local_host_plan("start_failure");
             let mut serialized = serde_json::to_value(plan).expect("serialize plan");
-            serialized["config"]["workflow"] = serde_json::json!({
+            serialized["agent_config"]["workflow"] = serde_json::json!({
                 "entrypoint": {
                     "kind": "workflow_registry",
                     "ref": "test_agent"
                 }
             });
-            serialized["adapter_descriptor"]["descriptor"]["workflow_schema"] =
-                serde_json::json!({"type": "object"});
-            serialized["config"]["workflow"]["entrypoint"][field
-                .strip_prefix("workflow.entrypoint.")
+            serialized["agent_config"]["workflow"]["entrypoint"][field
+                .strip_prefix("agent_config.workflow.entrypoint.")
                 .expect("entrypoint field")] = Value::String(value.to_string());
             let plan: RunPlan = serde_json::from_value(serialized).expect("deserialize plan");
 

@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 use schemars::schema_for;
 use serde_json::Value;
 
-use crate::config::{AdapterDescriptor, AgentConfig, FabricConfig, RunPlan};
+use crate::config::{
+    AdapterDescriptor, AdapterTargetDescriptor, AgentConfig, FabricConfig, RunPlan,
+};
 use crate::error::{FabricError, Result};
 use crate::runtime::{
     AdapterInvocation, ArtifactManifest, EnvironmentHandle, ErrorInfo, FabricEvent,
@@ -31,6 +33,8 @@ pub enum SchemaName {
     AgentRunResult,
     /// Adapter descriptor schema.
     AdapterDescriptor,
+    /// Adapter target descriptor schema.
+    AdapterTargetDescriptor,
     /// Resolved run plan schema.
     RunPlan,
     /// Initialized-runtime invocation payload schema.
@@ -61,12 +65,13 @@ pub enum SchemaName {
 
 impl SchemaName {
     /// All public schemas in stable output order.
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::Agent,
         Self::AgentConfig,
         Self::AgentRunRequest,
         Self::AgentRunResult,
         Self::AdapterDescriptor,
+        Self::AdapterTargetDescriptor,
         Self::RunPlan,
         Self::AdapterInvocation,
         Self::OpenAiStreamInvocation,
@@ -90,6 +95,7 @@ impl SchemaName {
             Self::AgentRunRequest => "agent-run-request",
             Self::AgentRunResult => "agent-run-result",
             Self::AdapterDescriptor => "adapter-descriptor",
+            Self::AdapterTargetDescriptor => "adapter-target-descriptor",
             Self::RunPlan => "run-plan",
             Self::AdapterInvocation => "adapter-invocation",
             Self::OpenAiStreamInvocation => "openai-stream-invocation",
@@ -119,6 +125,7 @@ impl SchemaName {
             | Self::AgentRunRequest
             | Self::AgentRunResult
             | Self::AdapterDescriptor
+            | Self::AdapterTargetDescriptor
             | Self::AdapterInvocation
             | Self::OpenAiStreamInvocation
             | Self::OpenAiStreamRecord
@@ -135,6 +142,9 @@ impl SchemaName {
             "agent-run-request" | "agent_run_request" => Ok(Self::AgentRunRequest),
             "agent-run-result" | "agent_run_result" => Ok(Self::AgentRunResult),
             "adapter-descriptor" | "adapter_descriptor" => Ok(Self::AdapterDescriptor),
+            "adapter-target-descriptor" | "adapter_target_descriptor" => {
+                Ok(Self::AdapterTargetDescriptor)
+            }
             "run-plan" | "run_plan" => Ok(Self::RunPlan),
             "adapter-invocation" | "adapter_invocation" => Ok(Self::AdapterInvocation),
             "openai-stream-invocation" | "openai_stream_invocation" => {
@@ -169,6 +179,7 @@ pub fn generate_schema(schema: SchemaName) -> Result<Value> {
         SchemaName::AgentRunRequest => to_value(schema_for!(AgentRunRequest)),
         SchemaName::AgentRunResult => to_value(schema_for!(AgentRunResult)),
         SchemaName::AdapterDescriptor => to_value(schema_for!(AdapterDescriptor)),
+        SchemaName::AdapterTargetDescriptor => to_value(schema_for!(AdapterTargetDescriptor)),
         SchemaName::RunPlan => to_value(schema_for!(RunPlan)),
         SchemaName::AdapterInvocation => to_value(schema_for!(AdapterInvocation)),
         SchemaName::OpenAiStreamInvocation => to_value(schema_for!(OpenAiStreamInvocation)),
@@ -402,8 +413,6 @@ mod tests {
         assert_eq!(schema["properties"]["contract_version"]["minLength"], 1);
         assert_eq!(schema["properties"]["adapter_id"]["minLength"], 1);
         assert_eq!(schema["properties"]["adapter_id"]["pattern"], r"\S");
-        assert_eq!(schema["properties"]["harness"]["minLength"], 1);
-        assert_eq!(schema["properties"]["harness"]["pattern"], r"\S");
         assert_eq!(
             schema["properties"]["settings_schema"]["type"],
             serde_json::json!(["object", "null"])
@@ -412,10 +421,7 @@ mod tests {
             schema["properties"]["model_schema"]["type"],
             serde_json::json!(["object", "null"])
         );
-        assert_eq!(
-            schema["properties"]["workflow_schema"]["type"],
-            serde_json::json!(["object", "null"])
-        );
+        assert!(schema["properties"]["target_types"].is_object());
         assert_eq!(
             schema["properties"]["extension_schemas"]["propertyNames"]["enum"],
             serde_json::json!([
@@ -461,7 +467,6 @@ mod tests {
         let descriptor = serde_json::json!({
             "contract_version": crate::ADAPTER_CONTRACT_VERSION,
             "adapter_id": "test.fabric.schema",
-            "harness": "schema-test",
             "adapter_kind": "python",
             "telemetry": {
                 "providers": {
@@ -479,7 +484,7 @@ mod tests {
         unsupported_provider["telemetry"]["providers"] = serde_json::json!({"custom": {}});
         assert!(!validator.is_valid(&unsupported_provider));
 
-        for field in ["adapter_id", "harness"] {
+        for field in ["adapter_id"] {
             let mut blank_identifier = descriptor.clone();
             blank_identifier[field] = serde_json::json!(" \t");
             assert!(!validator.is_valid(&blank_identifier));
@@ -507,6 +512,25 @@ mod tests {
                 u64::MAX
             );
         }
+    }
+
+    #[test]
+    fn adapter_target_descriptor_schema_matches_runtime_constraints() {
+        let schema =
+            generate_schema(SchemaName::AdapterTargetDescriptor).expect("schema generation");
+
+        assert_eq!(
+            schema["properties"]["contract_version"]["const"],
+            crate::ADAPTER_CONTRACT_VERSION
+        );
+        assert_eq!(schema["properties"]["id"]["minLength"], 1);
+        assert_eq!(schema["properties"]["id"]["pattern"], r"\S");
+        assert_eq!(schema["properties"]["adapter_id"]["minLength"], 1);
+        assert_eq!(schema["properties"]["adapter_id"]["pattern"], r"\S");
+        assert_eq!(
+            schema["$defs"]["WorkflowTargetSpec"]["properties"]["settings_schema"]["type"],
+            serde_json::json!(["object", "null"])
+        );
     }
 
     #[test]

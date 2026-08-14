@@ -37,6 +37,11 @@ const schemaSpecs = [
     output: "adapter-descriptor.ts",
     project: projectAdapterDescriptor,
   },
+  {
+    name: "adapter-target-descriptor",
+    output: "adapter-target-descriptor.ts",
+    project: projectAdapterTargetDescriptor,
+  },
   { name: "agent-config", output: "agent-config.ts" },
   {
     name: "agent-run-request",
@@ -233,6 +238,21 @@ function projectAdapterDescriptor(original) {
   return schema;
 }
 
+function projectAdapterTargetDescriptor(original) {
+  const schema = deepClone(original);
+  const contractVersion = requireString(
+    schema.properties?.contract_version?.const,
+    "adapter-target-descriptor contract_version.const",
+  );
+  schema.properties.contract_version.tsType = JSON.stringify(contractVersion);
+  // schemars emits `unevaluatedProperties` for the flattened target enum.
+  // Project the same open extension surface in the form understood by the
+  // TypeScript generator and its JsonObject guard.
+  delete schema.unevaluatedProperties;
+  schema.additionalProperties = true;
+  return schema;
+}
+
 function projectRunRequest(original) {
   const schema = deepClone(original);
   const input = schema.properties?.input;
@@ -399,10 +419,14 @@ function replaceGeneratedPropertyType(output, property, projectedType) {
 function projectOpenInterfaces(output) {
   const openInterface =
     /export interface ([A-Za-z][A-Za-z0-9]*) \{\n((?:(?!^export (?:interface|type) ).)*?)  \[k: string\]: unknown;\n\}/gms;
-  const projected = output.replace(
+  const projectedInterfaces = output.replace(
     openInterface,
     (_match, name, fields) =>
       `export type ${name} = {\n${fields}} & JsonObject;`,
+  );
+  const projected = projectedInterfaces.replace(
+    /  \[k: string\]: unknown;\n\}/g,
+    "} & JsonObject",
   );
   if (projected.includes("[k: string]: unknown;")) {
     throw new Error(

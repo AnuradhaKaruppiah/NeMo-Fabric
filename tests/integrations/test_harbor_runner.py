@@ -304,12 +304,14 @@ def test_harbor_smoke_config_resolves_its_local_adapter():
     config = build_harbor_config(
         adapter_id="demo.fabric.scripted",
         workspace="/app",
+        discovery_paths=("adapters",),
     )
     plan = Fabric().plan(config, base_dir=CALCULATOR_FABRIC_ROOT)
 
     assert plan.adapter.adapter_id == "demo.fabric.scripted"
-    assert plan["adapter_descriptor"]["source"] == "local"
-    assert Path(plan["adapter_descriptor"]["root"]).parts[-2:] == (
+    provenance = plan["adapter_descriptor"]["provenance"][0]
+    assert provenance["source"] == "explicit_local"
+    assert Path(provenance["root"]).parts[-2:] == (
         "adapters",
         "scripted",
     )
@@ -534,14 +536,14 @@ def test_swebench_matrix_translates_harbor_inputs_to_typed_config(tmp_path: Path
 
     # TODO: Remove the bundled copies and these equality checks after Fabric
     # discovers adapter descriptors directly from source checkouts and wheels.
-    assert (SWEBENCH_ROOT / "adapters/hermes/fabric-adapter.json").read_text() == (
-        ROOT / "adapters/hermes/fabric-adapter.json"
+    assert (SWEBENCH_ROOT / "adapters/hermes/hermes.fabric-adapter.json").read_text() == (
+        ROOT / "adapters/hermes/hermes.fabric-adapter.json"
     ).read_text()
-    assert (SWEBENCH_ROOT / "adapters/claude/fabric-adapter.json").read_text() == (
-        ROOT / "adapters/claude/fabric-adapter.json"
+    assert (SWEBENCH_ROOT / "adapters/claude/claude.fabric-adapter.json").read_text() == (
+        ROOT / "adapters/claude/claude.fabric-adapter.json"
     ).read_text()
     hermes_descriptor = json.loads(
-        (SWEBENCH_ROOT / "adapters/hermes/fabric-adapter.json").read_text()
+        (SWEBENCH_ROOT / "adapters/hermes/hermes.fabric-adapter.json").read_text()
     )
     assert "models" in hermes_descriptor["config"]["accepts"]
 

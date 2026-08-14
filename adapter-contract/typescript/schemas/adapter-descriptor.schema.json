@@ -74,11 +74,6 @@
       "description": "Configuration object delivered to an adapter lifecycle host.",
       "oneOf": [
         {
-          "const": "fabric_config",
-          "description": "Deliver the complete northbound `FabricConfig` for legacy adapters.",
-          "type": "string"
-        },
-        {
           "const": "agent_config",
           "description": "Deliver the resolved southbound `AgentConfig` contract.",
           "type": "string"
@@ -105,7 +100,7 @@
         },
         "input": {
           "$ref": "#/$defs/AdapterConfigInput",
-          "default": "fabric_config",
+          "default": "agent_config",
           "description": "Configuration object delivered to the adapter lifecycle host."
         }
       },
@@ -177,6 +172,16 @@
         }
       },
       "type": "object"
+    },
+    "AdapterTargetType": {
+      "description": "Adapter target categories understood by this Adapter Contract version.",
+      "oneOf": [
+        {
+          "const": "workflow",
+          "description": "A separately registered custom-agent or workflow target.",
+          "type": "string"
+        }
+      ]
     },
     "AdapterTelemetryProviderSupport": {
       "additionalProperties": true,
@@ -278,7 +283,7 @@
     "config": {
       "$ref": "#/$defs/AdapterConfigSupport",
       "default": {
-        "input": "fabric_config"
+        "input": "agent_config"
       },
       "description": "NeMo Fabric config areas this adapter consumes or generates."
     },
@@ -318,12 +323,6 @@
       },
       "type": "object"
     },
-    "harness": {
-      "description": "Stable machine-readable harness identifier implemented by this adapter.",
-      "minLength": 1,
-      "pattern": "\\S",
-      "type": "string"
-    },
     "model_schema": {
       "additionalProperties": true,
       "description": "JSON Schema applied to every normalized `FabricConfig.models` entry.",
@@ -350,6 +349,13 @@
         "null"
       ]
     },
+    "target_types": {
+      "description": "Registered target categories this adapter can execute.",
+      "items": {
+        "$ref": "#/$defs/AdapterTargetType"
+      },
+      "type": "array"
+    },
     "telemetry": {
       "$ref": "#/$defs/AdapterTelemetrySupport",
       "default": {},
@@ -362,20 +368,11 @@
         "object",
         "null"
       ]
-    },
-    "workflow_schema": {
-      "additionalProperties": true,
-      "description": "JSON Schema for adapter-owned `FabricConfig.workflow`.",
-      "type": [
-        "object",
-        "null"
-      ]
     }
   },
   "required": [
     "contract_version",
     "adapter_id",
-    "harness",
     "adapter_kind"
   ],
   "title": "AdapterDescriptor",

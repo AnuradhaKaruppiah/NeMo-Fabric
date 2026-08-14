@@ -61,7 +61,7 @@ where = ["src"]
 include = ["nemo_fabric_adapters.deepagents*"]
 
 [tool.setuptools.data-files]
-"share/nemo-fabric/adapters/deepagents" = ["fabric-adapter.json"]
+"share/nemo-fabric/adapters/deepagents" = ["deepagents.fabric-adapter.json"]
 
 [tool.uv.sources]
 nemo-fabric-adapter-contract = { path = "../../adapter-contract/python", editable = true }

@@ -11,6 +11,7 @@ import type { EnvironmentHandle } from "./generated/runtime-context.js";
 import { ADAPTER_CONTRACT_VERSION } from "./version.js";
 
 export type * from "./generated/adapter-descriptor.js";
+export type * from "./generated/adapter-target-descriptor.js";
 export type * from "./generated/agent-config.js";
 export type * from "./generated/agent-run-request.js";
 export type * from "./generated/agent-run-result.js";

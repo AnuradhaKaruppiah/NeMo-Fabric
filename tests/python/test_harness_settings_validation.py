@@ -19,12 +19,12 @@ from nemo_fabric import FabricConfigError
 
 ROOT = Path(__file__).resolve().parents[2]
 ADAPTER_DESCRIPTORS = {
-    "nvidia.fabric.claude": ROOT / "adapters" / "claude" / "fabric-adapter.json",
-    "nvidia.fabric.codex": ROOT / "adapters" / "codex" / "fabric-adapter.json",
+    "nvidia.fabric.claude": ROOT / "adapters" / "claude" / "claude.fabric-adapter.json",
+    "nvidia.fabric.codex": ROOT / "adapters" / "codex" / "codex.fabric-adapter.json",
     "nvidia.fabric.langchain.deepagents": (
-        ROOT / "adapters" / "deepagents" / "fabric-adapter.json"
+        ROOT / "adapters" / "deepagents" / "deepagents.fabric-adapter.json"
     ),
-    "nvidia.fabric.hermes": ROOT / "adapters" / "hermes" / "fabric-adapter.json",
+    "nvidia.fabric.hermes": ROOT / "adapters" / "hermes" / "hermes.fabric-adapter.json",
 }
 
 
@@ -129,8 +129,8 @@ def test_repository_settings_are_validated_and_preserved(
     )
 
     assert plan.config.harness.settings == settings
-    assert plan["adapter_descriptor"]["source"] == "repository"
-    assert Path(plan["adapter_descriptor"]["path"]).samefile(
+    assert plan["adapter_descriptor"]["provenance"][0]["source"] == "bundled"
+    assert Path(plan["adapter_descriptor"]["provenance"][0]["path"]).samefile(
         ADAPTER_DESCRIPTORS[adapter_id]
     )
 

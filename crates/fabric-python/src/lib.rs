@@ -212,15 +212,10 @@ fn resolve_context(
             .call_method1("get_path", ("data",))?
             .extract()?,
     };
-    // Stopgap: Python adapter wheels install descriptors under the interpreter's
-    // data root. Use ADAPTER_PYTHON when set so descriptor metadata matches the
-    // adapter code that will execute. A provider-backed adapter registry should
-    // replace this implicit environment scan.
-    let installed_adapters = PathBuf::from(data_path)
-        .join("share")
-        .join("nemo-fabric")
-        .join("adapters");
-    Ok((ResolveContext::new(base_dir), vec![installed_adapters]))
+    // Adapter and target packages publish declarative metadata under the
+    // selected interpreter's shared NeMo Fabric data root.
+    let installed_descriptors = PathBuf::from(data_path).join("share").join("nemo-fabric");
+    Ok((ResolveContext::new(base_dir), vec![installed_descriptors]))
 }
 
 fn discovery_python(base_dir: &Path) -> Option<(PathBuf, String)> {

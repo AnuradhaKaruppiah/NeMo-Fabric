@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from nemo_fabric import EnvironmentConfig, FabricConfig, HarnessConfig, MetadataConfig, ModelConfig, RuntimeConfig
+from nemo_fabric import DiscoveryConfig, EnvironmentConfig, FabricConfig, HarnessConfig, MetadataConfig, ModelConfig, RuntimeConfig
 
 
 def minimal_config(
@@ -40,6 +40,7 @@ def hermes_shim_config() -> FabricConfig:
             resolution="preinstalled",
             settings={},
         ),
+        discovery=DiscoveryConfig(local_paths=["adapters"]),
         models={"default": ModelConfig(provider="test", model="test-model", temperature=0.0)},
         runtime=RuntimeConfig(input_schema="chat", output_schema="message", artifacts="./artifacts"),
         environment=EnvironmentConfig(

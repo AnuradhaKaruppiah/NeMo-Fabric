@@ -17,6 +17,7 @@ import pytest
 from nemo_fabric import AdapterInfo
 from nemo_fabric import ArtifactRef
 from nemo_fabric import DoctorReport
+from nemo_fabric import DiscoveryConfig
 from nemo_fabric import EnvironmentConfig
 from nemo_fabric import Fabric
 from nemo_fabric import FabricCapabilityError
@@ -56,7 +57,6 @@ from nemo_fabric import TelemetryConfig
 from nemo_fabric import ToolDefinitionConfig
 from nemo_fabric import ToolsConfig
 from nemo_fabric import WorkflowConfig
-from nemo_fabric import WorkflowEntrypointConfig
 from nemo_fabric.types import _FabricConfigSnapshot
 from nemo_fabric.types import _ToolsConfig
 from pydantic import ValidationError
@@ -135,34 +135,26 @@ def test_typed_config_validates_required_fields_and_preserves_extensions():
 def test_typed_workflow_round_trips_through_config_and_plan_snapshot():
     config = FabricConfig(
         metadata=MetadataConfig(name="demo"),
-        harness=HarnessConfig(adapter_id="test.fabric.shim"),
         workflow=WorkflowConfig(
-            entrypoint=WorkflowEntrypointConfig(
-                kind="workflow_registry",
-                ref="test_agent",
-                namespace="example",
-            ),
+            target_id="example.test-agent",
             settings={"llm_name": "default"},
             revision="v1",
         ),
+        discovery=DiscoveryConfig(local_paths=["./descriptors"]),
     )
 
     assert config.to_mapping()["workflow"] == {
-        "entrypoint": {
-            "kind": "workflow_registry",
-            "ref": "test_agent",
-            "namespace": "example",
-        },
+        "target_id": "example.test-agent",
         "settings": {"llm_name": "default"},
         "revision": "v1",
     }
 
     snapshot = _FabricConfigSnapshot.from_mapping(config.to_mapping())
-    assert snapshot.workflow.entrypoint.kind == "workflow_registry"
-    assert snapshot.workflow.entrypoint.ref == "test_agent"
-    assert snapshot.workflow.entrypoint.namespace == "example"
+    assert snapshot.harness is None
+    assert snapshot.workflow.target_id == "example.test-agent"
     assert snapshot.workflow.settings == {"llm_name": "default"}
     assert snapshot.workflow.revision == "v1"
+    assert snapshot.discovery.local_paths == ["./descriptors"]
     assert snapshot.to_mapping()["workflow"] == config.to_mapping()["workflow"]
 
     config.workflow.settings.clear()
@@ -172,16 +164,13 @@ def test_typed_workflow_round_trips_through_config_and_plan_snapshot():
     assert snapshot.to_mapping()["workflow"] == workflow_mapping
 
 
-@pytest.mark.parametrize("field", ["kind", "ref"])
-def test_typed_workflow_rejects_blank_entrypoint_values(field: str):
-    values = {"kind": "workflow_registry", "ref": "test_agent", field: " "}
-
+def test_typed_workflow_rejects_blank_target_id():
     with pytest.raises(ValidationError):
-        WorkflowEntrypointConfig(**values)
+        WorkflowConfig(target_id=" ")
 
     raw = _plan()["config"]
-    raw["workflow"] = {"entrypoint": values}
-    with pytest.raises(FabricConfigError, match="workflow entrypoint"):
+    raw["workflow"] = {"target_id": " "}
+    with pytest.raises(FabricConfigError, match="target_id"):
         _FabricConfigSnapshot.from_mapping(raw)
 
 
@@ -1402,8 +1391,8 @@ def test_agent_model_tracks_rust_schema_top_level_fields():
     pydantic_schema = FabricConfig.model_json_schema()
 
     assert set(pydantic_schema["properties"]).issuperset(schema["properties"])
-    assert set(pydantic_schema["required"]) == {"metadata", "harness"}
-    assert set(schema["required"]) == {"schema_version", "metadata", "harness", "runtime"}
+    assert set(pydantic_schema["required"]) == {"metadata"}
+    assert set(schema["required"]) == {"schema_version", "metadata", "runtime"}
 
 
 def test_environment_model_defines_extension_field_ownership():

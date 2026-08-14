@@ -11,6 +11,7 @@ from nemo_fabric.errors import FabricNativeUnavailableError
 from nemo_fabric.errors import FabricRuntimeError
 from nemo_fabric.errors import FabricStateError
 from nemo_fabric.models import EnvironmentConfig
+from nemo_fabric.models import DiscoveryConfig
 from nemo_fabric.models import FabricBaseModel
 from nemo_fabric.models import FabricConfig
 from nemo_fabric.models import HarnessConfig
@@ -41,7 +42,6 @@ from nemo_fabric.models import TelemetryProviderConfig
 from nemo_fabric.models import ToolsConfig
 from nemo_fabric.models import ToolDefinitionConfig
 from nemo_fabric.models import WorkflowConfig
-from nemo_fabric.models import WorkflowEntrypointConfig
 from nemo_fabric.openai_streaming import OpenAIInvokeStream
 from nemo_fabric.runtime import Runtime
 from nemo_fabric.runtime import RuntimeStatus
@@ -66,6 +66,7 @@ __all__ = [
     "ArtifactRef",
     "DoctorCheck",
     "DoctorReport",
+    "DiscoveryConfig",
     "EnvironmentConfig",
     "ErrorInfo",
     "Fabric",
@@ -116,5 +117,4 @@ __all__ = [
     "ToolsConfig",
     "ToolDefinitionConfig",
     "WorkflowConfig",
-    "WorkflowEntrypointConfig",
 ]

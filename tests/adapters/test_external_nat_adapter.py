@@ -256,12 +256,14 @@ def make_invocation_payload_fixture():
 
 def test_descriptor_declares_exact_source_reference_contract():
     descriptor = json.loads(
-        (ROOT / "external" / "nat" / "fabric-adapter.json").read_text(encoding="utf-8")
+        (ROOT / "external" / "nat" / "nat.fabric-adapter.json").read_text(
+            encoding="utf-8"
+        )
     )
 
     assert descriptor["adapter_id"] == "nvidia.fabric.nat"
-    assert descriptor["harness"] == "nat"
     assert descriptor["adapter_kind"] == "python"
+    assert descriptor["target_types"] == ["workflow"]
     assert descriptor["runner"] == {"module": "nemo_fabric_adapters.nat.adapter"}
     assert descriptor["requirements"] == {}
     assert descriptor["config"]["input"] == "agent_config"
@@ -280,15 +282,17 @@ def test_descriptor_declares_exact_source_reference_contract():
     assert settings_schema["properties"] == {}
     assert "required" not in settings_schema
     assert settings_schema["additionalProperties"] is False
-    workflow_schema = descriptor["workflow_schema"]
-    assert workflow_schema["required"] == ["entrypoint"]
-    assert workflow_schema["additionalProperties"] is False
-    entrypoint_schema = workflow_schema["properties"]["entrypoint"]
-    assert entrypoint_schema["properties"]["kind"]["const"] == "factory"
-    assert entrypoint_schema["properties"]["ref"]["const"] == "fabric.agent.react"
-    assert entrypoint_schema["required"] == ["kind", "ref"]
-    assert entrypoint_schema["additionalProperties"] is False
-    assert workflow_schema["properties"]["settings"]["properties"]["_type"] is False
+    target = json.loads(
+        (ROOT / "external" / "nat" / "targets" / "email-phishing-analyzer.fabric-target.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert target["adapter_id"] == descriptor["adapter_id"]
+    assert target["spec"]["entrypoint"] == {
+        "kind": "factory",
+        "ref": "fabric.agent.react",
+    }
+    assert target["spec"]["settings_schema"]["additionalProperties"] is False
     definition_schema = descriptor["tool_definition_schema"]
     assert definition_schema["properties"]["kind"]["enum"] == [
         "function",
@@ -482,20 +486,13 @@ def test_typed_examples_project_and_translate_through_one_nat_adapter(
     example: str,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    descriptor = ROOT / "external" / "nat" / "fabric-adapter.json"
-    staged_descriptor = tmp_path / "adapters" / "nat" / "fabric-adapter.json"
-    staged_descriptor.parent.mkdir(parents=True)
-    staged_descriptor.write_text(
-        descriptor.read_text(encoding="utf-8"), encoding="utf-8"
-    )
     namespace = runpy.run_path(str(ROOT / "external" / "nat" / "examples" / example))
     monkeypatch.setenv("NVIDIA_API_KEY", "test-key")
 
     plan = Fabric().plan(namespace["build_config"](), base_dir=tmp_path)
 
-    assert plan.config.workflow.entrypoint.kind == "factory"
-    assert plan.config.workflow.entrypoint.ref == "fabric.agent.react"
-    assert "workflow" not in plan.config.harness.settings
+    assert plan.config.workflow.target_id.startswith("nvidia.examples.nat.")
+    assert plan.config.harness is None
     southbound = plan.to_mapping()["agent_config"]
     assert southbound["workflow"]["entrypoint"] == {
         "kind": "factory",
@@ -537,7 +534,7 @@ def test_email_example_uses_a_normalized_function_definition():
     config = namespace["build_config"]()
     definition = config.tools.definitions["email_phishing_analyzer"]
 
-    assert config.harness.settings == {}
+    assert config.harness is None
     assert definition.kind == "function"
     assert definition.ref == "email_phishing_analyzer"
     assert definition.settings == {"llm": "default"}

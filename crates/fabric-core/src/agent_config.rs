@@ -12,7 +12,7 @@ use serde_json::Value;
 
 use crate::config::{
     AdapterConfigField, AdapterDescriptor, CapabilityPlan, FabricConfig, InstructionMode,
-    McpAuthenticationConfig,
+    McpAuthenticationConfig, ResolvedAdapterTargetDescriptor,
 };
 use crate::error::{FabricError, Result};
 
@@ -329,6 +329,7 @@ pub(crate) fn project_agent_config(
     config: &FabricConfig,
     capability_plan: &CapabilityPlan,
     descriptor: Option<&AdapterDescriptor>,
+    target: Option<&ResolvedAdapterTargetDescriptor>,
 ) -> AgentConfig {
     let accepts = |field: AdapterConfigField| {
         descriptor.is_some_and(|descriptor| descriptor.config.accepts.contains(&field))
@@ -461,21 +462,28 @@ pub(crate) fn project_agent_config(
     let workflow = config
         .workflow
         .as_ref()
-        .map(|workflow| AgentWorkflowConfig {
-            entrypoint: AgentWorkflowEntrypointConfig {
-                kind: workflow.entrypoint.kind.clone(),
-                r#ref: workflow.entrypoint.r#ref.clone(),
-                extensions: workflow.entrypoint.extensions.clone(),
-            },
-            settings: workflow.settings.clone(),
-            extensions: workflow.extensions.clone(),
+        .zip(target)
+        .map(|(workflow, target)| {
+            let entrypoint = &target.descriptor.target.workflow().entrypoint;
+            AgentWorkflowConfig {
+                entrypoint: AgentWorkflowEntrypointConfig {
+                    kind: entrypoint.kind.clone(),
+                    r#ref: entrypoint.r#ref.clone(),
+                    extensions: entrypoint.extensions.clone(),
+                },
+                settings: workflow.settings.clone(),
+                extensions: workflow.extensions.clone(),
+            }
         });
 
-    let harness = (!config.harness.settings.is_empty() || !config.harness.extensions.is_empty())
-        .then(|| AgentHarnessConfig {
-            settings: config.harness.settings.clone(),
-            extensions: config.harness.extensions.clone(),
-        });
+    let harness = config.harness.as_ref().and_then(|harness| {
+        (!harness.settings.is_empty() || !harness.extensions.is_empty()).then(|| {
+            AgentHarnessConfig {
+                settings: harness.settings.clone(),
+                extensions: harness.extensions.clone(),
+            }
+        })
+    });
 
     AgentConfig {
         harness,
