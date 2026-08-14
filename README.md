@@ -42,14 +42,17 @@ expressions install the components shown in each column:
 | --- | --- | --- | --- |
 | [Claude Code](docs/integrations/harness/claude.mdx) | `nemo-fabric[claude]` | `nemo-fabric-adapters-claude[harness]` | `nemo-fabric-adapters-claude` |
 | [Codex](docs/integrations/harness/codex.mdx) | `nemo-fabric[codex]` | `nemo-fabric-adapters-codex[harness]` | `nemo-fabric-adapters-codex` |
-| [Hermes Agent](docs/integrations/harness/hermes.mdx) | `nemo-fabric[hermes-agent]` | `nemo-fabric-adapters-hermes[harness]` | `nemo-fabric-adapters-hermes` |
+| [Hermes Agent](docs/integrations/harness/hermes.mdx) | Install Hermes Agent separately, then install `nemo-fabric[hermes-agent]` | Install Hermes Agent separately, then install `nemo-fabric-adapters-hermes` | `nemo-fabric-adapters-hermes` |
 | [LangChain Deep Agents](docs/integrations/harness/deepagents.mdx) | `nemo-fabric[deepagents]` | `nemo-fabric-adapters-deepagents[harness]` | `nemo-fabric-adapters-deepagents` |
 | [mini-SWE-agent](docs/integrations/harness/mini-swe-agent.mdx) | `nemo-fabric[mini-swe-agent]` | `nemo-fabric-adapters-mini-swe-agent[harness]` | `nemo-fabric-adapters-mini-swe-agent` |
 
-The `nemo-fabric` package always installs the runtime, and each root harness
-extra adds the corresponding adapter and supported harness. Use the
-adapter-package forms for split environments or environments that already
-manage the harness. For `harness`, `full`, and Relay behavior, refer to the
+The `nemo-fabric` package always installs the runtime. Package-installable
+harnesses provide root extras that add the corresponding adapter and supported
+harness. Hermes Agent 0.20 and later is not available from PyPI; install it by
+following the [Hermes Agent installation guide](https://hermes-agent.nousresearch.com/docs/installation),
+then install the bare Hermes adapter package. Use the adapter-package forms for
+split environments or environments that already manage the harness. For
+`harness`, `full`, and Relay behavior, refer to the
 [installation guide](docs/getting-started/install.mdx).
 
 Capabilities vary by harness. Review the compatibility matrix and use plan()
@@ -71,15 +74,19 @@ Agent in one Python environment.
 
 ### Install NeMo Fabric and Hermes Agent
 
-Hermes Agent supports Python 3.11 through 3.13. With a supported Python
-version, create and activate a virtual environment, then install the required
-packages:
+Hermes Agent supports Python 3.11 through 3.13. Hermes Agent 0.20 and later is
+not installable from PyPI. Install it with a supported method from the
+[Hermes Agent installation guide](https://hermes-agent.nousresearch.com/docs/installation).
+Then install NeMo Fabric and the Hermes adapter into the Python environment
+that runs Hermes Agent:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
 pip install "nemo-fabric[hermes-agent]"
 ```
+
+For local development from this repository, run `just install-hermes-agent`
+instead. The recipe checks out the pinned Hermes Agent source and synchronizes
+it into the project environment.
 
 ### Set the API Key
 
@@ -142,7 +149,8 @@ available notebooks.
 
 This is the simplest deployment. The `nemo-fabric` package, selected adapter,
 and supported harness share one Python environment. The quick start above uses
-this model with `nemo-fabric[hermes-agent]`.
+this model with Hermes Agent installed separately from `nemo-fabric` and
+`nemo-fabric-adapters-hermes`.
 
 ### Scenario 2: Isolated Sandbox for Task Execution
 
@@ -152,10 +160,11 @@ selected adapter, and the harness inside an isolated task environment such as a
 Docker container or Daytona sandbox. Adapter discovery and task-path resolution
 occur inside that sandbox.
 
-Install `nemo-fabric[harbor]==0.2.0` in the host environment. Install a complete
-harness composition such as `nemo-fabric[claude]==0.2.0` or
-`nemo-fabric[hermes-agent,relay]==0.2.0` in the task environment. For Claude or
-Codex Relay streaming, also provision the external NeMo Relay CLI in the task
+Install `nemo-fabric[harbor]==0.2.0` in the host environment. For a Hermes
+Agent task, use a task image that installs Hermes Agent according to its
+installation guide, then install `nemo-fabric`, `nemo-fabric-adapters-hermes`,
+and optionally `nemo-fabric[relay]` in that environment. For Claude or Codex
+Relay streaming, also provision the external NeMo Relay CLI in the task
 environment. Refer to the
 [Harbor execution model](examples/harbor/README.md#execution-model) for details.
 
@@ -171,30 +180,27 @@ Create an environment for the NeMo Fabric runtime:
 ```bash
 python -m venv .venv-fabric
 source .venv-fabric/bin/activate
-pip install nemo-fabric==0.2.0
 ```
 
-Create another environment for the adapter and harness. For example, install
-the Hermes Agent integration:
+Install Hermes Agent by following its
+[installation guide](https://hermes-agent.nousresearch.com/docs/installation).
+Then install the Hermes adapter into the Hermes-managed Python environment:
 
 ```bash
-python -m venv .venv-hermes
-source .venv-hermes/bin/activate
-pip install "nemo-fabric-adapters-hermes[harness]==0.2.0"
+pip install "nemo-fabric[hermes-agent]"==0.2.0
 ```
 
-The adapter package keeps this environment independent from the
-`nemo-fabric` distribution. Its `harness` extra installs the compatible Hermes
-Agent dependency alongside the adapter. Use matching NeMo Fabric release
-versions for the runtime and adapter package unless a different pairing has
-been explicitly validated.
+The adapter package keeps this environment independent from the `nemo-fabric`
+distribution and does not install Hermes Agent. Use matching NeMo Fabric
+release versions for the runtime and adapter package unless a different
+pairing has been explicitly validated.
 
 Run NeMo Fabric from its environment and set `ADAPTER_PYTHON` to the interpreter
 that contains the adapter and harness:
 
 ```bash
 source .venv-fabric/bin/activate
-export ADAPTER_PYTHON="$PWD/.venv-hermes/bin/python"
+export ADAPTER_PYTHON="${HERMES_HOME:-$HOME/.hermes}/hermes-agent/venv/bin/python"
 ```
 
 For package options and platform-specific instructions, refer to the

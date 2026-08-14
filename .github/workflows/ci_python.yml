@@ -89,18 +89,25 @@ jobs:
         with:
           shared-key: fabric-rust-${{ runner.os }}-${{ runner.arch }}
 
+      - name: Create virtual environment
+        run: |
+          uv venv --python "${UV_PYTHON:-${{ matrix.python-version }}}" .venv
+
+      - name: Install Hermes Agent
+        if: ${{ matrix.python-version != '3.14' }}
+        run: just install-hermes-agent
+
       # Exercise the supported root adapter and harness compositions. The
       # adapter-tests group also keeps local test dependencies independently
       # installable for leaf adapter development.
       - name: Build SDK with native extension
         run: |
-          uv venv --python "${UV_PYTHON:-${{ matrix.python-version }}}" .venv
-          uv sync --no-default-groups --group adapter-tests --group test --extra claude --extra codex --extra deepagents --extra mini-swe-agent ${{ matrix.python-version != '3.11' && '--extra harbor' || '' }} ${{ matrix.python-version != '3.14' && '--extra hermes-agent' || '' }} --extra relay
+          uv sync --no-default-groups --group adapter-tests --group test --extra claude --extra codex --extra deepagents --extra mini-swe-agent ${{ matrix.python-version != '3.11' && '--extra harbor' || '' }} ${{ matrix.python-version != '3.14' && '--extra hermes-agent' || '' }} --extra relay ${{ matrix.python-version == '3.14' && '--frozen --no-sources-package hermes-agent' || '' }}
 
       - name: Run pytest
         run: |
           set -euo pipefail
-          just test-python
+          just --set no_uv true test-python
 
   build-wheels:
     name: Build wheels (${{ matrix.platform }})
@@ -146,6 +153,12 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
+
+      - name: Create virtual environment
+        run: uv venv --python "${UV_PYTHON:-${{ 3.12 }}}" .venv
+
+      - name: Install Hermes Agent
+        run: just install-hermes-agent
 
       - name: Set version from tag
         if: ${{ (inputs.ref_type || github.ref_type) == 'tag' }}

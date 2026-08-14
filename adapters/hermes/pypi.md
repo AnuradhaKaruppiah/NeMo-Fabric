@@ -16,14 +16,20 @@ SPDX-License-Identifier: Apache-2.0
 ## Install
 
 Hermes Agent and this adapter require Python versions 3.11 through 3.13.
-Installation can be performed using the `nemo-fabric` meta package with the `hermes-agent` extra, or by installing the adapter and harness packages separately. The following table shows which components each installation provides:
+Hermes Agent 0.20 and later is not installable from PyPI. Install Hermes Agent
+by following the
+[Hermes Agent installation guide](https://hermes-agent.nousresearch.com/docs/installation),
+then install the NeMo Fabric packages into the Python environment that runs
+Hermes Agent.
+
+The following table shows which NeMo Fabric components each package expression
+provides. None of these expressions installs Hermes Agent:
 
 | Installation | Runtime | Adapter | Harness | NeMo Relay Python Package |
 | --- | --- | --- | --- | --- |
-| `pip install "nemo-fabric[hermes-agent]"` | Yes | Yes | Yes | No |
-| `pip install "nemo-fabric[hermes-agent,relay]"` | Yes | Yes | Yes | Yes |
-| `pip install "nemo-fabric-adapters-hermes[harness]"` | No | Yes | Yes | No |
-| `pip install "nemo-fabric-adapters-hermes[full]"` | No | Yes | Yes | Yes |
+| `pip install nemo-fabric nemo-fabric-adapters-hermes` | Yes | Yes | No | No |
+| `pip install "nemo-fabric[relay]" nemo-fabric-adapters-hermes` | Yes | Yes | No | Yes |
+| `pip install "nemo-fabric-adapters-hermes[full]"` | No | Yes | No | Yes |
 | `pip install "nemo-fabric-adapters-hermes[relay]"` | No | Yes | No | Yes |
 | `pip install nemo-fabric-adapters-hermes` | No | Yes | No | No |
 

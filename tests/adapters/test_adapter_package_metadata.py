@@ -46,19 +46,18 @@ ADAPTER_EXTRAS = {
         "relay": ["nemo-relay>=0.7.2,<0.8"],
         "full_relay": ["nemo-relay[deepagents]>=0.7.2,<0.8"],
     },
+    "hermes-agent": {
+        "path": "adapters/hermes",
+        "sdk": (
+            f"nemo-fabric-adapters-hermes == {PACKAGE_VERSION}; "
+            "python_version < '3.14'"
+        ),
+        "relay": ["nemo-relay>=0.7.2,<0.8"],
+    },
     "mini-swe-agent": {
         "path": "adapters/mini-swe-agent",
         "sdk": f"nemo-fabric-adapters-mini-swe-agent[harness] == {PACKAGE_VERSION}",
         "harness": ["mini-swe-agent>=2.0,<3"],
-    },
-    "hermes-agent": {
-        "path": "adapters/hermes",
-        "sdk": (
-            f"nemo-fabric-adapters-hermes[harness] == {PACKAGE_VERSION}; "
-            "python_version < '3.14'"
-        ),
-        "harness": ["hermes-agent>=0.19.0; python_version < '3.14'"],
-        "relay": ["nemo-relay>=0.7.2,<0.8"],
     },
 }
 
@@ -130,7 +129,7 @@ def test_adapter_test_dependency_group_matches_leaf_harnesses():
         "nemo-fabric-adapters-claude[harness]",
         "nemo-fabric-adapters-codex[harness]",
         "nemo-fabric-adapters-deepagents[harness]",
-        "nemo-fabric-adapters-hermes[harness]; python_version < '3.14'",
+        "nemo-fabric-adapters-hermes[full]; python_version < '3.14'",
         "nemo-fabric-adapters-mini-swe-agent[harness]",
     ]
     assert sorted(manifest["dependency-groups"]["adapter-tests"]) == sorted(expected)
@@ -171,7 +170,7 @@ def test_sdk_relay_extra_installs_only_relay():
 
 
 @pytest.mark.parametrize("name", ADAPTER_EXTRAS)
-def test_sdk_adapter_extras_delegate_to_leaf_harness_extras(name: str):
+def test_sdk_adapter_extras_delegate_to_leaf_adapter_extras(name: str):
     extras = load_pyproject(SDK_PACKAGE_PATH)["project"]["optional-dependencies"]
     assert extras[name] == [ADAPTER_EXTRAS[name]["sdk"]]
     assert set(extras) == set(ADAPTER_EXTRAS) | {"harbor", "relay"}
@@ -183,11 +182,14 @@ def test_leaf_adapter_extras_separate_harness_and_relay(name: str):
     extras = load_pyproject(expected["path"])["project"]["optional-dependencies"]
     relay = expected.get("relay", [])
     full_relay = expected.get("full_relay", relay)
+    harness = expected.get("harness", [])
 
-    assert extras["harness"] == expected["harness"]
-    assert sorted(extras["full"]) == sorted([*expected["harness"], *full_relay])
+    assert sorted(extras["full"]) == sorted([*harness, *full_relay])
 
-    expected_names = {"harness", "full"}
+    expected_names = {"full"}
+    if harness:
+        expected_names.add("harness")
+        assert extras["harness"] == harness
     if relay:
         expected_names.add("relay")
         assert extras["relay"] == relay
