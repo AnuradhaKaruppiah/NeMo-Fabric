@@ -109,7 +109,7 @@ boundary does not recreate the `AIAgent` or `SessionDB`.
 
 ## Maintaining The Adapter
 
-Keep `fabric-adapter.json` aligned with the Python implementation:
+Keep `hermes.fabric-adapter.json` aligned with the Python implementation:
 
 - `contract_version` must match the adapter contract supported by NeMo Fabric core.
 - `adapter_id` is the stable id selected by `harness.adapter_id`.

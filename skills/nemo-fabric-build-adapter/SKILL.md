@@ -1,6 +1,6 @@
 ---
 name: nemo-fabric-build-adapter
-description: Build, migrate, review, and maintain third-party NVIDIA NeMo Fabric adapters against the public adapter contract. Use when creating an adapter package or fabric-adapter.json descriptor, mapping AgentConfig into an agent harness or custom-agent runtime, implementing start/invoke/stop, declaring schemas and capabilities, packaging adapter discovery metadata, or assessing adapter conformance. Do not use for consumer applications that only call the NVIDIA NeMo Fabric SDK.
+description: Build, migrate, review, and maintain third-party NVIDIA NeMo Fabric adapters against the public adapter contract. Use when creating adapter or target descriptors, mapping AgentConfig into an agent harness or custom-agent runtime, implementing start/invoke/stop, declaring schemas and capabilities, packaging discovery metadata, or assessing adapter conformance. Do not use for consumer applications that only call the NVIDIA NeMo Fabric SDK.
 ---
 
 # Build an NVIDIA NeMo Fabric Adapter
@@ -29,7 +29,7 @@ code.
 
 Establish the adapter boundary before defining its descriptor:
 
-1. Identify the adapter target and its stable harness ID.
+1. Identify the adapter implementation and its stable `adapter_id`.
 2. Reuse one adapter across agents built for the same target. Do not create an
    adapter per custom agent.
 3. List the normalized fields the target can actually enforce.
@@ -44,17 +44,17 @@ an unrelated extension.
 
 ## Define the Descriptor First
 
-Create one self-contained `fabric-adapter.json` before implementing target
+Create one self-contained `*.fabric-adapter.json` before implementing target
 translation:
 
-- Set the current `contract_version`, a globally stable `adapter_id`, the
-  target `harness`, `adapter_kind`, and runner binding.
-- Set `config.input` to `agent_config` for a new adapter.
+- Set the current `contract_version`, a globally stable `adapter_id`,
+  `adapter_kind`, and runner binding.
+- Set `config.input` to `agent_config`.
 - Declare only normalized `config.accepts` fields the implementation enforces.
 - Declare `mcp.auth.oauth2` or `mcp.auth.service_account` only when the adapter
   implements the corresponding MCP authentication mode.
-- Publish closed `settings_schema`, `model_schema`, `workflow_schema`,
-  `tool_definition_schema`, and `extension_schemas` where applicable. Use
+- Publish closed `settings_schema`, `model_schema`, `tool_definition_schema`,
+  and `extension_schemas` where applicable. Use
   `model_schema` only for static model/provider compatibility and model settings;
   keep credential validity and provider availability in startup validation.
 - Declare runtime requirements and telemetry outputs without secret values.
@@ -63,6 +63,11 @@ translation:
   when the adapter implements native OpenAI Chat Completions streaming through
   `invoke_openai_stream`. Relay-backed ATOF streaming is independent and does
   not require this capability.
+
+If the adapter loads registered targets, list their types in `target_types`.
+Create one `*.fabric-target.json` per target. The target record owns its
+`adapter_id`, type-specific entry point, and workflow settings schema. It uses
+the same `contract_version` as the Adapter Descriptor.
 
 Validate descriptor schemas without importing adapter code. Keep all schema
 references local to the descriptor document; do not rely on HTTP or file
@@ -74,7 +79,8 @@ Install the descriptor in the standard shared-data location. For setuptools:
 
 ```toml
 [tool.setuptools.data-files]
-"share/nemo-fabric/adapters/acme" = ["fabric-adapter.json"]
+"share/nemo-fabric/adapters/acme" = ["acme.fabric-adapter.json"]
+"share/nemo-fabric/targets/acme" = ["email.fabric-target.json"]
 ```
 
 Depend on `nemo-fabric-adapter-contract` for typed standard-library dataclasses.
@@ -174,8 +180,9 @@ current local host: it is treated as ordinary JSON, including `status: failed`.
 
 ## Handle Custom Agents
 
-Use `workflow.entrypoint.kind` for resolution semantics and `ref` for the
-factory identity. Bound supported combinations with `workflow_schema`.
+Use the selected Adapter Target Descriptor's `spec.entrypoint.kind` for
+resolution semantics and `ref` for the factory identity. Validate
+`workflow.settings` against that target's `spec.settings_schema`.
 
 - Map NeMo Fabric-defined `factory` intents to target-native factories.
 - Resolve `python_entrypoint` only from the fixed `nemo_fabric.agents` group.
@@ -190,8 +197,8 @@ factory identity. Bound supported combinations with `workflow_schema`.
 Complete these checks before handing off an adapter:
 
 1. Install the built wheel in an isolated adapter environment.
-2. Confirm discovery from `share/nemo-fabric/adapters` and inspect the resolved
-   descriptor in `Fabric().plan(...)`.
+2. Confirm discovery below `share/nemo-fabric` and inspect the resolved adapter
+   and target descriptors in `Fabric().plan(...)`.
 3. Exercise one accepted normalized config and rejection for unsupported
    fields and each declared schema.
 4. Run `doctor(...)` with both missing and satisfied requirements.

@@ -116,13 +116,8 @@ export PYTHONPATH="$PWD/external/nat/src${PYTHONPATH:+:$PYTHONPATH}"
 ```
 
 `PYTHONPATH` is a development bootstrap limitation, not the target installation
-contract. Stage the descriptor in the current agent-local discovery location:
-
-```bash
-mkdir -p .tmp/nat-reference/adapters/nat
-cp external/nat/fabric-adapter.json \
-  .tmp/nat-reference/adapters/nat/fabric-adapter.json
-```
+contract. The example config discovers `nat.fabric-adapter.json` and the
+adjacent target records through an explicit local path.
 
 The calculator example starts its source-only MCP server over stdio, so it does
 not require a separately managed endpoint. Run the typed `FabricConfig` example:
