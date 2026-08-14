@@ -162,7 +162,7 @@ class DiscoveryConfig(FabricBaseModel):
     @field_validator("local_paths")
     @classmethod
     def _validate_local_paths(cls, value: list[str | Path]) -> list[str | Path]:
-        if any(not str(path) for path in value):
+        if any(not str(path).strip() for path in value):
             raise ValueError("discovery local paths must not be empty")
         return value
 

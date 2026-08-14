@@ -28,8 +28,8 @@ the validation matrix, and `prepare-pr` for review handoff.
 Follow these repository-specific requirements after applying the public skill:
 
 1. Place the adapter under `adapters/<name>/` with `LICENSE -> ../../LICENSE`,
-   `README.md`, `fabric-adapter.json`, language-native package and lock files,
-   a source entry point, and focused tests.
+   `README.md`, `<name>.fabric-adapter.json`, language-native package and lock
+   files, a source entry point, and focused tests.
 2. Give each Python leaf adapter a small base installation, a `harness` extra
    for supported target packages, and a `full` extra for package-installable
    integrations. Add a `relay` extra only when the adapter imports NVIDIA NeMo

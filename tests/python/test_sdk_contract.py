@@ -174,6 +174,12 @@ def test_typed_workflow_rejects_blank_target_id():
         _FabricConfigSnapshot.from_mapping(raw)
 
 
+@pytest.mark.parametrize("path", ["", " ", "\t"])
+def test_discovery_config_rejects_blank_local_paths(path: str):
+    with pytest.raises(ValidationError, match="discovery local paths must not be empty"):
+        DiscoveryConfig(local_paths=[path])
+
+
 def test_typed_config_authoring_helpers_emit_schema_shape():
     config = FabricConfig(
         metadata=MetadataConfig(name="demo"),
