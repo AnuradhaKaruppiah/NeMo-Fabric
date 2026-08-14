@@ -39,6 +39,20 @@
     },
     "additionalProperties": false
   },
+  "extension_schemas": {
+    "agent_config": {
+      "type": "object",
+      "properties": {
+        "consumer_extension": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "consumer_extension"
+      ],
+      "additionalProperties": false
+    }
+  },
   "requirements": {
     "binaries": [
       "python3"
