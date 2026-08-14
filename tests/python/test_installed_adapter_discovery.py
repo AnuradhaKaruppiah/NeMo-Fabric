@@ -99,6 +99,16 @@ def _python_sysconfig_path(python: Path, name: str) -> Path:
         )
     )
 
+
+def _assert_path_in_rust_debug(message: str, path: Path) -> None:
+    resolved = str(path.resolve())
+    candidates = {resolved, json.dumps(resolved)[1:-1]}
+    if os.name == "nt":
+        verbatim = rf"\\?\{resolved}"
+        candidates.add(json.dumps(verbatim)[1:-1])
+    assert any(candidate in message for candidate in candidates)
+
+
 def _create_venv(venv_dir: Path):
     # Use `symlinks=True` on Posix systems to work-around for
     # https://github.com/astral-sh/uv/issues/8879
@@ -191,7 +201,7 @@ def test_explicit_local_descriptor_conflicts_with_distinct_installed_descriptor(
         config.discovery = DiscoveryConfig(local_paths=[local_descriptor])
         Fabric().plan(config, base_dir=base_dir)
     message = str(caught.value)
-    assert str(local_descriptor.resolve()) in message
+    _assert_path_in_rust_debug(message, local_descriptor)
     assert "ambiguous adapter descriptor" in message
 
 

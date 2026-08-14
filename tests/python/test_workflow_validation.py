@@ -72,7 +72,7 @@ def _config(
     *,
     adapter_id: str | None = None,
     target_id: str = TARGET_ID,
-    **settings: Any,
+    **settings: str | int | float | bool | None,
 ) -> FabricConfig:
     return FabricConfig(
         metadata=MetadataConfig(name="workflow-test"),

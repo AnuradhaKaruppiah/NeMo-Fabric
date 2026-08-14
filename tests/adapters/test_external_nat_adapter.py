@@ -480,10 +480,20 @@ def test_invalid_root_workflow_is_rejected(make_payload, workflow, field):
     assert error.value.metadata["field"] == field
 
 
-@pytest.mark.parametrize("example", ["calculator.py", "email_phishing.py"])
+@pytest.mark.parametrize(
+    ("example", "target_id"),
+    [
+        ("calculator.py", "nvidia.examples.nat.calculator"),
+        (
+            "email_phishing.py",
+            "nvidia.examples.nat.email-phishing-analyzer",
+        ),
+    ],
+)
 def test_typed_examples_project_and_translate_through_one_nat_adapter(
     tmp_path: Path,
     example: str,
+    target_id: str,
     monkeypatch: pytest.MonkeyPatch,
 ):
     namespace = runpy.run_path(str(ROOT / "external" / "nat" / "examples" / example))
@@ -491,7 +501,7 @@ def test_typed_examples_project_and_translate_through_one_nat_adapter(
 
     plan = Fabric().plan(namespace["build_config"](), base_dir=tmp_path)
 
-    assert plan.config.workflow.target_id.startswith("nvidia.examples.nat.")
+    assert plan.config.workflow.target_id == target_id
     assert plan.config.harness is None
     southbound = plan.to_mapping()["agent_config"]
     assert southbound["workflow"]["entrypoint"] == {

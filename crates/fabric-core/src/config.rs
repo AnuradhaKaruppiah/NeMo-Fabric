@@ -9,7 +9,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use schemars::{JsonSchema, Schema, SchemaGenerator};
-use serde::{Deserialize, Serialize};
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 pub use crate::adapter_contract::{ADAPTER_CONTRACT_VERSION, AdapterExtensionPoint};
@@ -188,10 +189,24 @@ pub struct WorkflowConfig {
 pub struct DiscoveryConfig {
     /// Descriptor files or directories, resolved relative to the config base directory.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(schema_with = "discovery_local_paths_schema")]
     pub local_paths: Vec<PathBuf>,
     /// Additive discovery fields.
     #[serde(default, flatten)]
     pub extensions: BTreeMap<String, Value>,
+}
+
+fn discovery_local_paths_schema(generator: &mut SchemaGenerator) -> Schema {
+    let mut schema = Vec::<PathBuf>::json_schema(generator);
+    schema.insert(
+        "items".into(),
+        serde_json::json!({
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S",
+        }),
+    );
+    schema
 }
 
 /// Adapter target categories understood by this Adapter Contract version.
@@ -393,6 +408,8 @@ pub struct DescriptorProvenance {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ResolvedAdapterDescriptor {
     /// Every semantically identical record discovered for this descriptor.
+    #[serde(deserialize_with = "deserialize_non_empty_provenance")]
+    #[schemars(length(min = 1))]
     pub provenance: Vec<DescriptorProvenance>,
     /// Adapter-owned compatibility and capability metadata.
     pub descriptor: AdapterDescriptor,
@@ -410,9 +427,24 @@ impl ResolvedAdapterDescriptor {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ResolvedAdapterTargetDescriptor {
     /// Every semantically identical record discovered for this descriptor.
+    #[serde(deserialize_with = "deserialize_non_empty_provenance")]
+    #[schemars(length(min = 1))]
     pub provenance: Vec<DescriptorProvenance>,
     /// Target-specific resolution and validation metadata.
     pub descriptor: AdapterTargetDescriptor,
+}
+
+fn deserialize_non_empty_provenance<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Vec<DescriptorProvenance>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let provenance = Vec::<DescriptorProvenance>::deserialize(deserializer)?;
+    if provenance.is_empty() {
+        return Err(D::Error::custom("descriptor provenance must not be empty"));
+    }
+    Ok(provenance)
 }
 
 impl ResolvedAdapterTargetDescriptor {
@@ -518,18 +550,24 @@ impl DescriptorRegistry {
         })?;
         let mut paths = entries
             .map(|entry| {
-                entry
-                    .map(|entry| entry.path())
-                    .map_err(|source| FabricError::Read {
-                        path: directory.to_path_buf(),
-                        source,
-                    })
+                let entry = entry.map_err(|source| FabricError::Read {
+                    path: directory.to_path_buf(),
+                    source,
+                })?;
+                let file_type = entry.file_type().map_err(|source| FabricError::Read {
+                    path: directory.to_path_buf(),
+                    source,
+                })?;
+                Ok((entry.path(), file_type))
             })
             .collect::<Result<Vec<_>>>()?;
-        paths.sort();
-        for path in paths {
-            if path.is_dir() {
+        paths.sort_by(|(left, _), (right, _)| left.cmp(right));
+        for (path, file_type) in paths {
+            if file_type.is_dir() {
                 self.register_directory_tree(&path, source)?;
+                continue;
+            }
+            if file_type.is_symlink() && path.is_dir() {
                 continue;
             }
             if let Some(kind) = descriptor_kind(&path) {
@@ -1747,10 +1785,10 @@ pub(crate) fn validate_config(config: &FabricConfig) -> Result<()> {
     }
     if let Some(discovery) = &config.discovery {
         for (index, path) in discovery.local_paths.iter().enumerate() {
-            if path.as_os_str().is_empty() {
+            if path.to_string_lossy().trim().is_empty() {
                 return invalid_config(
                     format!("discovery.local_paths.{index}"),
-                    "must not be empty",
+                    "must contain at least one non-whitespace character",
                 );
             }
         }
@@ -2631,31 +2669,12 @@ fn validate_adapter_object_schema(
     field: &str,
     schema: &serde_json::Map<String, Value>,
 ) -> Result<()> {
-    let schema = Value::Object(schema.clone());
-    jsonschema::meta::options()
-        .validate(&schema)
-        .map_err(|error| FabricError::InvalidAdapterDescriptor {
+    validate_descriptor_object_schema(field, schema, |message| {
+        FabricError::InvalidAdapterDescriptor {
             path: path.to_path_buf(),
-            message: format!("{field} is not valid JSON Schema: {error}"),
-        })?;
-    let allows_object_instances = match schema.get("type") {
-        Some(Value::String(root_type)) => root_type == "object",
-        Some(Value::Array(root_types)) => root_types
-            .iter()
-            .any(|root_type| root_type.as_str() == Some("object")),
-        _ => true,
-    };
-    if !allows_object_instances {
-        return invalid_adapter_descriptor(
-            path,
-            format!("{field} root type must allow object instances"),
-        );
-    }
-    jsonschema::validator_for(&schema).map_err(|error| FabricError::InvalidAdapterDescriptor {
-        path: path.to_path_buf(),
-        message: format!("{field} could not be compiled: {error}"),
-    })?;
-    Ok(())
+            message,
+        }
+    })
 }
 
 fn invalid_adapter_descriptor<T>(path: &Path, message: impl Into<String>) -> Result<T> {
@@ -2670,13 +2689,23 @@ fn validate_adapter_target_object_schema(
     field: &str,
     schema: &serde_json::Map<String, Value>,
 ) -> Result<()> {
+    validate_descriptor_object_schema(field, schema, |message| {
+        FabricError::InvalidAdapterTargetDescriptor {
+            path: path.to_path_buf(),
+            message,
+        }
+    })
+}
+
+fn validate_descriptor_object_schema(
+    field: &str,
+    schema: &serde_json::Map<String, Value>,
+    invalid: impl Fn(String) -> FabricError,
+) -> Result<()> {
     let schema = Value::Object(schema.clone());
     jsonschema::meta::options()
         .validate(&schema)
-        .map_err(|error| FabricError::InvalidAdapterTargetDescriptor {
-            path: path.to_path_buf(),
-            message: format!("{field} is not valid JSON Schema: {error}"),
-        })?;
+        .map_err(|error| invalid(format!("{field} is not valid JSON Schema: {error}")))?;
     let allows_object_instances = match schema.get("type") {
         Some(Value::String(root_type)) => root_type == "object",
         Some(Value::Array(root_types)) => root_types
@@ -2685,17 +2714,12 @@ fn validate_adapter_target_object_schema(
         _ => true,
     };
     if !allows_object_instances {
-        return invalid_adapter_target_descriptor(
-            path,
-            format!("{field} root type must allow object instances"),
-        );
+        return Err(invalid(format!(
+            "{field} root type must allow object instances"
+        )));
     }
-    jsonschema::validator_for(&schema).map_err(|error| {
-        FabricError::InvalidAdapterTargetDescriptor {
-            path: path.to_path_buf(),
-            message: format!("{field} could not be compiled: {error}"),
-        }
-    })?;
+    jsonschema::validator_for(&schema)
+        .map_err(|error| invalid(format!("{field} could not be compiled: {error}")))?;
     Ok(())
 }
 
@@ -4677,6 +4701,87 @@ mod tests {
         assert_eq!(value["base_dir"], "/tmp/fabric-base");
         assert_eq!(value["config"]["metadata"]["name"], "typed-agent");
         assert!(value.get("effective_config").is_none());
+    }
+
+    #[test]
+    fn resolved_descriptors_reject_empty_provenance() {
+        let adapter_path = repository_root().join("adapters/hermes/hermes.fabric-adapter.json");
+        let descriptor = load_adapter_descriptor(&adapter_path).expect("Hermes descriptor");
+        let mut adapter = serde_json::to_value(resolved_adapter(adapter_path, descriptor))
+            .expect("resolved adapter JSON");
+        adapter["provenance"] = serde_json::json!([]);
+
+        let adapter_error = serde_json::from_value::<ResolvedAdapterDescriptor>(adapter)
+            .expect_err("empty adapter provenance must fail");
+        assert!(
+            adapter_error
+                .to_string()
+                .contains("provenance must not be empty")
+        );
+
+        let mut target = serde_json::to_value(resolved_workflow_target(
+            PathBuf::from("workflow.fabric-target.json"),
+            None,
+        ))
+        .expect("resolved target JSON");
+        target["provenance"] = serde_json::json!([]);
+
+        let target_error = serde_json::from_value::<ResolvedAdapterTargetDescriptor>(target)
+            .expect_err("empty target provenance must fail");
+        assert!(
+            target_error
+                .to_string()
+                .contains("provenance must not be empty")
+        );
+    }
+
+    #[test]
+    fn discovery_rejects_whitespace_only_local_paths() {
+        let mut config = typed_config("nvidia.fabric.hermes");
+        config.discovery = Some(DiscoveryConfig {
+            local_paths: vec![PathBuf::from(" \t ")],
+            extensions: BTreeMap::new(),
+        });
+
+        let error = validate_config(&config).expect_err("blank discovery path must fail");
+
+        assert!(matches!(
+            error,
+            FabricError::InvalidConfig { field, .. }
+                if field == "discovery.local_paths.0"
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn descriptor_discovery_skips_symlinked_directory_cycles() {
+        use std::os::unix::fs::symlink;
+
+        struct RemoveDirOnDrop(PathBuf);
+
+        impl Drop for RemoveDirOnDrop {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let root = std::env::temp_dir().join(format!(
+            "nemo-fabric-adapter-symlink-cycle-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create descriptor root");
+        let _cleanup = RemoveDirOnDrop(root.clone());
+        symlink(&root, root.join("cycle")).expect("create directory symlink");
+
+        let mut config = typed_config("nvidia.fabric.hermes");
+        config.discovery = Some(DiscoveryConfig {
+            local_paths: vec![root.clone()],
+            extensions: BTreeMap::new(),
+        });
+
+        DescriptorRegistry::from_config(&config, &root, &[])
+            .expect("symlinked directories must not be traversed");
     }
 
     #[test]

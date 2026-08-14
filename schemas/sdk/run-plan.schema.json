@@ -1085,6 +1085,8 @@
         "local_paths": {
           "description": "Descriptor files or directories, resolved relative to the config base directory.",
           "items": {
+            "minLength": 1,
+            "pattern": "\\S",
             "type": "string"
           },
           "type": "array"
@@ -2609,6 +2611,7 @@
           "items": {
             "$ref": "#/$defs/DescriptorProvenance"
           },
+          "minItems": 1,
           "type": "array"
         }
       },
@@ -2630,6 +2633,7 @@
           "items": {
             "$ref": "#/$defs/DescriptorProvenance"
           },
+          "minItems": 1,
           "type": "array"
         }
       },
