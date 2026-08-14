@@ -7,6 +7,7 @@ import type {
   AdapterContractVersion,
   AdapterDescriptor,
   AdapterKind,
+  AdapterTargetDescriptor,
   AdapterTelemetryProviderSupport,
   AgentConfig,
   ControlLocation,
@@ -27,7 +28,14 @@ const descriptor: AdapterDescriptor = {
   extension_schemas: {
     agent_config: { type: "object", additionalProperties: true },
   },
-  harness: "pi",
+};
+
+const target: AdapterTargetDescriptor = {
+  adapter_id: "pi",
+  contract_version: ADAPTER_CONTRACT_VERSION,
+  id: "pi.workflow",
+  spec: { entrypoint: { kind: "factory", ref: "fabric.agent.react" } },
+  type: "workflow",
 };
 
 const config: AgentConfig = {
@@ -110,6 +118,7 @@ const supportTypes: [
 ];
 
 void descriptor;
+void target;
 void config;
 void serviceAccountAuthentication;
 void tokenEndpointAuthMethod;
@@ -122,7 +131,6 @@ const wrongVersion: AdapterDescriptor = {
   adapter_kind: "process",
   // @ts-expect-error contract_version is the exact negotiated literal
   contract_version: "fabric.adapter/v1alpha1",
-  harness: "pi",
 };
 void wrongVersion;
 
@@ -132,7 +140,6 @@ const wrongExtensionPoint: AdapterDescriptor = {
   contract_version: ADAPTER_CONTRACT_VERSION,
   // @ts-expect-error extension_schemas accepts only canonical extension points
   extension_schemas: { unknown_location: {} },
-  harness: "pi",
 };
 void wrongExtensionPoint;
 
@@ -140,7 +147,6 @@ const wrongTelemetryProvider: AdapterDescriptor = {
   adapter_id: "pi",
   adapter_kind: "process",
   contract_version: ADAPTER_CONTRACT_VERSION,
-  harness: "pi",
   telemetry: {
     providers: {
       // @ts-expect-error telemetry provider keys are the Rust enum values
@@ -160,7 +166,6 @@ const invalidFlattenedExtension: AdapterDescriptor = {
   contract_version: ADAPTER_CONTRACT_VERSION,
   // @ts-expect-error flattened descriptor extensions must be JSON-compatible
   custom_hook: () => "not JSON",
-  harness: "pi",
 };
 void invalidFlattenedExtension;
 
