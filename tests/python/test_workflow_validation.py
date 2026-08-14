@@ -32,7 +32,12 @@ def _settings_schema() -> dict[str, Any]:
     }
 
 
-def _write_descriptors(base_dir: Path, *, target_types: list[str] | None = None) -> tuple[Path, Path]:
+def _write_descriptors(
+    base_dir: Path,
+    *,
+    target_adapter_id: str = ADAPTER_ID,
+    target_types: list[str] | None = None,
+) -> tuple[Path, Path]:
     root = base_dir / "descriptors"
     root.mkdir(parents=True, exist_ok=True)
     adapter_path = root / "workflow.fabric-adapter.json"
@@ -54,7 +59,7 @@ def _write_descriptors(base_dir: Path, *, target_types: list[str] | None = None)
             {
                 "contract_version": "fabric.adapter/v1alpha2",
                 "id": TARGET_ID,
-                "adapter_id": ADAPTER_ID,
+                "adapter_id": target_adapter_id,
                 "type": "workflow",
                 "spec": {
                     "entrypoint": {"kind": "factory", "ref": "email_analyzer"},
@@ -139,6 +144,13 @@ def test_unknown_target_is_rejected(tmp_path: Path):
             _config(tmp_path, target_id="test.fabric.missing", llm_name="default"),
             base_dir=tmp_path,
         )
+
+
+def test_target_with_unknown_adapter_is_rejected(tmp_path: Path):
+    _write_descriptors(tmp_path, target_adapter_id="test.fabric.missing")
+
+    with pytest.raises(FabricConfigError, match="unknown adapter"):
+        Fabric().plan(_config(tmp_path, llm_name="default"), base_dir=tmp_path)
 
 
 def test_adapter_must_advertise_workflow_targets(tmp_path: Path):
