@@ -179,6 +179,11 @@ def test_discovery_config_rejects_blank_local_paths(path: str):
     with pytest.raises(ValidationError, match="discovery local paths must not be empty"):
         DiscoveryConfig(local_paths=[path])
 
+    raw = _plan()["config"]
+    raw["discovery"] = {"local_paths": [path]}
+    with pytest.raises(FabricConfigError, match="discovery local paths must not be empty"):
+        _FabricConfigSnapshot.from_mapping(raw)
+
 
 def test_typed_config_authoring_helpers_emit_schema_shape():
     config = FabricConfig(

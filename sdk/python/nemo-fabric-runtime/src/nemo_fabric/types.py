@@ -265,7 +265,7 @@ class _DiscoveryConfig(_ConfigMapping):
         extra_fields: Mapping[str, Any] | None = None,
     ) -> None:
         paths = [str(path) for path in local_paths]
-        if any(not path for path in paths):
+        if any(not path.strip() for path in paths):
             raise FabricConfigError("discovery local paths must not be empty")
         super().__init__({"local_paths": paths}, extra_fields=extra_fields)
 
