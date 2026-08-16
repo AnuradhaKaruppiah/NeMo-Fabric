@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 [![GitHub](https://img.shields.io/badge/github-repo-blue?logo=github)](https://github.com/NVIDIA/NeMo-Fabric/)
 [![Release](https://img.shields.io/github/v/release/NVIDIA/NeMo-Fabric?color=green)](https://github.com/NVIDIA/NeMo-Fabric/releases)
 
-![Diagram showing NeMo Fabric connecting applications, evaluations, and reinforcement learning rollouts to Hermes, Codex, Claude, and Deep Agents, with results, artifacts, and telemetry as outputs.](https://raw.githubusercontent.com/NVIDIA/NeMo-Fabric/refs/heads/main/assets/fabric-hero-option2.png)
+![Diagram showing NeMo Fabric connecting applications, evaluation systems, and reinforcement learning rollouts to harnesses and custom agents, with results, artifacts, and telemetry as outputs.](https://raw.githubusercontent.com/NVIDIA/NeMo-Fabric/refs/heads/main/assets/fabric-hero-v0.2.png)
 
 `nemo-fabric-adapter-contract` provides the typed Python configuration and
 execution contract implemented by NeMo Fabric adapters. It does not include a
@@ -48,6 +48,8 @@ Install the optional `pydantic` extra to enable Pydantic interoperability.
 pip install "nemo-fabric-adapter-contract[pydantic]"
 ```
 
-Refer to the [NeMo Fabric documentation](https://docs.nvidia.com/nemo/fabric)
-for adapter and configuration guidance. Source code is available in the
+Use the maintained
+[adapter contract documentation](https://github.com/NVIDIA/NeMo-Fabric/tree/main/docs/adapter-contract)
+and [canonical JSON Schemas](https://github.com/NVIDIA/NeMo-Fabric/tree/main/schemas/adapter-contract)
+as the implementation source of truth. Source code is available in the
 [NVIDIA NeMo Fabric repository](https://github.com/NVIDIA/NeMo-Fabric).
