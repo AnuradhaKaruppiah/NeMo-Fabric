@@ -12,15 +12,20 @@ omits a field.
 
 | Integration Shape | Start With | What It Demonstrates |
 | --- | --- | --- |
-| Small shared harness adapter | [mini-SWE-agent descriptor](https://github.com/NVIDIA/NeMo-Fabric/blob/main/adapters/mini-swe-agent/mini-swe-agent.fabric-adapter.json) and [runtime](https://github.com/NVIDIA/NeMo-Fabric/blob/main/adapters/mini-swe-agent/src/nemo_fabric_adapters/mini_swe_agent/adapter.py) | A direct adapter with one typed config boundary and `start`/`invoke`/`stop`. |
-| Feature-rich shared harness adapter | [LangChain Deep Agents adapter](https://github.com/NVIDIA/NeMo-Fabric/tree/main/adapters/deepagents) | Normalized models, instructions, tools, MCP, skills, subagents, telemetry, and persistent state. |
+| Harness adapter | [Hermes Agent descriptor](https://github.com/NVIDIA/NeMo-Fabric/blob/main/adapters/hermes/hermes.fabric-adapter.json) and [runtime](https://github.com/NVIDIA/NeMo-Fabric/blob/main/adapters/hermes/src/nemo_fabric_adapters/hermes/adapter.py) | A complete harness integration with normalized configuration, persistent state, and telemetry. |
+| Minimum-surface harness adapter | [mini-SWE-agent descriptor](https://github.com/NVIDIA/NeMo-Fabric/blob/main/adapters/mini-swe-agent/mini-swe-agent.fabric-adapter.json) and [runtime](https://github.com/NVIDIA/NeMo-Fabric/blob/main/adapters/mini-swe-agent/src/nemo_fabric_adapters/mini_swe_agent/adapter.py) | The required typed config boundary and `start`/`invoke`/`stop` with little optional behavior. |
 | Shared framework adapter | [NeMo Agent Toolkit adapter descriptor](https://github.com/NVIDIA/NeMo-Fabric/blob/main/external/nat/nat.fabric-adapter.json), [runtime](https://github.com/NVIDIA/NeMo-Fabric/blob/main/external/nat/src/nemo_fabric_adapters/nat/adapter.py), and [targets](https://github.com/NVIDIA/NeMo-Fabric/tree/main/external/nat/targets) | One adapter plus independently registered calculator and email-phishing workflows. |
 | Dedicated custom-agent adapter | [LangGraph descriptor](https://github.com/NVIDIA/NeMo-Fabric/blob/main/examples/langgraph_custom_agent/adapter/email-phishing.fabric-adapter.json) and [runtime](https://github.com/NVIDIA/NeMo-Fabric/blob/main/examples/langgraph_custom_agent/adapter/runtime.py) | A custom graph with an adjacent adapter and no generic workflow loader. |
 
-## Small Shared Harness Adapter
+## Harness Adapter
 
-Start with mini-SWE-agent when you want to understand the required boundary at
-a glance. Its package contains:
+Use Hermes Agent as the primary reference for integrating an opinionated
+harness. Its descriptor and runtime demonstrate normalized models, MCP,
+instructions, runtime settings, persistent session state, and Relay telemetry
+through one harness adapter.
+
+Use mini-SWE-agent as the secondary minimum-surface reference when you want to
+understand the required boundary at a glance. Its package contains:
 
 - a static Adapter Descriptor that accepts a small normalized config surface;
 - one runtime class with `start`, `invoke`, and `stop`;

@@ -86,7 +86,7 @@ or starting the runtime.
 
 ## Select a Harness Adapter Directly
 
-A shared harness or dedicated custom-agent adapter is selected directly by
+A harness or dedicated custom-agent adapter is selected directly by
 `harness.adapter_id`:
 
 ```python

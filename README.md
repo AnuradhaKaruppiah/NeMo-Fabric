@@ -306,9 +306,9 @@ harnesses and custom agents. Use these references to compare and build them:
 - [Adapter contract](docs/adapter-contract/README.md): follow the incremental
   guide for a minimum adapter, custom-agent patterns, canonical schemas, and
   Python or TypeScript contract bindings.
-- [Adapter examples](docs/adapter-contract/examples.md): start from the small
-  mini-SWE-agent adapter, the shared NeMo Agent Toolkit reference, or the
-  dedicated LangGraph custom-agent example.
+- [Adapter examples](docs/adapter-contract/examples.md): compare the complete
+  Hermes Agent harness adapter, the minimum-surface mini-SWE-agent adapter, the
+  shared NeMo Agent Toolkit reference, and the dedicated LangGraph example.
 
 ## Roadmap
 

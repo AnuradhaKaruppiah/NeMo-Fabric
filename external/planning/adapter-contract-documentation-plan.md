@@ -38,7 +38,7 @@ The documentation will guide readers through one incremental path:
 
 1. **Understand the boundary.** Learn why adapters are valuable, what an
    Adapter Target is, and what NeMo Fabric, the adapter, and the target own.
-2. **Choose an integration shape.** Select a shared harness adapter, a shared
+2. **Choose an integration shape.** Select a harness adapter, a shared
    framework adapter with registered targets, or a dedicated custom-agent
    adapter.
 3. **Declare the minimum adapter.** Publish an Adapter Descriptor and implement
@@ -72,7 +72,8 @@ Rewrite `docs/adapter-contract/README.md` as the beginner entry point:
 
 Add `docs/adapter-contract/examples.md` as a compact reference map:
 
-- mini-SWE-agent for a small shared harness adapter;
+- Hermes Agent for a complete harness adapter and mini-SWE-agent for its
+  minimum surface;
 - the NeMo Agent Toolkit reference for one shared adapter and multiple
   registered custom-agent workflows; and
 - the LangGraph email-phishing analyzer for a dedicated custom-agent adapter.

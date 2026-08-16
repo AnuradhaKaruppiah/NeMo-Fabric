@@ -31,7 +31,7 @@ code.
 Establish the adapter boundary before defining its descriptor:
 
 1. Identify the adapter implementation and its stable `adapter_id`.
-2. Choose a shared harness adapter, a shared framework adapter with registered
+2. Choose a harness adapter, a shared framework adapter with registered
    targets, or a dedicated custom-agent adapter.
 3. Reuse one shared adapter across custom agents when the framework provides
    stable loading and invocation semantics. Use a dedicated adapter when the

@@ -30,7 +30,7 @@ The adapter owns only target translation, target state, invocation, and
 cleanup.
 
 ```mermaid
-flowchart LR
+flowchart TD
     Consumer["Consumer<br/>FabricConfig + RunRequest"]
     Planning["NeMo Fabric planning<br/>discover | resolve | validate | project"]
     Adapter["Adapter<br/>AgentConfig + RuntimeContext<br/>start | invoke | stop"]
@@ -48,7 +48,7 @@ Use the narrowest reusable adapter boundary that your target provides:
 
 | Integration Shape | Use It When | Adapter Reuse | Reference |
 | --- | --- | --- | --- |
-| Shared harness adapter | A harness supplies a stable construction and execution model. | One adapter supports many harness configurations. | [mini-SWE-agent](https://github.com/NVIDIA/NeMo-Fabric/tree/main/adapters/mini-swe-agent) |
+| Harness adapter | An opinionated harness supplies a stable construction and execution model. | One adapter supports many configurations of that harness. | [Hermes Agent](https://github.com/NVIDIA/NeMo-Fabric/tree/main/adapters/hermes); [mini-SWE-agent](https://github.com/NVIDIA/NeMo-Fabric/tree/main/adapters/mini-swe-agent) for the minimum surface |
 | Shared framework adapter | A framework can load multiple registered custom agents through stable entry-point semantics. | One adapter supports many separately installed targets. | [NeMo Agent Toolkit](https://github.com/NVIDIA/NeMo-Fabric/tree/main/external/nat) |
 | Dedicated custom-agent adapter | The application owns execution behavior that does not fit a reusable loading contract. | One adapter packages one custom agent or agent family. | [LangGraph email-phishing analyzer](https://github.com/NVIDIA/NeMo-Fabric/tree/main/examples/langgraph_custom_agent) |
 
@@ -56,6 +56,10 @@ A custom agent does not automatically need a dedicated adapter. Prefer a
 shared adapter when a framework has stable loading and invocation semantics.
 Use a dedicated adapter when the agent itself is the only clear execution
 boundary. Refer to [Custom Agents](custom-agents.md) for the decision model.
+
+Use Hermes Agent as the primary harness-adapter reference. Start with
+mini-SWE-agent when implementing a first adapter: it intentionally keeps the
+required descriptor, configuration translation, and lifecycle surface small.
 
 ## Implement the Minimum Surface
 
