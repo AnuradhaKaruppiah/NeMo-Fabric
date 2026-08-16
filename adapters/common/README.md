@@ -15,9 +15,10 @@ Install the package directly when developing an adapter:
 pip install nemo-fabric-adapters-common
 ```
 
-Refer to the [NeMo Fabric documentation](https://docs.nvidia.com/nemo/fabric)
+Use the maintained
+[adapter contract documentation](https://github.com/NVIDIA/NeMo-Fabric/tree/main/docs/adapter-contract)
 for adapter and configuration guidance. Source code is available in the
-[NVIDIA NeMo Fabric repository](https://github.com/NVIDIA/nemo-fabric/).
+[NVIDIA NeMo Fabric repository](https://github.com/NVIDIA/NeMo-Fabric/).
 
 ## Persistent Local Hosts
 
@@ -84,7 +85,9 @@ lifecycle.serve(AdapterRuntime, config_loader=AgentConfig.from_mapping)
 ```
 
 The runtime then receives an `AgentConfig` instance in `payload["config"]`.
-Omitting `config_loader` preserves the legacy `FabricConfig` mapping.
+New adapters must provide this loader. Omitting `config_loader` is a legacy
+host behavior and is not the v1alpha2 adapter configuration contract;
+`FabricConfig` never crosses the supported southbound boundary.
 
 NeMo Fabric calls the factory once per local host to create one runtime instance and
 serializes invocations through that instance. The host keeps one event loop

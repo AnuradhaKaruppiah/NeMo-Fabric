@@ -28,6 +28,7 @@ schemas/
 │   └── ...
 └── adapter-contract/          # Southbound adapter-facing contract
     ├── adapter-descriptor.schema.json
+    ├── adapter-target-descriptor.schema.json
     ├── agent-config.schema.json
     ├── agent-run-request.schema.json
     ├── agent-run-result.schema.json
@@ -40,6 +41,11 @@ schemas/
 An adapter author can treat `adapter-contract/` as the complete schema entry
 point. Contract versions remain explicit fields in the wire format rather than
 directory names.
+
+Start with the
+[adapter contract overview](https://github.com/NVIDIA/NeMo-Fabric/blob/main/docs/adapter-contract/README.md)
+for the implementation sequence. Use these generated schemas for exact wire
+shapes; do not reconstruct the contract from examples.
 
 The language bindings preserve this boundary:
 
@@ -63,6 +69,9 @@ these related representations do not drift.
 - `adapter-contract/adapter-descriptor`: adapter identity, runner,
   requirements, accepted normalized fields, schemas, telemetry support, and
   runtime capability claims.
+- `adapter-contract/adapter-target-descriptor`: separately registered target
+  identity, selected adapter, target type, adapter-scoped entry point, and
+  target settings schema.
 - `adapter-contract/agent-config`: typed configuration projected southbound to
   one adapter target. Adapter-owned additions are carried only through explicit
   `extensions` blocks and validated against schemas declared by the selected
