@@ -784,9 +784,6 @@ pub struct AdapterRequirements {
 /// Adapter config support.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AdapterConfigSupport {
-    /// Configuration object delivered to the adapter lifecycle host.
-    #[serde(default)]
-    pub input: AdapterConfigInput,
     /// Normalized NVIDIA NeMo Fabric config areas or policy paths accepted by this adapter.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub accepts: Vec<AdapterConfigField>,
@@ -796,15 +793,6 @@ pub struct AdapterConfigSupport {
     /// Additive adapter config-support fields.
     #[serde(default, flatten)]
     pub extensions: BTreeMap<String, Value>,
-}
-
-/// Configuration object delivered to an adapter lifecycle host.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum AdapterConfigInput {
-    /// Deliver the resolved southbound `AgentConfig` contract.
-    #[default]
-    AgentConfig,
 }
 
 /// Adapter-translated normalized NVIDIA NeMo Fabric configuration fields.
@@ -5695,7 +5683,6 @@ mod tests {
             .config
             .accepts
             .push(AdapterConfigField::ToolDefinitions);
-        descriptor.config.input = AdapterConfigInput::AgentConfig;
         descriptor.tool_definition_schema = Some(tool_definition_schema());
         descriptor.extension_schemas.insert(
             AdapterExtensionPoint::ToolDefinition,
@@ -5787,7 +5774,6 @@ mod tests {
     fn adapter_extensions_are_fail_closed_and_schema_validated() {
         let path = repository_root().join("adapters/claude/claude.fabric-adapter.json");
         let mut descriptor = load_adapter_descriptor(&path).expect("Claude descriptor");
-        descriptor.config.input = AdapterConfigInput::AgentConfig;
         let resolved = resolved_adapter(path.clone(), descriptor.clone());
         let mut config = typed_config("nvidia.fabric.claude");
         config.skills = None;

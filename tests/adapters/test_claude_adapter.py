@@ -223,7 +223,6 @@ def test_claude_descriptor_is_narrow_and_versioned():
             }
         },
         "config": {
-            "input": "agent_config",
             "accepts": [
                 "models",
                 "models.base_url",

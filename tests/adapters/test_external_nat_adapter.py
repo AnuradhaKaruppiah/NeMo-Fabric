@@ -283,7 +283,6 @@ def test_descriptor_declares_exact_source_reference_contract():
     assert descriptor["target_types"] == ["workflow"]
     assert descriptor["runner"] == {"module": "nemo_fabric_adapters.nat.adapter"}
     assert descriptor["requirements"] == {}
-    assert descriptor["config"]["input"] == "agent_config"
     assert descriptor["config"]["accepts"] == [
         "models",
         "models.base_url",

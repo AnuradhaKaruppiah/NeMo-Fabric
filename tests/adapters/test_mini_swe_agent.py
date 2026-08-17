@@ -127,7 +127,6 @@ def test_mini_swe_agent_descriptor_is_narrow_and_versioned():
         "module": "nemo_fabric_adapters.mini_swe_agent.adapter"
     }
     assert descriptor["config"] == {
-        "input": "agent_config",
         "accepts": [
             "models",
             "models.base_url",

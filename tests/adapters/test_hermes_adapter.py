@@ -122,7 +122,6 @@ def test_descriptor_uses_the_typed_agent_config_contract():
     descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
 
     assert descriptor["contract_version"] == "fabric.adapter/v1alpha2"
-    assert descriptor["config"]["input"] == "agent_config"
     assert descriptor["config"]["accepts"] == [
         "models",
         "models.base_url",

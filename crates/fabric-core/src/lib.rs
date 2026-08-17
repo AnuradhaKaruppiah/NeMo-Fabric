@@ -18,11 +18,11 @@ pub use agent_execution::{
     AgentRunStatus, AgentUsage,
 };
 pub use config::{
-    AdapterConfigField, AdapterConfigInput, AdapterConfigSupport, AdapterDescriptor, AdapterKind,
-    AdapterRequirements, AdapterTarget, AdapterTargetDescriptor, AdapterTargetType,
-    AdapterTelemetryProviderSupport, AdapterTelemetrySupport, AgentConfig, AgentHarnessConfig,
-    AgentInstructionConfig, AgentInstructionsConfig, AgentMcpConfig, AgentMcpServerConfig,
-    AgentModelConfig, AgentRuntimeConfig, AgentSkillConfig, AgentToolDefinition, AgentToolsConfig,
+    AdapterConfigField, AdapterConfigSupport, AdapterDescriptor, AdapterKind, AdapterRequirements,
+    AdapterTarget, AdapterTargetDescriptor, AdapterTargetType, AdapterTelemetryProviderSupport,
+    AdapterTelemetrySupport, AgentConfig, AgentHarnessConfig, AgentInstructionConfig,
+    AgentInstructionsConfig, AgentMcpConfig, AgentMcpServerConfig, AgentModelConfig,
+    AgentRuntimeConfig, AgentSkillConfig, AgentToolDefinition, AgentToolsConfig,
     AgentWorkflowConfig, AgentWorkflowEntrypointConfig, CapabilityPlan, ControlLocation,
     DescriptorProvenance, DescriptorSource, DiscoveryConfig, EnvironmentConfig,
     EnvironmentOwnership, EnvironmentPlan, FabricConfig, HarnessConfig, InstructionConfig,
