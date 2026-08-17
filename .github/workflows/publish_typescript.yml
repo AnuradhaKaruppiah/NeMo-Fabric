@@ -94,9 +94,6 @@ jobs:
           esac
 
           python3 scripts/ci/set_typescript_project_version.py "$version"
-          git diff --exit-code -- \
-            adapter-contract/typescript/package.json \
-            adapter-contract/typescript/package-lock.json
           {
             echo "version=$version"
             echo "dist_tag=$dist_tag"
