@@ -5,9 +5,11 @@ SPDX-License-Identifier: Apache-2.0
 
 # Stage 4: Normalize Results and Telemetry
 
-Every invocation produces one terminal outcome. Keep target-specific parsing
-inside the adapter so consumers receive a stable NeMo Fabric `RunResult` and do
-not need to understand the target's native response objects.
+Every target invocation that completes through the adapter boundary produces
+one terminal outcome. A lifecycle or transport failure can terminate the
+operation before an `AgentRunResult` exists. Keep target-specific parsing
+inside the adapter so consumers receive a stable NeMo Fabric `RunResult` and
+do not need to understand the target's native response objects.
 
 ## Return AgentRunResult
 

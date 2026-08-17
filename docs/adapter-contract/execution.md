@@ -16,7 +16,7 @@ The minimum adapter implements these operations:
 | Operation | Adapter Responsibility |
 | --- | --- |
 | `start` | Validate startup-only requirements, translate `AgentConfig`, and retain one isolated target runtime. |
-| `invoke` | Translate one request, execute the retained target, and return one terminal JSON-compatible value. |
+| `invoke` | Translate one `AgentRunRequest`, execute the retained target, and return one `AgentRunResult`. |
 | `stop` | Attempt to release every adapter-owned resource, including after partial startup or failed invocation. |
 
 The required order is one successful `start`, zero or more ordered `invoke`
@@ -35,6 +35,10 @@ shows the complete method surface:
 
 ```python
 from nemo_fabric_adapter_contract.models import AgentConfig
+from nemo_fabric_adapter_contract.models import AgentRunRequest
+from nemo_fabric_adapter_contract.models import AgentRunResult
+from nemo_fabric_adapter_contract.models import AgentRunStatus
+from nemo_fabric_adapter_contract.models import RuntimeContext
 from nemo_fabric_adapters.common import lifecycle
 
 
@@ -44,16 +48,24 @@ class TargetRuntime:
 
     async def start(self, payload):
         config: AgentConfig = payload["config"]
-        self.target = await create_target(config)
+        target = await create_target(config)
+        self.target = target
 
-    async def invoke(self, payload):
-        request = payload["request"]
-        return await self.target.run(request["input"])
+    async def invoke(
+        self,
+        request: AgentRunRequest,
+        context: RuntimeContext,
+    ) -> AgentRunResult:
+        native = await self.target.run(request.input)
+        return AgentRunResult(
+            status=AgentRunStatus.SUCCEEDED,
+            output={"response": native.text},
+        )
 
     async def stop(self):
-        if self.target is not None:
-            await self.target.close()
-        self.target = None
+        target, self.target = self.target, None
+        if target is not None:
+            await target.close()
 
 
 def main() -> None:
@@ -61,14 +73,16 @@ def main() -> None:
 ```
 
 The host creates one `TargetRuntime` per local host, validates the start config
-as `AgentConfig`, serializes lifecycle operations, reserves stdout for its wire
-protocol, normalizes lifecycle failures, and attempts cleanup on end of file.
-The common host is optional; an adapter can implement another supported binding
-directly.
+as `AgentConfig`, passes typed request and context objects to `invoke`, requires
+a typed terminal result, serializes lifecycle operations, reserves stdout for
+its wire protocol, and attempts cleanup on end of file. The common host is
+optional; an adapter can implement another supported binding directly.
 
-Make `stop` safe when startup created only some resources and when invocation
-failed. A no-op `stop` is valid for a thin remote-service adapter that owns no
-remote lifecycle, but it must still complete successfully.
+The target factory must release resources it creates if it fails before
+returning. Once the factory returns, retain the target immediately. Make
+`stop` idempotent, clear retained state even if cleanup fails, and keep it safe
+after a failed invocation. A no-op `stop` is valid for a thin remote-service
+adapter that owns no remote lifecycle, but it must still complete successfully.
 
 ## Use RuntimeContext for Operation Context
 
@@ -96,11 +110,11 @@ Use a lifecycle failure when the adapter cannot satisfy `start`, `invoke`, or
 `stop`, including protocol and transport failures. A lifecycle failure can
 invalidate the runtime.
 
-A target-level failure can remain a terminal JSON-compatible outcome when the
-current target and adapter define that shape. Do not expose stack traces,
-credentials, complete environment values, HTTP authorization headers, or
-arbitrary user input in errors or logs. NeMo Fabric does not automatically
-replay an invocation after a transport failure.
+A target-level failure is an `AgentRunResult` with `status=FAILED` and an
+`AgentRunError`. Do not expose stack traces, credentials, complete environment
+values, HTTP authorization headers, or arbitrary user input in errors or logs.
+NeMo Fabric does not automatically replay an invocation after a transport
+failure.
 
 ## Add Streaming Only When Needed
 

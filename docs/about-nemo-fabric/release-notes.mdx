@@ -22,10 +22,9 @@ TypeScript types, maintained repository documentation, and a public
 adapter-authoring skill.
 
 Adapters receive projected `AgentConfig`; northbound `FabricConfig` does not
-cross the supported adapter boundary. `AgentRunRequest` and `AgentRunResult`
-are published preview schemas while the current local-host invocation binding
-continues to use its existing request envelope and JSON-compatible terminal
-output.
+cross the supported adapter boundary. Each invocation receives typed
+`AgentRunRequest` and `RuntimeContext` values and returns one typed
+`AgentRunResult`; NeMo Fabric validates and enriches that result for consumers.
 
 ### Harness and Custom-Agent Integration Patterns
 
@@ -35,9 +34,10 @@ The adapter contract now documents three integration shapes:
 - one shared framework adapter for separately registered custom agents; and
 - one dedicated adapter for an application-owned custom agent.
 
-The compact mini-SWE-agent adapter demonstrates the required lifecycle. The
-source-only NeMo Agent Toolkit reference demonstrates one shared adapter for
-calculator and email-phishing targets. The LangGraph email-phishing example
+The compact [mini-SWE-agent adapter](https://github.com/NVIDIA/NeMo-Fabric/tree/main/adapters/mini-swe-agent)
+demonstrates the required lifecycle. The source-only NVIDIA NeMo Agent Toolkit
+reference demonstrates one shared adapter for calculator and email-phishing
+targets. The [LangGraph email-phishing example](https://github.com/NVIDIA/NeMo-Fabric/tree/main/examples/langgraph_custom_agent)
 demonstrates a dedicated custom-agent adapter with separate consumer, adapter,
 and agent code.
 
@@ -62,16 +62,18 @@ Adapters advertise only the normalized fields and authentication modes they
 apply, and unsupported configured behavior fails planning.
 
 Native OpenAI Chat Completions streaming is available to adapters that declare
-and implement the optional capability. Relay-backed ATOF streaming remains the
-primary normalized streaming API and does not require another adapter method.
-This release also updates NeMo Relay integration to 0.7.
+and implement the optional capability. Relay-backed Agent Trajectory
+Observability Format (ATOF) streaming remains the primary normalized streaming
+API and does not require another adapter method. This release also updates
+NVIDIA NeMo Relay integration to 0.7.
 
 ### Bundled Adapter Alignment
 
 Claude Code, Codex, Hermes Agent, LangChain Deep Agents, and mini-SWE-agent use
-the v1alpha2 descriptor and `AgentConfig` boundary. Each adapter publishes its
-supported configuration, settings schemas, runtime requirements, telemetry
-outputs, and optional capabilities for planning and diagnostics.
+the v1alpha2 descriptor, configuration, request, context, and result boundary.
+Each adapter publishes its supported configuration, settings schemas, runtime
+requirements, telemetry outputs, and optional capabilities for planning and
+diagnostics.
 
 ## Current Limitations
 
@@ -82,5 +84,3 @@ outputs, and optional capabilities for planning and diagnostics.
   declared capabilities.
 - Cancellation, live updates, and service lifecycle flags are reserved until a
   runtime binding exposes and tests the corresponding adapter operations.
-- `AgentRunRequest` and `AgentRunResult` remain preview schemas and are not the
-  negotiated v1alpha2 local-host invocation payload.

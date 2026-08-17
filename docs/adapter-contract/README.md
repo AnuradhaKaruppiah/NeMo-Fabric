@@ -33,7 +33,7 @@ cleanup.
 flowchart TD
     Consumer["Consumer<br/>FabricConfig + RunRequest"]
     Planning["NeMo Fabric planning<br/>discover | resolve | validate | project"]
-    Adapter["Adapter<br/>AgentConfig + RuntimeContext<br/>start | invoke | stop"]
+    Adapter["Adapter<br/>AgentConfig + AgentRunRequest + RuntimeContext<br/>start | invoke | stop"]
     Target["Adapter Target<br/>harness | shared framework | custom agent"]
     Result["Consumer result<br/>RunResult + artifacts + telemetry refs"]
 
@@ -67,8 +67,9 @@ The minimum local adapter has four parts:
 
 1. One discoverable `*.fabric-adapter.json` descriptor.
 2. `start`, which initializes one isolated target runtime from `AgentConfig`.
-3. `invoke`, which executes zero or more ordered requests and returns one
-   terminal JSON-compatible outcome for each request.
+3. `invoke`, which executes exactly one request and returns one terminal
+   `AgentRunResult`. A runtime can perform zero or more ordered `invoke`
+   operations.
 4. `stop`, which attempts cleanup after successful, partial, or failed work.
 
 The minimum profile permits one active invocation per runtime. It does not
@@ -90,7 +91,7 @@ needs:
 | 1. [Describe the adapter](adapter-descriptor.md) | Identity, runtime binding, minimum descriptor, and optional target records. | NeMo Fabric can discover and validate metadata without importing adapter code. |
 | 2. [Map configuration](normalized-configuration.md) | Only the normalized `AgentConfig` fields and typed settings the target applies. | Unsupported behavior fails planning instead of being ignored. |
 | 3. [Implement execution](execution.md) | `start`, `invoke`, `stop`, runtime isolation, and safe failures. | One runtime can execute an ordered request sequence and always attempts cleanup. |
-| 4. [Normalize outcomes](results.md) | Current JSON-compatible output, error translation, artifacts, and telemetry integration. | Every invocation has one safe terminal outcome. |
+| 4. [Normalize outcomes](results.md) | `AgentRunResult`, error translation, artifacts, and telemetry integration. | Every completed target invocation has one safe terminal outcome. |
 | 5. [Package and register](registration-and-discovery.md) | Installed descriptor files or explicit development paths. | Planning resolves the intended adapter and optional registered target by exact ID. |
 | 6. [Verify the adapter](conformance.md) | Planning, lifecycle, cleanup, isolation, and declared capability tests. | The minimum profile and every descriptor claim have evidence. |
 

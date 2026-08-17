@@ -79,7 +79,7 @@ the clearest integration boundary. Its directories make ownership explicit:
 - [`adapter/`](https://github.com/NVIDIA/NeMo-Fabric/tree/main/examples/langgraph_custom_agent/adapter)
   receives `AgentConfig`, translates dependencies, and owns the lifecycle.
 - [`agent/`](https://github.com/NVIDIA/NeMo-Fabric/tree/main/examples/langgraph_custom_agent/agent)
-  contains application behavior without a NeMo Fabric dependency.
+  contains application behavior without an NVIDIA NeMo Fabric dependency.
 
 The descriptor directly selects this adapter and does not declare
 `target_types` or accept `workflow`. Its minimum path maps one model and one
@@ -95,8 +95,8 @@ Across all examples, keep these ownership boundaries intact:
 | Consumer Side | Adapter Side | Current v1alpha2 Behavior |
 | --- | --- | --- |
 | `FabricConfig` | `AgentConfig` | Planning resolves, validates, and projects config before `start`. |
-| `RunRequest` | `AgentRunRequest` preview | The current local host passes the northbound request mapping in its invocation envelope. |
-| `RunResult` | `AgentRunResult` preview | The current local host accepts JSON-compatible adapter output and NeMo Fabric enriches it for the consumer. |
+| `RunRequest` | `AgentRunRequest` | NeMo Fabric projects caller input, context, and declared request extensions before invocation. Request identity is supplied through `RuntimeContext`. |
+| `RunResult` | `AgentRunResult` | The adapter returns typed status, output, error, usage, artifacts, and declared extensions; NeMo Fabric validates and enriches them for the consumer. |
 
 Use the
 [`schemas/adapter-contract/` directory](https://github.com/NVIDIA/NeMo-Fabric/tree/main/schemas/adapter-contract)

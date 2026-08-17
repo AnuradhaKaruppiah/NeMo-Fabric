@@ -6,9 +6,12 @@ SPDX-License-Identifier: Apache-2.0
 # Stage 6: Verify the Adapter
 
 Verify the minimum lifecycle and every claim in the selected Adapter
-Descriptor before publishing an adapter. The current release does not include
-an automated conformance suite, and completing this checklist does not imply
-NVIDIA review, trust, certification, or verification.
+Descriptor before publishing an adapter. NVIDIA NeMo Fabric 0.2 runs
+adapter-contract checks through `just test-python` and
+`just test-typescript`; the installed adapter lifecycle and optional
+capability checks below remain manual.
+Completing this checklist does not imply NVIDIA review, trust, certification,
+or verification.
 
 ## Verify the Minimum Profile
 
@@ -23,10 +26,10 @@ Run these checks against an installed adapter package:
    data for every published settings, model, tool-definition, target, and
    extension schema.
 4. Run `doctor(...)` with both satisfied and missing runtime requirements.
-5. Exercise start, successful invoke, target failure, repeated invoke when
-   supported, and stop.
-6. Exercise partial-start failure, invocation transport failure, malformed
-   output, and end-of-file cleanup without exposing secrets.
+5. Exercise typed request projection, successful invoke, target failure,
+   repeated invoke when supported, and stop.
+6. Exercise partial-start failure, invocation transport failure, malformed or
+   untyped `AgentRunResult`, and end-of-file cleanup without exposing secrets.
 7. Run two independent Fabric runtimes and confirm that they do not share
    mutable target state.
 
@@ -44,15 +47,12 @@ Test each descriptor claim independently:
 | Adapter-owned schema | Valid and invalid examples exercised through planning. |
 | Runtime requirement | `doctor(...)` reports both satisfied and missing states. |
 | Telemetry output | The output is produced and correlated to the intended invocation. |
-| Relay-backed stream | Ordinary `invoke` completes while correlated ATOF reaches `Runtime.invoke_stream()`. |
+| Relay-backed stream | Ordinary `invoke` completes while correlated Agent Trajectory Observability Format (ATOF) records reach `Runtime.invoke_stream()`. |
 | Native OpenAI stream | Empty and multi-chunk streams, invalid records, early close, a separate terminal value, and exactly one target invocation. |
 
 Do not claim reserved cancellation, update, or service capabilities until the
 installed NeMo Fabric runtime binding exposes and tests the corresponding
 adapter operation.
-
-`AgentRunRequest` and `AgentRunResult` are preview schemas and do not count
-toward v1alpha2 local-host verification.
 
 ## Record the Result
 

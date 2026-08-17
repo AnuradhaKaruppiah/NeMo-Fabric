@@ -93,8 +93,7 @@ intent to the NeMo Agent Toolkit ReAct workflow factory.
   validation.
 
 Runtime and invocation identity comes from `RuntimeContext`. Per-invocation
-input comes from the current request envelope and, in a future typed boundary,
-`AgentRunRequest`. Neither belongs in workflow settings.
+input comes from `AgentRunRequest`. Neither belongs in workflow settings.
 
 The shared adapter owns translation of normalized models, instructions, tools,
 MCP servers, skills, and runtime behavior into target-native construction

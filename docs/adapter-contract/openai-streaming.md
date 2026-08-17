@@ -27,17 +27,20 @@ and terminal results are outside the progressive stream.
 
 ## Implement the Python Method
 
-The common Python host calls `async invoke_openai_stream(payload, emit)`. The
-method executes the target exactly once, awaits `emit(chunk)` for each valid
-OpenAI Chat Completions chunk mapping, and returns one separate
-JSON-compatible terminal value:
+The common Python host calls
+`async invoke_openai_stream(request, context, emit)`. The method executes the
+target exactly once, awaits `emit(chunk)` for each valid OpenAI Chat
+Completions chunk mapping, and returns one separate `AgentRunResult`:
 
 ```python
 class TargetRuntime:
-    async def invoke_openai_stream(self, payload, emit):
-        async for chunk in self.target.stream(payload["request"]["input"]):
+    async def invoke_openai_stream(self, request, context, emit):
+        async for chunk in self.target.stream(request.input):
             await emit(chunk)
-        return self.target.terminal_result()
+        return AgentRunResult(
+            status=AgentRunStatus.SUCCEEDED,
+            output={"response": self.target.final_text},
+        )
 ```
 
 Each chunk contains:
@@ -58,11 +61,11 @@ host under the same lifecycle timeout rules as ordinary invocation.
 
 ## Follow the Fabric-Owned Transport
 
-NeMo Fabric owns the authenticated loopback HTTP transport, chunked newline-
-delimited JSON (NDJSON) framing, correlation, validation, buffering, and
-consumer lifecycle. The common host removes transport credentials before it
-calls the adapter method. Do not persist or log the bearer token, emit chunks
-on stdout, or add SSE framing.
+NVIDIA NeMo Fabric owns the authenticated loopback HTTP transport, chunked
+newline-delimited JSON (NDJSON) framing, correlation, validation, buffering,
+and consumer lifecycle. The common host removes transport credentials before
+it calls the typed adapter method. Do not persist or log the bearer token, emit
+chunks on stdout, or add SSE framing.
 
 Bindings that do not use the common Python host read the sink from
 [`openai-stream-invocation.schema.json`](https://github.com/NVIDIA/NeMo-Fabric/blob/main/schemas/adapter-contract/openai-stream-invocation.schema.json)
