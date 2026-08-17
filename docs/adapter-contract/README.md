@@ -119,9 +119,3 @@ The current contract version is `fabric.adapter/v1alpha2`. The same
 `contract_version` covers Adapter Descriptors, Adapter Target Descriptors,
 `AgentConfig`, `RuntimeContext`, and the negotiated lifecycle binding. Adapter
 package versions are independent implementation-release versions.
-
-`AgentRunRequest` and `AgentRunResult` are published preview schemas. The
-current local-host binding still sends the northbound request in its invocation
-envelope and accepts a JSON-compatible terminal value. Keep request and result
-translation at the adapter edge; do not return the preview result envelope as
-the current host protocol.
