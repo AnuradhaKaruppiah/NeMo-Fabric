@@ -21,6 +21,8 @@ from unittest.mock import MagicMock
 import pytest
 from nemo_fabric_adapter_contract.models import AgentConfig
 from nemo_fabric_adapter_contract.models import AgentMcpServerConfig
+from nemo_fabric_adapter_contract.models import AgentRunRequest
+from nemo_fabric_adapter_contract.models import AgentRunStatus
 from nemo_fabric_adapter_contract.models import RuntimeContext
 
 pytestmark = pytest.mark.usefixtures("requires_hermes_agent")
@@ -38,6 +40,21 @@ if importlib.util.find_spec("run_agent") is not None:
 
 def _agent_config(value: dict[str, object]) -> AgentConfig:
     return AgentConfig.from_mapping(value)
+
+
+def _invocation(
+    payload: dict[str, object],
+) -> tuple[AgentRunRequest, RuntimeContext]:
+    request_mapping = payload["request"]
+    assert isinstance(request_mapping, dict)
+    request = {
+        key: value for key, value in request_mapping.items() if key != "request_id"
+    }
+    context = payload["runtime_context"]
+    if not isinstance(context, RuntimeContext):
+        assert isinstance(context, dict)
+        context = RuntimeContext.from_mapping(context)
+    return AgentRunRequest.from_mapping(request), context
 
 
 def _runtime_context(
@@ -100,10 +117,7 @@ def test_validate_hermes_telemetry_provider_rejects_mixed_native_and_relay():
 
 def test_descriptor_uses_the_typed_agent_config_contract():
     descriptor_path = (
-        Path(__file__).parents[2]
-        / "adapters"
-        / "hermes"
-        / "hermes.fabric-adapter.json"
+        Path(__file__).parents[2] / "adapters" / "hermes" / "hermes.fabric-adapter.json"
     )
     descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
 
@@ -395,12 +409,14 @@ async def test_runtime_rechecks_ambient_relay_config_before_each_turn(
 
     with pytest.raises(RuntimeError, match="ambient Relay config"):
         await runtime.invoke(
-            {
-                "runtime_context": _runtime_context(
-                    runtime_id=runtime._runtime_id
-                ).to_mapping(),
-                "request": {"input": "hello"},
-            }
+            *_invocation(
+                {
+                    "runtime_context": _runtime_context(
+                        runtime_id=runtime._runtime_id
+                    ).to_mapping(),
+                    "request": {"input": "hello"},
+                }
+            )
         )
 
     mock_turn.assert_not_called()
@@ -1142,8 +1158,26 @@ def started_hermes_runtime_fixture(
 @pytest.mark.parametrize(
     ("result_update", "expected_failed", "expected_error"),
     [
-        pytest.param({"failed": True}, True, None, id="failed"),
-        pytest.param({"partial": True}, True, None, id="partial"),
+        pytest.param(
+            {"failed": True},
+            True,
+            {
+                "code": "hermes_reported_failure",
+                "message": "Hermes did not complete the invocation",
+                "retryable": False,
+            },
+            id="failed",
+        ),
+        pytest.param(
+            {"partial": True},
+            True,
+            {
+                "code": "hermes_reported_failure",
+                "message": "Hermes did not complete the invocation",
+                "retryable": False,
+            },
+            id="partial",
+        ),
         pytest.param(
             {"error": "Response remained truncated after 4 continuation attempts"},
             True,
@@ -1151,7 +1185,6 @@ def started_hermes_runtime_fixture(
                 "code": "hermes_reported_failure",
                 "message": "Response remained truncated after 4 continuation attempts",
                 "retryable": False,
-                "metadata": {},
             },
             id="string-error",
         ),
@@ -1169,11 +1202,11 @@ def started_hermes_runtime_fixture(
                 "code": "hermes_rate_limited",
                 "message": "provider rate limited the request",
                 "retryable": True,
-                "metadata": {"provider": "test"},
+                "extensions": {"provider": "test"},
             },
             id="structured-error",
         ),
-        pytest.param({"error": ""}, False, "", id="empty-error"),
+        pytest.param({"error": ""}, False, None, id="empty-error"),
         pytest.param({}, False, None, id="completed-false-only"),
     ],
 )
@@ -1196,17 +1229,21 @@ async def test_hermes_failure_signals_are_normalized(
     )
 
     output = await runtime.invoke(
-        {
-            "runtime_context": _runtime_context(
-                runtime_id="runtime-incomplete"
-            ).to_mapping(),
-            "request": {"input": "complete the task"},
-        }
+        *_invocation(
+            {
+                "runtime_context": _runtime_context(
+                    runtime_id="runtime-incomplete"
+                ).to_mapping(),
+                "request": {"input": "complete the task"},
+            }
+        )
     )
 
-    assert output["completed"] is False
-    assert output["failed"] is expected_failed
-    assert output["error"] == expected_error
+    assert output.output["completed"] is False
+    assert (output.status is AgentRunStatus.FAILED) is expected_failed
+    assert (
+        None if output.error is None else output.error.to_mapping()
+    ) == expected_error
 
 
 async def test_persistent_runtime_reuses_hermes_agent_session_and_history(
@@ -1305,20 +1342,24 @@ async def test_persistent_runtime_reuses_hermes_agent_session_and_history(
 
     await runtime.start(start_payload)
     first = await runtime.invoke(
-        {
-            "runtime_context": payload["runtime_context"],
-            "request": payload["request"],
-        }
+        *_invocation(
+            {
+                "runtime_context": payload["runtime_context"],
+                "request": payload["request"],
+            }
+        )
     )
     payload["runtime_context"]["invocation_id"] = "invocation-2"
     payload["runtime_context"]["request_id"] = "request-2"
     payload["request"]["input"] = "continue"
     payload["request"]["request_id"] = "request-2"
     second = await runtime.invoke(
-        {
-            "runtime_context": payload["runtime_context"],
-            "request": payload["request"],
-        }
+        *_invocation(
+            {
+                "runtime_context": payload["runtime_context"],
+                "request": payload["request"],
+            }
+        )
     )
     await runtime.stop()
 
@@ -1362,10 +1403,10 @@ async def test_persistent_runtime_reuses_hermes_agent_session_and_history(
     assert runtime._session_db is None
     assert runtime._agent_config is None
     assert runtime._conversation_history is None
-    assert first["response"] == "first response"
-    assert second["response"] == "second response"
-    assert "session_id" not in second
-    assert Path(second["hermes_home"]) == (
+    assert first.output["response"] == "first response"
+    assert second.output["response"] == "second response"
+    assert "session_id" not in second.output
+    assert Path(second.output["hermes_home"]) == (
         tmp_path
         / "artifacts"
         / ".fabric"
@@ -1411,7 +1452,7 @@ async def test_runtime_stop_waits_for_cancelled_invoke_worker(monkeypatch):
         "request": {"input": "wait"},
     }
 
-    invoke_task = asyncio.create_task(runtime.invoke(invocation))
+    invoke_task = asyncio.create_task(runtime.invoke(*_invocation(invocation)))
     assert await asyncio.to_thread(worker_started.wait, 1)
 
     invoke_task.cancel()
@@ -1470,7 +1511,7 @@ async def test_runtime_allows_invoke_after_cancelled_worker_finishes(monkeypatch
         "request": {"input": "wait"},
     }
 
-    cancelled_invoke = asyncio.create_task(runtime.invoke(invocation))
+    cancelled_invoke = asyncio.create_task(runtime.invoke(*_invocation(invocation)))
     assert await asyncio.to_thread(worker_started.wait, 1)
     active_invoke_task = runtime._active_invoke_task
     assert active_invoke_task is not None
@@ -1482,9 +1523,9 @@ async def test_runtime_allows_invoke_after_cancelled_worker_finishes(monkeypatch
     worker_release.set()
     await asyncio.wait_for(asyncio.shield(active_invoke_task), timeout=1)
 
-    result = await runtime.invoke(invocation)
+    result = await runtime.invoke(*_invocation(invocation))
 
-    assert result["response"] == "turn-2"
+    assert result.output["response"] == "turn-2"
     await runtime.stop()
 
 

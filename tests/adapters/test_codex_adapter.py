@@ -16,6 +16,9 @@ import pytest
 from nemo_fabric import Fabric
 from nemo_fabric_adapter_contract.codec import ContractValidationError
 from nemo_fabric_adapter_contract.models import AgentConfig
+from nemo_fabric_adapter_contract.models import AgentRunRequest
+from nemo_fabric_adapter_contract.models import AgentRunResult
+from nemo_fabric_adapter_contract.models import AgentRunStatus
 from nemo_fabric_adapter_contract.models import RuntimeContext
 from nemo_fabric_adapters.codex import adapter
 from openai_codex import AsyncCodex, AsyncThread, AsyncTurnHandle, JsonRpcError
@@ -41,17 +44,30 @@ def runtime_input(payload):
 
 
 def lifecycle_invocation(payload):
-    return {
-        "runtime_context": runtime_input(payload)[1],
-        "request": payload["request"],
+    request = {
+        key: value for key, value in payload["request"].items() if key != "request_id"
     }
+    return AgentRunRequest.from_mapping(request), runtime_input(payload)[1]
+
+
+def result_view(result: AgentRunResult) -> dict[str, Any]:
+    assert isinstance(result, AgentRunResult)
+    output = dict(result.output)
+    raw_usage = output.get("usage")
+    if isinstance(raw_usage, dict) and any(
+        name in raw_usage for name in ("input_tokens", "output_tokens", "total_tokens")
+    ):
+        assert result.usage is not None
+    output["failed"] = result.status is AgentRunStatus.FAILED
+    output["error"] = None if result.error is None else result.error.to_mapping()
+    return output
 
 
 async def invoke_once_async(payload):
     runtime = adapter.CodexRuntime()
     await runtime.start(lifecycle_start_payload(payload))
     try:
-        return await runtime.invoke(lifecycle_invocation(payload))
+        return result_view(await runtime.invoke(*lifecycle_invocation(payload)))
     finally:
         await runtime.stop()
 
@@ -176,7 +192,7 @@ def atif_plugin_config(output_directory: Path) -> dict[str, Any]:
                         "enabled": True,
                         "output_directory": str(output_directory),
                         "filename_template": "trajectory-{session_id}.atif.json",
-                    }
+                    },
                 },
             }
         ],
@@ -363,7 +379,7 @@ def test_runtime_stop_reports_close_failure_after_completed_turn(
     async def scenario() -> tuple[dict[str, Any], adapter.lifecycle.LifecycleError]:
         runtime = adapter.CodexRuntime()
         await runtime.start(lifecycle_start_payload(codex_payload))
-        output = await runtime.invoke(lifecycle_invocation(codex_payload))
+        output = result_view(await runtime.invoke(*lifecycle_invocation(codex_payload)))
         with pytest.raises(adapter.lifecycle.LifecycleError) as caught:
             await runtime.stop()
         return output, caught.value
@@ -904,13 +920,13 @@ async def test_persistent_runtime_reuses_one_client_and_thread(
     runtime = adapter.CodexRuntime()
 
     await runtime.start(lifecycle_start_payload(start_payload))
-    first = await runtime.invoke(lifecycle_invocation(codex_payload))
+    first = result_view(await runtime.invoke(*lifecycle_invocation(codex_payload)))
     codex_payload["runtime_context"]["invocation_id"] = "invocation-2"
     codex_payload["runtime_context"]["request_id"] = "request-2"
     second_artifacts = Path(codex_payload["base_dir"]) / "second-artifacts"
     codex_payload["runtime_context"]["artifacts"] = {"root": str(second_artifacts)}
     codex_payload["request"]["input"] = "Continue."
-    second = await runtime.invoke(lifecycle_invocation(codex_payload))
+    second = result_view(await runtime.invoke(*lifecycle_invocation(codex_payload)))
     await runtime.stop()
 
     assert first["thread_id"] == second["thread_id"] == "thread-123"
@@ -972,9 +988,9 @@ async def test_persistent_runtime_registers_skills_once_and_maps_mcp(
     runtime = adapter.CodexRuntime()
 
     await runtime.start(lifecycle_start_payload(start_payload))
-    await runtime.invoke(lifecycle_invocation(codex_payload))
+    await runtime.invoke(*lifecycle_invocation(codex_payload))
     codex_payload["runtime_context"]["invocation_id"] = "invocation-2"
-    await runtime.invoke(lifecycle_invocation(codex_payload))
+    await runtime.invoke(*lifecycle_invocation(codex_payload))
     await runtime.stop()
 
     client = mock_codex.instances[0]
@@ -1019,9 +1035,9 @@ async def test_persistent_runtime_owns_one_relay_gateway(
     runtime = adapter.CodexRuntime()
 
     await runtime.start(lifecycle_start_payload(start_payload))
-    await runtime.invoke(lifecycle_invocation(codex_payload))
+    await runtime.invoke(*lifecycle_invocation(codex_payload))
     codex_payload["runtime_context"]["invocation_id"] = "invocation-2"
-    await runtime.invoke(lifecycle_invocation(codex_payload))
+    await runtime.invoke(*lifecycle_invocation(codex_payload))
     stop_gateway.assert_not_called()
     await runtime.stop()
 
@@ -1067,7 +1083,7 @@ async def test_relay_waits_for_delayed_atif_before_collecting_artifacts(
 
     await runtime.start(lifecycle_start_payload(codex_payload))
     try:
-        output = await runtime.invoke(lifecycle_invocation(codex_payload))
+        output = result_view(await runtime.invoke(*lifecycle_invocation(codex_payload)))
         assert write_task is not None
         await write_task
     finally:
@@ -1099,11 +1115,13 @@ async def test_relay_atif_timeout_fails_successful_turn_explicitly(
 
     await runtime.start(lifecycle_start_payload(codex_payload))
     try:
-        output = await runtime.invoke(lifecycle_invocation(codex_payload))
+        output = result_view(await runtime.invoke(*lifecycle_invocation(codex_payload)))
         late_atif.write_text(
             '{"schema_version":"ATIF-v1.7","steps":[]}', encoding="utf-8"
         )
-        unavailable = await runtime.invoke(lifecycle_invocation(codex_payload))
+        unavailable = result_view(
+            await runtime.invoke(*lifecycle_invocation(codex_payload))
+        )
     finally:
         await runtime.stop()
 
@@ -1112,7 +1130,7 @@ async def test_relay_atif_timeout_fails_successful_turn_explicitly(
         "code": "codex_relay_atif_timeout",
         "message": "NeMo Relay did not finalize an ATIF artifact before the deadline",
         "retryable": False,
-        "metadata": {
+        "extensions": {
             "timeout_seconds": adapter.relay_artifacts.ATIF_FINALIZATION_TIMEOUT_SECONDS
         },
     }
@@ -1528,7 +1546,7 @@ def test_relay_stop_failure_is_reported_by_runtime_stop(
     async def scenario() -> tuple[dict[str, Any], adapter.lifecycle.LifecycleError]:
         runtime = adapter.CodexRuntime()
         await runtime.start(lifecycle_start_payload(codex_payload))
-        output = await runtime.invoke(lifecycle_invocation(codex_payload))
+        output = result_view(await runtime.invoke(*lifecycle_invocation(codex_payload)))
         with pytest.raises(adapter.lifecycle.LifecycleError) as caught:
             await runtime.stop()
         return output, caught.value

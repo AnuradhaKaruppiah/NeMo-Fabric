@@ -10,7 +10,7 @@ import os
 from typing import Any
 
 from nemo_fabric_adapter_contract import models as contract
-from nemo_fabric_adapters.common import lifecycle, utils as common_utils
+from nemo_fabric_adapters.common import lifecycle
 
 SYSTEM_TEMPLATE = "{{system_instruction}}"
 INSTANCE_TEMPLATE = """Solve this task in the current workspace:
@@ -135,25 +135,40 @@ class MiniSweAgentRuntime:
             step_limit=config.runtime.max_turns if config.runtime else 0,
         )
 
-    async def invoke(self, payload: dict[str, Any]) -> dict[str, Any]:
-        raw_task = common_utils.request_payload(payload).get("input", "")
+    async def invoke(
+        self,
+        request: contract.AgentRunRequest,
+        context: contract.RuntimeContext,
+    ) -> contract.AgentRunResult:
+        del context
+        raw_task = request.input
         task = raw_task if isinstance(raw_task, str) else json.dumps(raw_task)
         result = await asyncio.to_thread(
             self._agent.run, task, system_instruction=self._system_instruction
         )
         failed = result.get("exit_status") != "Submitted"
         output: dict[str, Any] = {
-            "failed": failed,
             "output": result.get("submission", ""),
             "usage": {"api_calls": self._agent.n_calls},
         }
-        if failed:
-            output["error"] = {
-                "code": "mini_swe_agent_incomplete",
-                "message": "mini-SWE-agent stopped before submitting a final output",
-                "retryable": False,
-            }
-        return output
+        error = (
+            contract.AgentRunError(
+                code="mini_swe_agent_incomplete",
+                message="mini-SWE-agent stopped before submitting a final output",
+                retryable=False,
+            )
+            if failed
+            else None
+        )
+        return contract.AgentRunResult(
+            status=(
+                contract.AgentRunStatus.FAILED
+                if failed
+                else contract.AgentRunStatus.SUCCEEDED
+            ),
+            output=output,
+            error=error,
+        )
 
     async def stop(self) -> None:
         self.__init__()

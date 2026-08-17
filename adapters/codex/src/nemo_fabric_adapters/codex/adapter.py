@@ -40,6 +40,11 @@ from openai_codex.types import Personality, ReasoningEffort, TurnStatus
 from nemo_fabric_adapter_contract.codec import ContractValidationError
 from nemo_fabric_adapter_contract.models import AgentConfig
 from nemo_fabric_adapter_contract.models import AgentModelConfig
+from nemo_fabric_adapter_contract.models import AgentRunError
+from nemo_fabric_adapter_contract.models import AgentRunRequest
+from nemo_fabric_adapter_contract.models import AgentRunResult
+from nemo_fabric_adapter_contract.models import AgentRunStatus
+from nemo_fabric_adapter_contract.models import AgentUsage
 from nemo_fabric_adapter_contract.models import McpAuthenticationConfig
 from nemo_fabric_adapter_contract.models import McpOAuth2Config
 from nemo_fabric_adapter_contract.models import McpServiceAccountConfig
@@ -156,8 +161,8 @@ def _settings(config: AgentConfig) -> dict[str, Any]:
     return config.harness.settings if config.harness else {}
 
 
-def request_prompt(payload: dict[str, Any]) -> str:
-    value = (payload.get("request") or {}).get("input")
+def request_prompt(request: AgentRunRequest) -> str:
+    value = request.input
     if not isinstance(value, str):
         raise AdapterInputError("codex_invalid_request", "Codex input must be text")
     return value
@@ -381,7 +386,7 @@ async def _login_mcp_server(
     params: dict[str, Any] = {
         "name": name,
         "threadId": thread_id,
-        "timeoutSecs": math.ceil(timeout), # Cast to an int
+        "timeoutSecs": math.ceil(timeout),  # Cast to an int
     }
     if scopes:
         params["scopes"] = scopes
@@ -1016,6 +1021,38 @@ def sdk_failure(error: BaseException) -> dict[str, Any]:
     )
 
 
+def _agent_run_result(output: dict[str, Any]) -> AgentRunResult:
+    normalized = dict(output)
+    failed = bool(normalized.pop("failed", False))
+    reported_error = normalized.pop("error", None)
+    error = None
+    if failed:
+        reported = reported_error if isinstance(reported_error, dict) else {}
+        metadata = reported.get("metadata")
+        error = AgentRunError(
+            code=str(reported.get("code") or "codex_turn_failed"),
+            message=str(reported.get("message") or "Codex invocation failed"),
+            retryable=bool(reported.get("retryable", False)),
+            extensions=metadata if isinstance(metadata, dict) else {},
+        )
+    raw_usage = normalized.get("usage")
+    usage = raw_usage if isinstance(raw_usage, dict) else {}
+    tokens = {
+        name: value
+        for name in ("input_tokens", "output_tokens", "total_tokens")
+        if isinstance((value := usage.get(name)), int)
+        and not isinstance(value, bool)
+        and value >= 0
+    }
+    agent_usage = AgentUsage(**tokens) if tokens else None
+    return AgentRunResult(
+        status=AgentRunStatus.FAILED if failed else AgentRunStatus.SUCCEEDED,
+        output=normalized,
+        error=error,
+        usage=agent_usage,
+    )
+
+
 def normalize_result(
     config: AgentConfig,
     context: RuntimeContext,
@@ -1116,7 +1153,7 @@ async def _invoke_thread(
     config: AgentConfig,
     context: RuntimeContext,
     base_dir: str,
-    invocation: dict[str, Any],
+    request: AgentRunRequest,
     thread: Any,
 ) -> tuple[dict[str, Any], bool]:
     """Run one turn and report whether the connected SDK transport remains usable."""
@@ -1125,7 +1162,7 @@ async def _invoke_thread(
     try:
         async with asyncio.timeout(timeout_seconds()):
             handle = await thread.turn(
-                request_prompt(invocation),
+                request_prompt(request),
                 effort=_reasoning_effort(config),
                 output_schema=_output_schema(config),
             )
@@ -1300,7 +1337,11 @@ class CodexRuntime:
         self._fabric_runtime_id = fabric_runtime_id
         self._thread = thread
 
-    async def invoke(self, invocation: dict[str, Any]) -> dict[str, Any]:
+    async def invoke(
+        self,
+        request: AgentRunRequest,
+        runtime_context: RuntimeContext,
+    ) -> AgentRunResult:
         if (
             self._config is None
             or self._context is None
@@ -1316,20 +1357,21 @@ class CodexRuntime:
         config = self._config
         context = self._context
         base_dir = self._base_dir
-        runtime_context = _runtime_context(invocation)
         if runtime_context.runtime_id != self._fabric_runtime_id:
             raise lifecycle.LifecycleError(
                 "codex_runtime_mismatch",
                 "Codex invocation does not match the connected runtime",
             )
         if self._unusable:
-            return _failure(
-                "codex_runtime_unavailable",
-                "Codex runtime cannot accept another invocation after a runtime failure",
+            return _agent_run_result(
+                _failure(
+                    "codex_runtime_unavailable",
+                    "Codex runtime cannot accept another invocation after a runtime failure",
+                )
             )
 
         try:
-            request_prompt(invocation)
+            request_prompt(request)
             invocation_timeout_seconds = timeout_seconds()
             _reasoning_effort(config)
             _output_schema(config)
@@ -1349,7 +1391,7 @@ class CodexRuntime:
                 else None
             )
             output, usable = await _invoke_thread(
-                config, runtime_context, base_dir, invocation, self._thread
+                config, runtime_context, base_dir, request, self._thread
             )
             if (
                 output.get("completed")
@@ -1361,18 +1403,20 @@ class CodexRuntime:
                 )
                 if finalized is None:
                     self._unusable = True
-                    return _relay_output(
-                        adapter_failure(
-                            AdapterRelayError(
-                                "codex_relay_atif_timeout",
-                                "NeMo Relay did not finalize an ATIF artifact before the deadline",
-                                metadata={
-                                    "timeout_seconds": relay_artifacts.ATIF_FINALIZATION_TIMEOUT_SECONDS,
-                                },
-                            )
-                        ),
-                        relay,
-                        artifacts=[],
+                    return _agent_run_result(
+                        _relay_output(
+                            adapter_failure(
+                                AdapterRelayError(
+                                    "codex_relay_atif_timeout",
+                                    "NeMo Relay did not finalize an ATIF artifact before the deadline",
+                                    metadata={
+                                        "timeout_seconds": relay_artifacts.ATIF_FINALIZATION_TIMEOUT_SECONDS,
+                                    },
+                                )
+                            ),
+                            relay,
+                            artifacts=[],
+                        )
                     )
         except AdapterRelayError as error:
             output = adapter_failure(error)
@@ -1384,7 +1428,7 @@ class CodexRuntime:
         self._unusable = not usable
         if self._relay is not None:
             output = _relay_output(output, self._relay)
-        return output
+        return _agent_run_result(output)
 
     async def stop(self) -> None:
         client = self._client

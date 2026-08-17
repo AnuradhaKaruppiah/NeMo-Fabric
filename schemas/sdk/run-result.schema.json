@@ -215,6 +215,53 @@
         }
       ]
     },
+    "RunUsage": {
+      "additionalProperties": false,
+      "description": "Normalized invocation usage exposed to NeMo Fabric consumers.",
+      "properties": {
+        "cost_usd": {
+          "description": "Invocation cost in US dollars when reported by the provider.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "input_tokens": {
+          "description": "Input tokens consumed by the invocation.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "description": "Adapter-owned usage metadata.",
+          "type": "object"
+        },
+        "output_tokens": {
+          "description": "Output tokens produced by the invocation.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "total_tokens": {
+          "description": "Total tokens reported by the provider.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "TelemetryRef": {
       "description": "Reference to telemetry emitted by Relay or another configured telemetry path.",
       "properties": {
@@ -314,6 +361,17 @@
         }
       ],
       "description": "Telemetry reference when available."
+    },
+    "usage": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RunUsage"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Normalized invocation usage when reported by the adapter target."
     }
   },
   "required": [

@@ -28,6 +28,11 @@ wire protocol. Python adapters can use
 adapter-owned runtime with asynchronous `start`, `invoke`, and `stop` methods:
 
 ```python
+from nemo_fabric_adapter_contract.models import AgentConfig
+from nemo_fabric_adapter_contract.models import AgentRunRequest
+from nemo_fabric_adapter_contract.models import AgentRunResult
+from nemo_fabric_adapter_contract.models import AgentRunStatus
+from nemo_fabric_adapter_contract.models import RuntimeContext
 from nemo_fabric_adapters.common import lifecycle
 
 
@@ -35,14 +40,22 @@ class AdapterRuntime:
     async def start(self, payload):
         self.client = await connect_client(payload)
 
-    async def invoke(self, payload):
-        return await self.client.run(payload["request"]["input"])
+    async def invoke(
+        self,
+        request: AgentRunRequest,
+        context: RuntimeContext,
+    ) -> AgentRunResult:
+        native = await self.client.run(request.input)
+        return AgentRunResult(
+            status=AgentRunStatus.SUCCEEDED,
+            output={"response": native.text},
+        )
 
     async def stop(self):
         await self.client.close()
 
 
-lifecycle.serve(AdapterRuntime)
+lifecycle.serve(AdapterRuntime, config_loader=AgentConfig.from_mapping)
 ```
 
 If the adapter descriptor declares `capabilities.streaming`, the runtime must
@@ -50,17 +63,20 @@ also implement native OpenAI Chat Completions streaming:
 
 ```python
 class AdapterRuntime:
-    async def invoke_openai_stream(self, payload, emit):
-        async for chunk in self.client.stream(payload["request"]["input"]):
+    async def invoke_openai_stream(self, request, context, emit):
+        async for chunk in self.client.stream(request.input):
             await emit(chunk)
-        return {"answer": "..."}
+        return AgentRunResult(
+            status=AgentRunStatus.SUCCEEDED,
+            output={"response": self.client.final_text},
+        )
 ```
 
 The optional method must have the signature
-`async invoke_openai_stream(payload, emit)`. Execute the target exactly once,
+`async invoke_openai_stream(request, context, emit)`. Execute the target exactly once,
 await `emit(chunk)` only for mappings in the
-`openai.chat_completions.chunk/v1` profile, and return one JSON-compatible
-terminal outcome. Each chunk requires non-empty `id` and `model` strings, a
+`openai.chat_completions.chunk/v1` profile, and return one `AgentRunResult`.
+Each chunk requires non-empty `id` and `model` strings, a
 nonnegative integer `created`, the exact `chat.completion.chunk` object
 discriminator, and structurally valid `choices`. An empty chunk stream is
 valid.
@@ -75,7 +91,7 @@ generated
 [`openai-stream-record.schema.json`](https://github.com/NVIDIA/NeMo-Fabric/blob/main/schemas/adapter-contract/openai-stream-record.schema.json)
 chunk and explicit-end envelopes.
 
-Adapters can ask the host to validate the southbound contract before `start`:
+Adapters ask the host to validate the southbound config before `start`:
 
 ```python
 from nemo_fabric_adapter_contract.models import AgentConfig
@@ -84,9 +100,8 @@ lifecycle.serve(AdapterRuntime, config_loader=AgentConfig.from_mapping)
 ```
 
 The runtime then receives an `AgentConfig` instance in `payload["config"]`.
-New adapters must provide this loader. Omitting `config_loader` is a legacy
-host behavior and is not the v1alpha2 adapter configuration contract;
-`FabricConfig` never crosses the supported southbound boundary.
+New adapters provide this loader; `FabricConfig` never crosses the supported
+southbound boundary.
 
 NeMo Fabric calls the factory once per local host to create one runtime instance and
 serializes invocations through that instance. The host keeps one event loop
@@ -94,7 +109,9 @@ alive for the complete lifecycle so SDK clients, compiled graphs,
 checkpointers, and harness databases can remain live safely. NeMo Fabric sends the
 resolved configuration and capability plan during `start`. Each subsequent
 `invoke` wire payload contains only `runtime_context` and `request`, and the
-helper passes that payload to `AdapterRuntime.invoke` unchanged. An adapter that
-needs configuration during invocation retains it as runtime-owned state during
-`start`. Adapter stdout is reserved for the protocol; diagnostics are redirected
-to stderr. A host crash or protocol timeout terminates that runtime.
+helper validates those values and calls `AdapterRuntime.invoke(request,
+context)` with typed models. It also requires a typed `AgentRunResult`. An
+adapter that needs configuration during invocation retains it as runtime-owned
+state during `start`. Adapter stdout is reserved for the protocol; diagnostics
+are redirected to stderr. A host crash or protocol timeout terminates that
+runtime.

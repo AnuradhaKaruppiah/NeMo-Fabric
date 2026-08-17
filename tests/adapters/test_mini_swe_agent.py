@@ -13,10 +13,22 @@ from unittest.mock import MagicMock
 
 import pytest
 from nemo_fabric_adapter_contract.models import AgentConfig
+from nemo_fabric_adapter_contract.models import AgentRunRequest
+from nemo_fabric_adapter_contract.models import RuntimeContext
 from nemo_fabric_adapters.mini_swe_agent import adapter
 from minisweagent.exceptions import Submitted
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def invocation(payload: dict) -> tuple[AgentRunRequest, RuntimeContext]:
+    request = {
+        key: value for key, value in payload["request"].items() if key != "request_id"
+    }
+    return (
+        AgentRunRequest.from_mapping(request),
+        RuntimeContext.from_mapping(payload["runtime_context"]),
+    )
 
 
 @pytest.fixture(name="mock_mini")
@@ -104,10 +116,9 @@ def mini_payload_fixture(tmp_path: Path) -> dict:
 
 def test_mini_swe_agent_descriptor_is_narrow_and_versioned():
     descriptor = json.loads(
-        (
-            ROOT
-            / "adapters/mini-swe-agent/mini-swe-agent.fabric-adapter.json"
-        ).read_text(encoding="utf-8")
+        (ROOT / "adapters/mini-swe-agent/mini-swe-agent.fabric-adapter.json").read_text(
+            encoding="utf-8"
+        )
     )
 
     assert descriptor["contract_version"] == "fabric.adapter/v1alpha2"
@@ -151,7 +162,7 @@ async def test_mini_swe_agent_maps_config_and_returns_normalized_output(
     )
     mock_mini["environment_factory"].assert_called_once_with(timeout=45)
 
-    result = await runtime.invoke(mini_payload)
+    result = await runtime.invoke(*invocation(mini_payload))
 
     assert runtime._agent.config.system_template == "{{system_instruction}}"
     assert runtime._agent.config.instance_template == adapter.INSTANCE_TEMPLATE
@@ -159,8 +170,7 @@ async def test_mini_swe_agent_maps_config_and_returns_normalized_output(
     assert mock_mini["queries"][0][0]["content"] == (
         "Work with the literal {{template}}."
     )
-    assert result == {
-        "failed": False,
+    assert result.output == {
         "output": "done",
         "usage": {"api_calls": 1},
     }
@@ -184,10 +194,10 @@ async def test_mini_swe_agent_reports_an_incomplete_loop_as_failed(
     start = {**mini_payload, "config": AgentConfig.from_mapping(mini_payload["config"])}
     await runtime.start(start)
 
-    result = await runtime.invoke(mini_payload)
+    result = await runtime.invoke(*invocation(mini_payload))
 
-    assert result["failed"] is True
-    assert result["error"]["code"] == "mini_swe_agent_incomplete"
+    assert result.status == "failed"
+    assert result.error.code == "mini_swe_agent_incomplete"
 
 
 async def test_mini_swe_agent_retains_history_between_invocations(
@@ -197,9 +207,9 @@ async def test_mini_swe_agent_retains_history_between_invocations(
     start = {**mini_payload, "config": AgentConfig.from_mapping(mini_payload["config"])}
     await runtime.start(start)
 
-    await runtime.invoke(mini_payload)
+    await runtime.invoke(*invocation(mini_payload))
     mini_payload["request"]["input"] = "Continue the task."
-    await runtime.invoke(mini_payload)
+    await runtime.invoke(*invocation(mini_payload))
 
     agent = runtime._agent
     assert mock_mini["model"].query.call_count == 2

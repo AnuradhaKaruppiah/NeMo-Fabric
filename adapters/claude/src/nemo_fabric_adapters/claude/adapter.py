@@ -34,6 +34,11 @@ from claude_agent_sdk._errors import MessageParseError
 from nemo_fabric_adapter_contract.codec import ContractValidationError
 from nemo_fabric_adapter_contract.models import AgentConfig
 from nemo_fabric_adapter_contract.models import AgentModelConfig
+from nemo_fabric_adapter_contract.models import AgentRunError
+from nemo_fabric_adapter_contract.models import AgentRunRequest
+from nemo_fabric_adapter_contract.models import AgentRunResult
+from nemo_fabric_adapter_contract.models import AgentRunStatus
+from nemo_fabric_adapter_contract.models import AgentUsage
 from nemo_fabric_adapter_contract.models import RuntimeContext
 from nemo_fabric_adapters.common import lifecycle
 from nemo_fabric_adapters.common import relay_artifacts
@@ -98,6 +103,7 @@ MCP_HEADER_ENVIRONMENT_VARIABLE = re.compile(
     r"|%([A-Za-z_][A-Za-z0-9_]*)%"
 )
 
+
 @dataclass(frozen=True)
 class ClaudeRelaySettings:
     """Relay gateway and Claude plugin settings owned by one adapter run."""
@@ -147,6 +153,7 @@ def _preserve_tmp() -> bool:
     """Return True if the adapter should preserve temporary files for debugging."""
     return os.environ.get("NEMO_FABRIC_PRESERVE_TMP", "").strip() == "1"
 
+
 def _string_list(value: Any, *, name: str) -> list[str]:
     if value is None:
         return []
@@ -183,9 +190,8 @@ def _runtime_context(payload: dict[str, Any]) -> RuntimeContext:
         ) from error
 
 
-def request_prompt(payload: dict[str, Any]) -> str:
-    request = payload.get("request") or {}
-    value = request.get("input")
+def request_prompt(request: AgentRunRequest) -> str:
+    value = request.input
     if not isinstance(value, str):
         raise AdapterInputError("claude_invalid_request", "Claude input must be text")
     return value
@@ -800,6 +806,43 @@ def sdk_failure(error: BaseException) -> dict[str, Any]:
     return _failure("claude_failed", "Claude invocation failed")
 
 
+def _agent_run_result(output: dict[str, Any]) -> AgentRunResult:
+    normalized = dict(output)
+    failed = bool(normalized.pop("failed", False))
+    reported_error = normalized.pop("error", None)
+    error = None
+    if failed:
+        reported = reported_error if isinstance(reported_error, dict) else {}
+        metadata = reported.get("metadata")
+        error = AgentRunError(
+            code=str(reported.get("code") or "claude_failed"),
+            message=str(reported.get("message") or "Claude invocation failed"),
+            retryable=bool(reported.get("retryable", False)),
+            extensions=metadata if isinstance(metadata, dict) else {},
+        )
+    raw_usage = normalized.get("usage")
+    usage = raw_usage if isinstance(raw_usage, dict) else {}
+    tokens = {
+        name: value
+        for name in ("input_tokens", "output_tokens", "total_tokens")
+        if isinstance((value := usage.get(name)), int)
+        and not isinstance(value, bool)
+        and value >= 0
+    }
+    cost = normalized.get("cost_usd")
+    if not isinstance(cost, (int, float)) or isinstance(cost, bool) or cost < 0:
+        cost = None
+    agent_usage = (
+        AgentUsage(**tokens, cost_usd=cost) if tokens or cost is not None else None
+    )
+    return AgentRunResult(
+        status=AgentRunStatus.FAILED if failed else AgentRunStatus.SUCCEEDED,
+        output=normalized,
+        error=error,
+        usage=agent_usage,
+    )
+
+
 def child_environment(
     model: AgentModelConfig,
     runtime_context: RuntimeContext,
@@ -992,7 +1035,11 @@ class ClaudeRuntime:
         self._fabric_runtime_id = fabric_runtime_id
         self._client = client
 
-    async def invoke(self, invocation: dict[str, Any]) -> dict[str, Any]:
+    async def invoke(
+        self,
+        request: AgentRunRequest,
+        runtime_context: RuntimeContext,
+    ) -> AgentRunResult:
         client = self._client
         agent_config = self._agent_config
         fabric_runtime_id = self._fabric_runtime_id
@@ -1001,21 +1048,22 @@ class ClaudeRuntime:
                 "claude_runtime_not_started",
                 "Claude runtime is not started",
             )
-        runtime_context = _runtime_context(invocation)
         if runtime_context.runtime_id != fabric_runtime_id:
             raise lifecycle.LifecycleError(
                 "claude_runtime_mismatch",
                 "Claude invocation does not match the connected runtime",
             )
         if self._unusable:
-            return _failure(
-                "claude_runtime_unavailable",
-                "Claude runtime cannot accept another invocation after a runtime failure",
+            return _agent_run_result(
+                _failure(
+                    "claude_runtime_unavailable",
+                    "Claude runtime cannot accept another invocation after a runtime failure",
+                )
             )
 
         invocation_deadline = asyncio.get_running_loop().time() + timeout_seconds()
         try:
-            prompt = request_prompt(invocation)
+            prompt = request_prompt(request)
         except ClaudeAdapterError as error:
             output = adapter_failure(error)
         except ClaudeSDKError as error:
@@ -1043,23 +1091,25 @@ class ClaudeRuntime:
                 )
                 if finalized is None:
                     self._unusable = True
-                    return _relay_output(
-                        adapter_failure(
-                            AdapterRelayError(
-                                "claude_relay_atif_timeout",
-                                "NeMo Relay did not finalize an ATIF artifact before the deadline",
-                                metadata={
-                                    "timeout_seconds": relay_artifacts.ATIF_FINALIZATION_TIMEOUT_SECONDS,
-                                },
-                            )
-                        ),
-                        relay,
-                        artifacts=[],
+                    return _agent_run_result(
+                        _relay_output(
+                            adapter_failure(
+                                AdapterRelayError(
+                                    "claude_relay_atif_timeout",
+                                    "NeMo Relay did not finalize an ATIF artifact before the deadline",
+                                    metadata={
+                                        "timeout_seconds": relay_artifacts.ATIF_FINALIZATION_TIMEOUT_SECONDS,
+                                    },
+                                )
+                            ),
+                            relay,
+                            artifacts=[],
+                        )
                     )
 
         if self._relay is not None:
             output = _relay_output(output, self._relay)
-        return output
+        return _agent_run_result(output)
 
     async def _run_query(
         self,

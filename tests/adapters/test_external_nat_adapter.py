@@ -19,8 +19,12 @@ from unittest.mock import call
 
 import pytest
 from nemo_fabric import Fabric
+from nemo_fabric_adapter_contract.codec import ContractValidationError
 from nemo_fabric_adapter_contract.models import AgentConfig
 from nemo_fabric_adapter_contract.models import AgentMcpServerConfig
+from nemo_fabric_adapter_contract.models import AgentRunRequest
+from nemo_fabric_adapter_contract.models import AgentRunStatus
+from nemo_fabric_adapter_contract.models import RuntimeContext
 
 ROOT = Path(__file__).parents[2]
 NAT_ADAPTER_SOURCE = ROOT / "external" / "nat" / "src"
@@ -231,7 +235,7 @@ def mock_nat_fixture(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 @pytest.fixture(name="make_invocation_payload")
 def make_invocation_payload_fixture():
-    """Return a factory for canonical Fabric invocation payloads."""
+    """Return a factory for typed adapter invocation arguments."""
 
     def make(
         *,
@@ -240,16 +244,29 @@ def make_invocation_payload_fixture():
         context: Any = None,
         raw_request: Any = None,
         runtime_id: str = "runtime-1",
-    ) -> dict[str, Any]:
+    ) -> tuple[AgentRunRequest, RuntimeContext]:
         request = raw_request
         if request is None:
-            request = {"input": input_value, "request_id": request_id}
+            request = {"input": input_value}
             if context is not None:
                 request["context"] = context
-        return {
-            "runtime_context": {"runtime_id": runtime_id},
-            "request": request,
-        }
+        return (
+            AgentRunRequest.from_mapping(request),
+            RuntimeContext.from_mapping(
+                {
+                    "runtime_id": runtime_id,
+                    "invocation_id": f"invocation-{request_id}",
+                    "request_id": request_id,
+                    "environment": {
+                        "environment_id": "environment-1",
+                        "provider": "test",
+                        "control_location": "in_env_control",
+                        "ownership": "caller_owned",
+                    },
+                    "artifacts": {},
+                }
+            ),
+        )
 
     return make
 
@@ -283,9 +300,13 @@ def test_descriptor_declares_exact_source_reference_contract():
     assert "required" not in settings_schema
     assert settings_schema["additionalProperties"] is False
     target = json.loads(
-        (ROOT / "external" / "nat" / "targets" / "email-phishing-analyzer.fabric-target.json").read_text(
-            encoding="utf-8"
-        )
+        (
+            ROOT
+            / "external"
+            / "nat"
+            / "targets"
+            / "email-phishing-analyzer.fabric-target.json"
+        ).read_text(encoding="utf-8")
     )
     assert target["adapter_id"] == descriptor["adapter_id"]
     assert target["spec"]["entrypoint"] == {
@@ -841,13 +862,13 @@ async def test_runtime_reuses_one_builder_across_invocations_and_cleans_up(
     await runtime.start(make_payload())
 
     first = await runtime.invoke(
-        make_invocation_payload(
+        *make_invocation_payload(
             request_id="message-1",
             context={"user_id": "user-1", "conversation_id": "conversation-1"},
         )
     )
     second = await runtime.invoke(
-        make_invocation_payload(
+        *make_invocation_payload(
             input_value="again",
             request_id="message-2",
             context={"user_id": "user-1", "conversation_id": "conversation-1"},
@@ -856,16 +877,15 @@ async def test_runtime_reuses_one_builder_across_invocations_and_cleans_up(
     await runtime.stop()
     await runtime.stop()
 
-    assert first == {
+    assert first.status is AgentRunStatus.SUCCEEDED
+    assert first.output == {
         "harness": "nat",
         "adapter": "python",
         "mode": "agent_config",
         "response": {"answer": 42},
         "completed": True,
-        "failed": False,
-        "error": None,
     }
-    assert second["response"] == {"answer": 84}
+    assert second.output["response"] == {"answer": 84}
     mock_nat["workflow_builder"].from_config.assert_called_once_with(
         config=mock_nat["typed_config"]
     )
@@ -944,7 +964,7 @@ async def test_openai_stream_forwards_ordered_chunks_and_returns_content(
     await runtime.start(make_payload())
     try:
         result = await runtime.invoke_openai_stream(
-            make_invocation_payload(
+            *make_invocation_payload(
                 input_value=input_value,
                 context={"conversation_id": "conversation-1"},
             ),
@@ -954,14 +974,13 @@ async def test_openai_stream_forwards_ordered_chunks_and_returns_content(
         await runtime.stop()
 
     assert emitted == chunks
-    assert result == {
+    assert result.status is AgentRunStatus.SUCCEEDED
+    assert result.output == {
         "harness": "nat",
         "adapter": "python",
         "mode": "agent_config",
         "response": "hello",
         "completed": True,
-        "failed": False,
-        "error": None,
     }
     mock_nat["sessions"].session.assert_called_once_with(
         conversation_id="conversation-1",
@@ -990,14 +1009,14 @@ async def test_openai_stream_reuses_invocation_state_validation(
     emit = AsyncMock()
 
     with pytest.raises(adapter.lifecycle.LifecycleError) as not_started:
-        await runtime.invoke_openai_stream(make_invocation_payload(), emit)
+        await runtime.invoke_openai_stream(*make_invocation_payload(), emit)
     assert not_started.value.code == "nat_runtime_not_started"
 
     await runtime.start(make_payload())
     try:
         with pytest.raises(adapter.lifecycle.LifecycleError) as mismatch:
             await runtime.invoke_openai_stream(
-                make_invocation_payload(runtime_id="runtime-2"), emit
+                *make_invocation_payload(runtime_id="runtime-2"), emit
             )
     finally:
         await runtime.stop()
@@ -1031,16 +1050,16 @@ async def test_openai_stream_accepts_empty_and_usage_only_streams(
     await runtime.start(make_payload())
     try:
         empty_result = await runtime.invoke_openai_stream(
-            make_invocation_payload(request_id="empty"), emit
+            *make_invocation_payload(request_id="empty"), emit
         )
         usage_result = await runtime.invoke_openai_stream(
-            make_invocation_payload(request_id="usage"), emit
+            *make_invocation_payload(request_id="usage"), emit
         )
     finally:
         await runtime.stop()
 
-    assert empty_result["response"] == ""
-    assert usage_result["response"] == ""
+    assert empty_result.output["response"] == ""
+    assert usage_result.output["response"] == ""
     assert emitted == [usage_chunk]
     assert mock_nat["runner"].result_stream.call_count == 2
     mock_nat["runner"].result.assert_not_awaited()
@@ -1057,19 +1076,16 @@ async def test_openai_stream_rejects_non_openai_schema_before_session(
     await runtime.start(make_payload())
     try:
         result = await runtime.invoke_openai_stream(
-            make_invocation_payload(),
+            *make_invocation_payload(),
             AsyncMock(),
         )
     finally:
         await runtime.stop()
 
-    assert result["error"] == {
-        "code": "nat_openai_stream_unsupported_schema",
-        "message": (
-            "Native NeMo Agent Toolkit OpenAI streaming requires a ChatResponseChunk output schema"
-        ),
-        "retryable": False,
-    }
+    assert result.error.code == "nat_openai_stream_unsupported_schema"
+    assert result.error.message == (
+        "Native NeMo Agent Toolkit OpenAI streaming requires a ChatResponseChunk output schema"
+    )
     mock_nat["sessions"].get_workflow_streaming_output_schema.assert_called_once_with()
     mock_nat["sessions"].session.assert_not_called()
     mock_nat["runner"].result_stream.assert_not_called()
@@ -1095,19 +1111,18 @@ async def test_openai_stream_normalizes_partial_nat_failure_without_leaking_caus
     runtime = adapter.NatRuntime()
     await runtime.start(make_payload())
     try:
-        result = await runtime.invoke_openai_stream(make_invocation_payload(), emit)
+        result = await runtime.invoke_openai_stream(*make_invocation_payload(), emit)
     finally:
         await runtime.stop()
 
-    assert result["error"] == {
-        "code": "nat_workflow_stream_failed",
-        "message": "NeMo Agent Toolkit workflow streaming failed; inspect adapter stderr for details",
-        "retryable": False,
-    }
+    assert result.error.code == "nat_workflow_stream_failed"
+    assert result.error.message == (
+        "NeMo Agent Toolkit workflow streaming failed; inspect adapter stderr for details"
+    )
     emit.assert_awaited_once_with(chunk)
     assert stream.close_count == 1
     mock_nat["runner"].result.assert_not_awaited()
-    assert "super-secret" not in json.dumps(result)
+    assert "super-secret" not in json.dumps(result.to_mapping())
     assert "super-secret" not in caplog.text
 
 
@@ -1140,24 +1155,21 @@ async def test_openai_stream_normalizes_chunk_serialization_failure(
     runtime = adapter.NatRuntime()
     await runtime.start(make_payload())
     try:
-        result = await runtime.invoke_openai_stream(make_invocation_payload(), emit)
+        result = await runtime.invoke_openai_stream(*make_invocation_payload(), emit)
     finally:
         await runtime.stop()
 
-    assert result["error"] == {
-        "code": "nat_stream_chunk_not_json_serializable",
-        "message": (
-            "NeMo Agent Toolkit workflow returned a stream chunk that cannot be represented as JSON"
-        ),
-        "retryable": False,
-    }
+    assert result.error.code == "nat_stream_chunk_not_json_serializable"
+    assert result.error.message == (
+        "NeMo Agent Toolkit workflow returned a stream chunk that cannot be represented as JSON"
+    )
     mock_nat["to_jsonable"].assert_called_once_with(
         chunk,
         serialize_unknown=False,
     )
     emit.assert_not_awaited()
     assert stream.close_count == 1
-    assert "secret-object-repr" not in json.dumps(result)
+    assert "secret-object-repr" not in json.dumps(result.to_mapping())
     assert "secret-object-repr" not in caplog.text
 
 
@@ -1195,7 +1207,7 @@ async def test_openai_stream_propagates_emitter_lifecycle_and_cancellation(
     await runtime.start(make_payload())
     try:
         with pytest.raises(type(emitter_error)) as raised:
-            await runtime.invoke_openai_stream(make_invocation_payload(), emit)
+            await runtime.invoke_openai_stream(*make_invocation_payload(), emit)
         assert raised.value is emitter_error
     finally:
         await runtime.stop()
@@ -1243,7 +1255,7 @@ async def test_invoke_rejects_a_runtime_that_has_not_started(
     runtime = adapter.NatRuntime()
 
     with pytest.raises(adapter.lifecycle.LifecycleError) as error:
-        await runtime.invoke(make_invocation_payload())
+        await runtime.invoke(*make_invocation_payload())
 
     assert error.value.code == "nat_runtime_not_started"
     assert error.value.message == "NeMo Agent Toolkit runtime is not started"
@@ -1258,7 +1270,7 @@ async def test_invoke_rejects_a_different_runtime_id(
     await runtime.start(make_payload())
     try:
         with pytest.raises(adapter.lifecycle.LifecycleError) as error:
-            await runtime.invoke(make_invocation_payload(runtime_id="runtime-2"))
+            await runtime.invoke(*make_invocation_payload(runtime_id="runtime-2"))
     finally:
         await runtime.stop()
 
@@ -1270,48 +1282,16 @@ async def test_invoke_rejects_a_different_runtime_id(
     mock_nat["sessions"].session.assert_not_called()
 
 
-async def test_invoke_normalizes_a_non_mapping_request(
-    make_payload,
+def test_typed_invocation_rejects_a_non_mapping_request(make_invocation_payload):
+    with pytest.raises(ContractValidationError):
+        make_invocation_payload(raw_request=["not", "a", "mapping"])
+
+
+def test_typed_invocation_rejects_a_non_mapping_request_context(
     make_invocation_payload,
-    mock_nat,
 ):
-    runtime = adapter.NatRuntime()
-    await runtime.start(make_payload())
-    try:
-        result = await runtime.invoke(
-            make_invocation_payload(raw_request=["not", "a", "mapping"])
-        )
-    finally:
-        await runtime.stop()
-
-    assert result["error"] == {
-        "code": "nat_invalid_request",
-        "message": "NeMo Agent Toolkit invocation request must be a mapping",
-        "retryable": False,
-    }
-    mock_nat["sessions"].session.assert_not_called()
-
-
-async def test_invoke_normalizes_a_non_mapping_request_context(
-    make_payload,
-    make_invocation_payload,
-    mock_nat,
-):
-    runtime = adapter.NatRuntime()
-    await runtime.start(make_payload())
-    try:
-        result = await runtime.invoke(
-            make_invocation_payload(context=["not", "a", "mapping"])
-        )
-    finally:
-        await runtime.stop()
-
-    assert result["error"] == {
-        "code": "nat_invalid_request",
-        "message": "NeMo Agent Toolkit invocation request.context must be a mapping",
-        "retryable": False,
-    }
-    mock_nat["sessions"].session.assert_not_called()
+    with pytest.raises(ContractValidationError):
+        make_invocation_payload(context=["not", "a", "mapping"])
 
 
 async def test_start_failure_cleans_builder_and_redacts_cause(
@@ -1386,19 +1366,18 @@ async def test_invoke_failure_is_normalized_and_redacts_cause(
     runtime = adapter.NatRuntime()
     await runtime.start(make_payload())
     try:
-        result = await runtime.invoke(make_invocation_payload())
+        result = await runtime.invoke(*make_invocation_payload())
     finally:
         await runtime.stop()
 
-    assert result["failed"] is True
-    assert result["completed"] is False
-    assert result["response"] is None
-    assert result["error"] == {
-        "code": "nat_workflow_invoke_failed",
-        "message": "NeMo Agent Toolkit workflow invocation failed; inspect adapter stderr for details",
-        "retryable": False,
-    }
-    assert "super-secret" not in json.dumps(result)
+    assert result.status is AgentRunStatus.FAILED
+    assert result.output["completed"] is False
+    assert result.output["response"] is None
+    assert result.error.code == "nat_workflow_invoke_failed"
+    assert result.error.message == (
+        "NeMo Agent Toolkit workflow invocation failed; inspect adapter stderr for details"
+    )
+    assert "super-secret" not in json.dumps(result.to_mapping())
     assert "super-secret" not in caplog.text
 
 
@@ -1413,16 +1392,15 @@ async def test_non_json_result_is_normalized_without_value_leak(
     runtime = adapter.NatRuntime()
     await runtime.start(make_payload())
     try:
-        result = await runtime.invoke(make_invocation_payload())
+        result = await runtime.invoke(*make_invocation_payload())
     finally:
         await runtime.stop()
 
-    assert result["error"] == {
-        "code": "nat_result_not_json_serializable",
-        "message": "NeMo Agent Toolkit workflow returned a result that cannot be represented as JSON",
-        "retryable": False,
-    }
-    assert "secret-object-repr" not in json.dumps(result)
+    assert result.error.code == "nat_result_not_json_serializable"
+    assert result.error.message == (
+        "NeMo Agent Toolkit workflow returned a result that cannot be represented as JSON"
+    )
+    assert "secret-object-repr" not in json.dumps(result.to_mapping())
     assert "secret-object-repr" not in caplog.text
 
 

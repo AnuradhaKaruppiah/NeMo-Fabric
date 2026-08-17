@@ -27,6 +27,9 @@ import pytest
 from nemo_fabric_adapter_contract.codec import ContractValidationError
 from nemo_fabric_adapter_contract.models import AgentConfig
 from nemo_fabric_adapter_contract.models import AgentMcpServerConfig
+from nemo_fabric_adapter_contract.models import AgentRunRequest
+from nemo_fabric_adapter_contract.models import AgentRunResult
+from nemo_fabric_adapter_contract.models import AgentRunStatus
 from nemo_fabric_adapter_contract.models import McpOAuth2Config
 from nemo_fabric_adapter_contract.models import McpServiceAccountConfig
 from nemo_fabric_adapter_contract.models import RuntimeContext
@@ -39,18 +42,35 @@ def lifecycle_start_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return start
 
 
-def lifecycle_invocation(payload: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "runtime_context": payload["runtime_context"],
-        "request": payload["request"],
+def lifecycle_invocation(
+    payload: dict[str, Any],
+) -> tuple[AgentRunRequest, RuntimeContext]:
+    request = {
+        key: value for key, value in payload["request"].items() if key != "request_id"
     }
+    context = {
+        **payload["runtime_context"],
+        "request_id": payload["request"].get("request_id", "request-1"),
+    }
+    return AgentRunRequest.from_mapping(request), RuntimeContext.from_mapping(context)
+
+
+def result_view(result: AgentRunResult) -> dict[str, Any]:
+    assert isinstance(result, AgentRunResult)
+    output = dict(result.output)
+    raw_usage = output.get("usage")
+    if isinstance(raw_usage, dict) and raw_usage:
+        assert result.usage is not None
+    output["failed"] = result.status is AgentRunStatus.FAILED
+    output["error"] = None if result.error is None else result.error.to_mapping()
+    return output
 
 
 async def invoke_once(payload: dict[str, Any]) -> dict[str, Any]:
     runtime = adapter.DeepAgentsRuntime()
     await runtime.start(lifecycle_start_payload(payload))
     try:
-        return await runtime.invoke(lifecycle_invocation(payload))
+        return result_view(await runtime.invoke(*lifecycle_invocation(payload)))
     finally:
         await runtime.stop()
 
@@ -63,8 +83,8 @@ async def invoke_twice(
     runtime = adapter.DeepAgentsRuntime()
     await runtime.start(lifecycle_start_payload(payload))
     try:
-        first = await runtime.invoke(lifecycle_invocation(payload))
-        second = await runtime.invoke(lifecycle_invocation(payload))
+        first = result_view(await runtime.invoke(*lifecycle_invocation(payload)))
+        second = result_view(await runtime.invoke(*lifecycle_invocation(payload)))
         return first, second
     finally:
         await runtime.stop()
@@ -564,7 +584,7 @@ async def test_inherited_relay_config_report_fails_before_agent_invocation(
 
     assert output["completed"] is False
     assert output["failed"] is True
-    assert "refuses Relay plugin configuration inherited" in output["error"]
+    assert "refuses Relay plugin configuration inherited" in output["error"]["message"]
     assert fake_relay.get("scopes", []) == []
 
 
@@ -736,19 +756,19 @@ async def test_an_agent_failure_on_a_quarantined_turn_keeps_both_domains(
     runtime = adapter.DeepAgentsRuntime()
     await runtime.start(lifecycle_start_payload(payload))
     try:
-        await runtime.invoke(lifecycle_invocation(payload))
+        await runtime.invoke(*lifecycle_invocation(payload))
 
         async def boom(*_args: object, **_kwargs: object):
             raise RuntimeError("model call failed")
 
         monkeypatch.setattr(adapter, "invoke_compiled_agent", boom)
-        quarantined = await runtime.invoke(lifecycle_invocation(payload))
+        quarantined = result_view(await runtime.invoke(*lifecycle_invocation(payload)))
     finally:
         await runtime.stop()
 
     assert quarantined["completed"] is False
     assert quarantined["failed"] is True
-    assert quarantined["error"] == "RuntimeError: model call failed"
+    assert quarantined["error"]["message"] == "RuntimeError: model call failed"
     assert quarantined["telemetry"]["degraded"] is True
     assert "unreliable" in quarantined["telemetry"]["error"]
 
@@ -789,12 +809,14 @@ async def test_quarantine_survives_a_stop_and_restart(
 
     runtime = adapter.DeepAgentsRuntime()
     await runtime.start(lifecycle_start_payload(payload))
-    first = await runtime.invoke(lifecycle_invocation(payload))
+    first = result_view(await runtime.invoke(*lifecycle_invocation(payload)))
     await runtime.stop()
 
     await runtime.start(lifecycle_start_payload(payload))
     try:
-        after_restart = await runtime.invoke(lifecycle_invocation(payload))
+        after_restart = result_view(
+            await runtime.invoke(*lifecycle_invocation(payload))
+        )
     finally:
         await runtime.stop()
 
@@ -907,7 +929,9 @@ async def test_callback_handler_construction_failure_is_a_normalized_failure(
     invoke_agent.assert_not_awaited()
     assert output["completed"] is False
     assert output["failed"] is True
-    assert output["error"] == "RuntimeError: callback handler construction failed"
+    assert output["error"]["message"] == (
+        "RuntimeError: callback handler construction failed"
+    )
     # The same fault is reported in both domains, as it is for any other setup failure.
     assert output["telemetry"]["degraded"] is True
     assert (
@@ -987,7 +1011,7 @@ async def test_relay_setup_failure_before_the_agent_runs_stays_an_invocation_fai
     invoke_agent.assert_not_awaited()
     assert output["completed"] is False
     assert output["failed"] is True
-    assert output["error"] == "RuntimeError: relay scope push failed"
+    assert output["error"]["message"] == "RuntimeError: relay scope push failed"
     # The same fault is also a telemetry fault, so it is reported in both domains.
     assert output["telemetry"]["degraded"] is True
     assert output["telemetry"]["error"] == "RuntimeError: relay scope push failed"
@@ -1007,7 +1031,7 @@ async def test_agent_failure_under_relay_is_still_an_invocation_failure(
 
     assert output["completed"] is False
     assert output["failed"] is True
-    assert output["error"] == "RuntimeError: model call failed"
+    assert output["error"]["message"] == "RuntimeError: model call failed"
     # A clean telemetry lifecycle leaves the telemetry block untouched.
     assert "error" not in output["telemetry"]
     assert "degraded" not in output["telemetry"]
@@ -1035,7 +1059,7 @@ async def test_agent_failure_and_teardown_failure_keep_their_own_domains(
 
     assert output["completed"] is False
     assert output["failed"] is True
-    assert output["error"] == "RuntimeError: model call failed"
+    assert output["error"]["message"] == "RuntimeError: model call failed"
     assert output["telemetry"]["degraded"] is True
     assert "scope handle is not at the top of the stack" in output["telemetry"]["error"]
 
@@ -1526,10 +1550,10 @@ async def test_persistent_runtime_reuses_compiled_agent_and_checkpointer(
     runtime = adapter.DeepAgentsRuntime()
 
     await runtime.start(lifecycle_start_payload(payload))
-    first = await runtime.invoke(lifecycle_invocation(payload))
+    first = result_view(await runtime.invoke(*lifecycle_invocation(payload)))
     payload["runtime_context"]["invocation_id"] = "inv-2"
     payload["request"]["input"] = "continue"
-    second = await runtime.invoke(lifecycle_invocation(payload))
+    second = result_view(await runtime.invoke(*lifecycle_invocation(payload)))
 
     assert first["resumed"] is False
     assert second["resumed"] is True
@@ -1567,10 +1591,10 @@ async def test_persistent_runtime_scopes_relay_per_invocation(
     runtime = adapter.DeepAgentsRuntime()
 
     await runtime.start(lifecycle_start_payload(payload))
-    first = await runtime.invoke(lifecycle_invocation(payload))
+    first = result_view(await runtime.invoke(*lifecycle_invocation(payload)))
     payload["runtime_context"]["invocation_id"] = "inv-2"
     payload["request"]["input"] = "continue"
-    second = await runtime.invoke(lifecycle_invocation(payload))
+    second = result_view(await runtime.invoke(*lifecycle_invocation(payload)))
     await runtime.stop()
 
     assert fake_relay["integration_adds"] == 1

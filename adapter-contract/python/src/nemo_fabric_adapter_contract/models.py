@@ -423,7 +423,7 @@ class AgentConfig(AgentContractBlock):
 
 @dataclass(slots=True, kw_only=True)
 class AgentRunRequest(AgentContractBlock):
-    """Preview southbound request for the future typed invoke transport."""
+    """Southbound invocation request passed to an adapter target."""
 
     input: JsonValue = _json_value_field()
     context: dict[str, JsonValue] = _json_dict()
@@ -506,7 +506,7 @@ class AgentUsage(AgentContractBlock):
 
 @dataclass(slots=True, kw_only=True)
 class AgentRunResult(AgentContractBlock):
-    """Preview southbound result for the future typed invoke transport."""
+    """Southbound terminal result returned by an adapter target."""
 
     status: AgentRunStatus
     output: JsonValue = _json_value_field()
