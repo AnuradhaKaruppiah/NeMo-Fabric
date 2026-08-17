@@ -26,8 +26,8 @@ Run these checks against an installed adapter package:
    data for every published settings, model, tool-definition, target, and
    extension schema.
 4. Run `doctor(...)` with both satisfied and missing runtime requirements.
-5. Exercise typed request projection, successful invoke, target failure,
-   repeated invoke when supported, and stop.
+5. Exercise typed request projection, at least two ordered successful
+   invocations, target failure, and stop.
 6. Exercise partial-start failure, invocation transport failure, malformed or
    untyped `AgentRunResult`, and end-of-file cleanup without exposing secrets.
 7. Run two independent Fabric runtimes and confirm that they do not share
