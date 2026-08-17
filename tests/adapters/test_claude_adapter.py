@@ -869,6 +869,14 @@ def test_normalize_result_exposes_session_usage_cost_and_buffered_events(
     ]
 
 
+@pytest.mark.parametrize("cost", [float("nan"), float("inf"), float("-inf")])
+def test_agent_run_result_discards_nonfinite_cost(cost):
+    result = adapter._agent_run_result({"response": "done", "cost_usd": cost})
+
+    assert result.output["cost_usd"] is None
+    assert result.usage is None
+
+
 async def test_claude_runtime_reuses_one_connected_sdk_client(
     claude_payload, monkeypatch
 ):

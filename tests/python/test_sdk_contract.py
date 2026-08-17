@@ -1869,6 +1869,8 @@ def test_run_result_wraps_normalized_usage():
 
     assert isinstance(result.usage, RunUsage)
     assert result.usage.total_tokens == 8
+    assert result.usage.cost_usd == 0.25
+    assert isinstance(result.usage.cost_usd, float)
     assert result.usage.metadata == {"provider": "test"}
 
 
@@ -1876,6 +1878,14 @@ def test_run_result_wraps_normalized_usage():
 def test_run_usage_rejects_invalid_token_counts(value):
     with pytest.raises(FabricConfigError, match="nonnegative integer"):
         RunUsage.from_mapping({"input_tokens": value})
+
+
+@pytest.mark.parametrize(
+    "value", [-1, True, float("nan"), float("inf"), float("-inf")]
+)
+def test_run_usage_rejects_invalid_costs(value):
+    with pytest.raises(FabricConfigError, match="finite"):
+        RunUsage.from_mapping({"cost_usd": value})
 
 
 def test_run_result_exposes_detached_json_values():

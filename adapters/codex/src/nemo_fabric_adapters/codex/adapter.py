@@ -1042,7 +1042,7 @@ def _agent_run_result(output: dict[str, Any]) -> AgentRunResult:
         for name in ("input_tokens", "output_tokens", "total_tokens")
         if isinstance((value := usage.get(name)), int)
         and not isinstance(value, bool)
-        and value >= 0
+        and 0 <= value <= (1 << 64) - 1
     }
     agent_usage = AgentUsage(**tokens) if tokens else None
     return AgentRunResult(

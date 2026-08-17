@@ -371,6 +371,21 @@ async def test_single_invocation_normalizes_response_usage_and_thread(
     assert "instructions" not in fake_sdks["create_kwargs"]
 
 
+@pytest.mark.parametrize(
+    ("request_input", "encoded"),
+    [(0, "0"), (False, "false"), ({}, "{}"), ([], "[]")],
+)
+async def test_invocation_preserves_falsy_json_input(
+    tmp_path, make_payload, request_input, encoded
+):
+    payload = make_payload(tmp_path)
+    payload["request"]["input"] = request_input
+
+    output = await invoke_once(payload)
+
+    assert output["response"] == f"reply to {encoded}"
+
+
 @pytest.mark.parametrize("api_key", [None, ""])
 async def test_missing_api_key_fails_runtime_start(tmp_path, make_payload, api_key):
     if api_key is None:

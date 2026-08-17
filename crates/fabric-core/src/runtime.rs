@@ -185,6 +185,7 @@ pub struct RunUsage {
     pub total_tokens: Option<u64>,
     /// Invocation cost in US dollars when reported by the provider.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 0.0))]
     pub cost_usd: Option<f64>,
     /// Adapter-owned usage metadata.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

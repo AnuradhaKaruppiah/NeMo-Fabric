@@ -1717,6 +1717,8 @@ class RunUsage(FabricMapping):
             or cost < 0
         ):
             raise FabricConfigError("cost usd must be a finite nonnegative number")
+        if cost is not None:
+            data["cost_usd"] = float(cost)
         data["metadata"] = _mapping(data.get("metadata", {}), "usage metadata")
         return data
 

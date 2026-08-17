@@ -222,6 +222,7 @@
         "cost_usd": {
           "description": "Invocation cost in US dollars when reported by the provider.",
           "format": "double",
+          "minimum": 0.0,
           "type": [
             "number",
             "null"

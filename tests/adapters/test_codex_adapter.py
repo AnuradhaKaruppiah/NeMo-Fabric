@@ -156,6 +156,14 @@ def successful_result(response="done"):
     )
 
 
+def test_agent_run_result_discards_oversized_token_count():
+    result = adapter._agent_run_result(
+        {"response": "done", "usage": {"input_tokens": 1 << 64}}
+    )
+
+    assert result.usage is None
+
+
 def mock_turn_handle(result=None):
     mock_handle = MagicMock(spec=AsyncTurnHandle)
     outcome = successful_result() if result is None else result

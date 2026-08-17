@@ -830,8 +830,15 @@ def _agent_run_result(output: dict[str, Any]) -> AgentRunResult:
         and value >= 0
     }
     cost = normalized.get("cost_usd")
-    if not isinstance(cost, (int, float)) or isinstance(cost, bool) or cost < 0:
+    if (
+        not isinstance(cost, (int, float))
+        or isinstance(cost, bool)
+        or not math.isfinite(cost)
+        or cost < 0
+    ):
         cost = None
+        if "cost_usd" in normalized:
+            normalized["cost_usd"] = None
     agent_usage = (
         AgentUsage(**tokens, cost_usd=cost) if tokens or cost is not None else None
     )
