@@ -131,18 +131,24 @@ Before you create a release tag, confirm the following:
 
 1. The intended release commit is already on the release branch you intend to
    tag. For frozen release lines, tag the matching `release/*` branch.
-2. The release commit contains the final version bump, docs updates, and any
-   public API changes that belong in the release.
+2. The release commit contains the final stable base version, docs updates, and
+   any public API changes that belong in the release. Prerelease versions are
+   derived from beta or RC tags in disposable workflow checkouts.
 3. The working tree you use for local validation is clean or disposable.
 
 ## Prepare The Release Commit
 
-Update the versioned source files in the release PR or release-prep commit.
-Prefer the repository helper:
+Update the versioned source files in the release PR or release-prep commit to
+the stable base version for the release line. Prefer the repository helper:
 
 ```bash
 just set-version <release-version>
 ```
+
+For beta and RC tags, keep the committed source metadata at the corresponding
+stable base version. The tag workflows normalize the prerelease tag and stamp
+ecosystem-specific package metadata in their disposable checkouts. Do not
+commit RC-specific versions or internal dependency pins to the release branch.
 
 The helper updates:
 
@@ -258,7 +264,8 @@ older release line.
 ## Cut An RC Tag
 
 After the release commit is merged and validated, create and push a signed,
-annotated tag. Set the complete release-candidate version:
+annotated tag. Set the complete release-candidate version; the release branch
+continues to carry its matching stable base version:
 
 ```bash
 export RELEASE_VERSION=0.1.0-rc.1
@@ -275,6 +282,9 @@ RELEASE_SHA="$(git rev-parse HEAD)"
 REMOTE_RELEASE_SHA="$(git rev-parse "upstream/${RELEASE_BRANCH}^{commit}")"
 test "${RELEASE_SHA}" = "${REMOTE_RELEASE_SHA}"
 test "$(just normalize-release-tag "${RELEASE_TAG}")" = "${RELEASE_VERSION}"
+BASE_RELEASE_VERSION="${RELEASE_VERSION%%-*}"
+CURRENT_VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+test "${CURRENT_VERSION}" = "${BASE_RELEASE_VERSION}"
 
 if git ls-remote --exit-code --tags upstream "refs/tags/${RELEASE_TAG}" >/dev/null; then
   echo "Error: remote tag ${RELEASE_TAG} already exists" >&2
@@ -393,8 +403,8 @@ Pushing a valid tag triggers :
 
 The release pipeline then:
 
-1. Validates the tag format with `just set-version` or
-   `normalize_release_tag.py`.
+1. Normalizes and validates the tag format, then stamps ecosystem-specific
+   package metadata in each disposable workflow checkout.
 2. Builds platform `nemo-fabric-runtime` wheels and pure-Python
    `nemo-fabric` and adapter wheels with the exact tag version, then uploads
    them as GitHub Actions artifacts.

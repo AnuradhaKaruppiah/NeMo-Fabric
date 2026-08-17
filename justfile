@@ -386,6 +386,23 @@ lock-python:
 normalize-release-tag tag:
     @uv run --no-project --no-cache python scripts/ci/normalize_release_tag.py "{{ tag }}"
 
+# Apply a release version only to Cargo workspace metadata and Cargo.lock.
+# Tag publication uses this narrow recipe in a disposable checkout.
+set-cargo-version version="":
+    #!/usr/bin/env bash
+    {{ bash_helpers }}
+    version="{{ version }}"
+    if [[ -z "$version" ]]; then
+        version="{{ ref_name }}"
+    fi
+    if [[ -z "$version" ]]; then
+        echo "Error: version is required for set-cargo-version" >&2
+        exit 1
+    fi
+    version="$(just normalize-release-tag "$version")"
+    cd "$REPO_ROOT"
+    set_cargo_workspace_version "$version"
+
 # [version-or-tag] or --set ref_name=<version-or-tag>
 set-version version="":
     #!/usr/bin/env bash

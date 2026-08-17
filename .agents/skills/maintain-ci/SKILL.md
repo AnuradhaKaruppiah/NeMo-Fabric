@@ -40,6 +40,12 @@ reliability, or reproducibility.
   they provide equivalent behavior.
 - Keep tag filters, prerelease normalization, and publication behavior aligned
   with `RELEASING.md`.
+- Keep tag-time version stamping scoped to the ecosystem being published in a
+  disposable checkout. Do not run unrelated project-wide lock or dependency
+  updates from a publication job.
+- When one package published in a workflow depends on another package from the
+  same release, wait for bounded registry visibility before publishing the
+  dependent package.
 
 ## Permission Model
 
@@ -72,6 +78,9 @@ reliability, or reproducibility.
 - [ ] Secrets are only passed to the jobs that consume them
 - [ ] Python, Rust, and documentation jobs remain aligned with their lockfiles
       and `justfile` recipes
+- [ ] Tag-time version stamping is normalized and limited to the published
+      ecosystem
+- [ ] Sequential registry publications account for bounded index propagation
 - [ ] Concurrency, branch filters, and documentation publish guards still
       reflect repository intent
 

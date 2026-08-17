@@ -83,6 +83,9 @@ If editing the helper code, keep these contracts aligned:
   `sdk/python/nemo-fabric-runtime/pyproject.toml`.
 - `set_typescript_project_version` must update the package manifest and both
   root version entries in the npm lockfile without changing dependency versions.
+- `set-cargo-version` is reserved for tag publication in a disposable checkout.
+  It normalizes the tag and updates only Cargo workspace metadata and
+  `Cargo.lock`; it does not replace the project-wide `set-version` workflow.
 - The `set-version` recipe must run `just lock-python` after source metadata is
   updated.
 
