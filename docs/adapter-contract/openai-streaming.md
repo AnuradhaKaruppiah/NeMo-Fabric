@@ -59,9 +59,9 @@ turn.
 chunk does not reset that deadline. A timeout invalidates the local adapter
 host under the same lifecycle timeout rules as ordinary invocation.
 
-## Follow the Fabric-Owned Transport
+## Follow the NVIDIA NeMo Fabric Transport
 
-NVIDIA NeMo Fabric owns the authenticated loopback HTTP transport, chunked
+NeMo Fabric owns the authenticated loopback HTTP transport, chunked
 newline-delimited JSON (NDJSON) framing, correlation, validation, buffering,
 and consumer lifecycle. The common host removes transport credentials before
 it calls the typed adapter method. Do not persist or log the bearer token, emit

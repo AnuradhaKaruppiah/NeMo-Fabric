@@ -1514,6 +1514,27 @@ async def test_cost_is_extracted_from_response_metadata(
     assert output["usage"]["cost"] == 0.0025
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        {"usage": {"input_tokens": 1, "total_cost": float("nan")}},
+        {"usage": {"input_tokens": 1, "cost": float("inf")}},
+        {
+            "usage": {"input_tokens": 1},
+            "response_metadata": {"cost": float("-inf")},
+        },
+    ],
+)
+def test_aggregate_usage_discards_nonfinite_cost(message):
+    assert adapter._aggregate_usage([message]) == {"prompt_tokens": 1}
+
+
+def test_aggregate_usage_discards_tokens_larger_than_uint64():
+    assert adapter._aggregate_usage(
+        [{"usage": {"input_tokens": 1 << 64}}]
+    ) is None
+
+
 async def test_replayed_state_usage_counts_current_turn_only(
     tmp_path, make_payload, monkeypatch
 ):

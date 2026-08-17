@@ -54,20 +54,24 @@ dependency-free dataclasses from `nemo_fabric_adapter_contract.models`.
 
 ## Project Only Supported Fields
 
-The Adapter Descriptor controls projection. Planning applies these rules:
+The Adapter Descriptor, capability plan, and optional Adapter Target Descriptor
+control projection. Planning applies these rules:
 
-1. Include a normalized scalar or block only when `config.accepts` declares
-   that the adapter applies it.
+1. Use `config.accepts` to gate adapter-applied model configuration, system
+   instructions, maximum turns, tool definitions, enabled tools, and blocked
+   tools.
 2. Validate every configured model role against `model_schema` when the
    descriptor supplies one.
 3. Validate `harness.settings` against the Adapter Descriptor's
-   `settings_schema`.
+   `settings_schema`, then project the validated settings when present.
 4. Validate `workflow.settings` against the selected Adapter Target
    Descriptor, then project that target's entry point into `workflow`.
 5. Validate every named tool definition against `tool_definition_schema`.
-6. Validate adapter-owned extensions against the schema for their exact
+6. Project skills and MCP servers assigned to the adapter by the capability
+   plan.
+7. Validate adapter-owned extensions against the schema for their exact
    extension point.
-7. Reject configured behavior that the selected adapter cannot apply.
+8. Reject configured behavior that the selected adapter cannot apply.
 
 Unsupported behavior fails planning with a field path and reason. It is never
 silently dropped.

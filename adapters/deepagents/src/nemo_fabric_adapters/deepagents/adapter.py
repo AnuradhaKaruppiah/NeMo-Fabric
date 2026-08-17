@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import math
 import os
 import uuid
 from collections.abc import Callable
@@ -655,10 +656,17 @@ class DeepAgentsRuntime:
         tokens = {
             name: value
             for name, value in token_fields.items()
-            if isinstance(value, int) and not isinstance(value, bool) and value >= 0
+            if isinstance(value, int)
+            and not isinstance(value, bool)
+            and 0 <= value <= (1 << 64) - 1
         }
         cost = usage.get("cost")
-        if not isinstance(cost, (int, float)) or isinstance(cost, bool) or cost < 0:
+        if (
+            not isinstance(cost, (int, float))
+            or isinstance(cost, bool)
+            or not math.isfinite(cost)
+            or cost < 0
+        ):
             cost = None
         return AgentRunResult(
             status=AgentRunStatus.FAILED if failed else AgentRunStatus.SUCCEEDED,
@@ -1134,14 +1142,23 @@ def _aggregate_usage(messages: list[dict[str, Any]]) -> dict[str, Any] | None:
             ("total_tokens", "total_tokens"),
         ):
             value = usage.get(source)
-            if isinstance(value, int):
+            if (
+                isinstance(value, int)
+                and not isinstance(value, bool)
+                and 0 <= value <= (1 << 64) - 1
+            ):
                 totals[target] = int(totals.get(target, 0)) + value
         # Cost is not part of LangChain's UsageMetadata; surface it only when a
         # model/provider reports it on the usage or response metadata.
         candidate = (
             usage.get("total_cost") or usage.get("cost") or _metadata_cost(message)
         )
-        if isinstance(candidate, (int, float)) and not isinstance(candidate, bool):
+        if (
+            isinstance(candidate, (int, float))
+            and not isinstance(candidate, bool)
+            and math.isfinite(candidate)
+            and candidate >= 0
+        ):
             cost += float(candidate)
             has_cost = True
     if has_cost:
@@ -1153,7 +1170,12 @@ def _metadata_cost(message: dict[str, Any]) -> float | None:
     metadata = message.get("response_metadata")
     if isinstance(metadata, dict):
         value = metadata.get("cost")
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+            and value >= 0
+        ):
             return float(value)
     return None
 

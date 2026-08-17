@@ -1643,8 +1643,9 @@ fn promote_agent_artifacts_to_manifest(
         {
             continue;
         }
+        let name = unique_artifact_name(manifest, &artifact.name);
         manifest.artifacts.push(ArtifactRef {
-            name: artifact.name.clone(),
+            name,
             kind: artifact.kind.clone(),
             path,
             media_type: artifact.media_type.clone(),
@@ -2507,7 +2508,7 @@ fn promote_relay_artifacts_to_manifest(output: &Value, manifest: &mut ArtifactMa
             continue;
         }
 
-        let name = unique_relay_artifact_name(manifest, kind);
+        let name = unique_artifact_name(manifest, &format!("relay_{kind}"));
         manifest.artifacts.push(ArtifactRef {
             name,
             kind: kind.to_string(),
@@ -2537,14 +2538,13 @@ fn relay_artifact_media_type(kind: &str) -> Option<&'static str> {
     }
 }
 
-fn unique_relay_artifact_name(manifest: &ArtifactManifest, kind: &str) -> String {
-    let base = format!("relay_{kind}");
+fn unique_artifact_name(manifest: &ArtifactManifest, base: &str) -> String {
     if !manifest
         .artifacts
         .iter()
         .any(|artifact| artifact.name == base)
     {
-        return base;
+        return base.to_string();
     }
 
     let mut index = 2;
@@ -4043,6 +4043,34 @@ for line in sys.stdin:
         );
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn promoted_agent_artifact_names_do_not_shadow_existing_artifacts() {
+        let root = PathBuf::from("artifacts");
+        let mut manifest = ArtifactManifest {
+            root: Some(root.clone()),
+            artifacts: vec![ArtifactRef {
+                name: "stdout".to_string(),
+                kind: "log".to_string(),
+                path: root.join("stdout.txt"),
+                media_type: Some("text/plain".to_string()),
+                metadata: BTreeMap::new(),
+            }],
+        };
+        let agent_artifacts = vec![AgentArtifact {
+            name: "stdout".to_string(),
+            kind: "report".to_string(),
+            path: PathBuf::from("reports/result.json"),
+            media_type: Some("application/json".to_string()),
+            extensions: BTreeMap::new(),
+        }];
+
+        promote_agent_artifacts_to_manifest(&agent_artifacts, &mut manifest);
+
+        assert_eq!(manifest.artifacts.len(), 2);
+        assert_eq!(manifest.artifacts[1].name, "stdout_2");
+        assert_eq!(manifest.artifacts[1].path, root.join("reports/result.json"));
     }
 
     #[test]

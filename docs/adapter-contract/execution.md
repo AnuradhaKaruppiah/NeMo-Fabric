@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Stage 3: Implement Execution
 
-One NeMo Fabric runtime is a lifecycle, state-isolation, and correlation
+One NVIDIA NeMo Fabric runtime is a lifecycle, state-isolation, and correlation
 boundary. It does not require a particular process, service, thread, or native
 target session topology.
 

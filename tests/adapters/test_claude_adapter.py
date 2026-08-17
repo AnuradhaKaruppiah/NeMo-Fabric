@@ -877,6 +877,14 @@ def test_agent_run_result_discards_nonfinite_cost(cost):
     assert result.usage is None
 
 
+def test_agent_run_result_discards_tokens_larger_than_uint64():
+    result = adapter._agent_run_result(
+        {"response": "done", "usage": {"input_tokens": 1 << 64}}
+    )
+
+    assert result.usage is None
+
+
 async def test_claude_runtime_reuses_one_connected_sdk_client(
     claude_payload, monkeypatch
 ):

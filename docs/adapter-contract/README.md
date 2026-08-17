@@ -16,7 +16,7 @@ target's native configuration and execution model.
 
 ## Why Build an Adapter
 
-A Fabric-ready Adapter Target gains:
+A Fabric-ready Adapter Target gains the following benefits:
 
 - one consumer-facing `FabricConfig` and runtime lifecycle;
 - compatibility checks before target code starts;
@@ -28,6 +28,9 @@ The adapter remains small because NeMo Fabric owns planning, environment
 preparation, adapter selection, correlation, and consumer-facing enrichment.
 The adapter owns only target translation, target state, invocation, and
 cleanup.
+
+The following diagram shows the adapter contract flow from consumer planning
+through the adapter and Adapter Target to the consumer result:
 
 ```mermaid
 flowchart TD
