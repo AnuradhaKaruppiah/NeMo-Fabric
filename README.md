@@ -32,10 +32,11 @@ telemetry.
 variants, plan and run targets, and receive normalized results, artifact
 manifests, and telemetry references.
 
-**Adapter developers** use the versioned adapter contract to receive normalized
-configuration and requests, translate the Fabric lifecycle into target-native
-operations, and return normalized results. The same contract supports agent
-harnesses, shared frameworks, and dedicated custom agents.
+**Adapter developers** use the versioned adapter contract to receive
+`AgentConfig`, `RuntimeContext`, and `AgentRunRequest`, translate the Fabric
+lifecycle into target-native operations, and return `AgentRunResult`. The same
+contract supports agent harnesses, shared frameworks, and dedicated custom
+agents.
 
 ## Execution Flow
 
@@ -52,7 +53,7 @@ flowchart TB
   Relay["NVIDIA NeMo Relay\nATOF | ATIF | OTel | OpenInference when enabled"]
 
   Consumer -->|FabricConfig| Core
-  Core -->|AgentConfig + AgentRunRequest| Adapter
+  Core -->|AgentConfig + RuntimeContext + AgentRunRequest| Adapter
   Adapter -->|native configuration + invocation| Target
   Target -->|native response| Adapter
   Adapter -->|AgentRunResult| Core
