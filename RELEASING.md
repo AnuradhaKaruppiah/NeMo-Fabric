@@ -142,7 +142,8 @@ Update the versioned source files in the release PR or release-prep commit to
 the stable base version for the release line. Prefer the repository helper:
 
 ```bash
-just set-version <release-version>
+just set-version <stable-base-version>
+# For example: just set-version 0.1.0
 ```
 
 For beta and RC tags, keep the committed source metadata at the corresponding
