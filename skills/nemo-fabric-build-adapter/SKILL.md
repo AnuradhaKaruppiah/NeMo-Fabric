@@ -53,7 +53,6 @@ translation:
 
 - Set the current `contract_version`, a globally stable `adapter_id`,
   `adapter_kind`, and runner binding.
-- Set `config.input` to `agent_config`.
 - Declare only normalized `config.accepts` fields the implementation enforces.
 - Declare `mcp.auth.oauth2` or `mcp.auth.service_account` only when the adapter
   implements the corresponding MCP authentication mode.

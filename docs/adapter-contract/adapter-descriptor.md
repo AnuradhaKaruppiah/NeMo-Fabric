@@ -5,10 +5,9 @@ SPDX-License-Identifier: Apache-2.0
 
 # Stage 1: Describe the Adapter
 
-Start with metadata, not implementation code. An Adapter Descriptor tells
-NVIDIA NeMo Fabric how to locate an adapter and which contract surface it
-implements. NeMo Fabric reads and validates this record during planning without
-importing or starting the adapter.
+An Adapter Descriptor tells NVIDIA NeMo Fabric how to locate an adapter and
+which contract surface it implements. NeMo Fabric reads and validates this
+record during planning without importing or starting the adapter.
 
 Adapter Descriptor filenames end in `.fabric-adapter.json`.
 
@@ -24,17 +23,13 @@ that accepts an empty `AgentConfig` and implements only the required lifecycle:
   "adapter_kind": "python",
   "runner": {
     "module": "acme_fabric_adapter.runtime"
-  },
-  "config": {
-    "input": "agent_config",
-    "accepts": []
   }
 }
 ```
 
 Use a globally stable `adapter_id`. Treat it as a machine identifier, not a
-display name. New adapters use `config.input: agent_config`; `FabricConfig`
-never crosses the southbound boundary.
+display name. Adapters receive `AgentConfig`; `FabricConfig` never crosses the
+southbound boundary.
 
 The primary descriptor fields are:
 
@@ -45,7 +40,7 @@ The primary descriptor fields are:
 | `adapter_kind` | Selects the runtime binding: `python`, `process`, `http`, or `native_plugin`. |
 | `runner` | Supplies binding-specific startup metadata, such as a Python module. |
 | `requirements` | Describes binaries, environment-variable names, files, services, or plugin hooks for diagnostics. |
-| `config` | Declares the southbound input and normalized fields the adapter applies. |
+| `config` | Declares the normalized fields the adapter applies and target-native files it generates. |
 | `capabilities` | Declares optional runtime operations implemented through the adapter binding. |
 | `telemetry` | Declares telemetry outputs and integration modes the adapter produces or forwards. |
 | `target_types` | Declares registered target types a shared adapter can load. Omit it for a direct harness or dedicated-agent adapter. |
@@ -62,7 +57,6 @@ system instructions, and a target-applied turn limit:
 
 ```json
 "config": {
-  "input": "agent_config",
   "accepts": [
     "models",
     "models.base_url",
@@ -132,7 +126,6 @@ target type:
     "module": "acme_framework_adapter.runtime"
   },
   "config": {
-    "input": "agent_config",
     "accepts": ["models", "tools.definitions"]
   }
 }

@@ -10,6 +10,16 @@ Discovery reads that metadata without importing adapter code, installing
 dependencies, or starting a runtime. Runtime loading begins only after
 selection and planning succeed.
 
+| Integration | Selected By | Required Records |
+| --- | --- | --- |
+| Harness or dedicated custom-agent adapter | `harness.adapter_id` | Adapter Descriptor only |
+| Custom agent using a shared framework adapter | `workflow.target_id` | Adapter Target Descriptor plus the selected Adapter Descriptor |
+
+Register an Adapter Target only when multiple independently installed targets
+share one adapter. A harness or dedicated custom-agent adapter is already
+identified by its Adapter Descriptor and does not publish a separate target
+record.
+
 ## Publish Package Records
 
 An adapter package publishes one `*.fabric-adapter.json` record. A package that

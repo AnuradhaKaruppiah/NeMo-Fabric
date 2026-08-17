@@ -75,8 +75,7 @@ generated
 [`openai-stream-record.schema.json`](https://github.com/NVIDIA/NeMo-Fabric/blob/main/schemas/adapter-contract/openai-stream-record.schema.json)
 chunk and explicit-end envelopes.
 
-Adapters whose descriptor sets `config.input` to `agent_config` can ask the
-host to validate the southbound contract before `start`:
+Adapters can ask the host to validate the southbound contract before `start`:
 
 ```python
 from nemo_fabric_adapter_contract.models import AgentConfig

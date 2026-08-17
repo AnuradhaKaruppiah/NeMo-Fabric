@@ -90,16 +90,6 @@ for the exact shape. Runtime identity belongs in `RuntimeContext`, not in
 `AgentConfig.workflow`. Per-invocation task input belongs in the request, not in
 workflow settings.
 
-## Keep Request Translation at the Edge
-
-The current local-host invocation envelope contains `RuntimeContext` and the
-northbound request mapping. Extract the target input and caller context in one
-adapter-owned function so the target does not depend on NeMo Fabric types.
-
-`AgentRunRequest` is a published preview schema for the future typed
-southbound request. It is not negotiated by the v1alpha2 local-host binding.
-Do not assume that the current `payload["request"]` is an `AgentRunRequest`.
-
 ## Propagate Failures Safely
 
 Use a lifecycle failure when the adapter cannot satisfy `start`, `invoke`, or

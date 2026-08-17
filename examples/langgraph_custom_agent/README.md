@@ -42,7 +42,6 @@ fields the adapter applies:
 
 ```json
 "config": {
-  "input": "agent_config",
   "accepts": [
     "models",
     "models.base_url",

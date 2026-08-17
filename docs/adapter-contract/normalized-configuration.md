@@ -80,9 +80,11 @@ empty value can mean something different. For example,
 ## Keep Fabric-Owned Context Out of AgentConfig
 
 `AgentConfig` does not contain adapter selection, installation policy,
-environment ownership, invocation deadlines, artifact manifests, Relay
-configuration, or planning diagnostics. NeMo Fabric keeps those values in the
-runtime plan and supplies operation-specific values through `RuntimeContext`.
+environment ownership, invocation deadlines, artifact manifests, or planning
+diagnostics. NeMo Fabric also resolves telemetry and Relay configuration
+outside `AgentConfig`. When enabled, `RuntimeContext.telemetry` supplies the
+adapter with the generated Relay configuration path, environment overlay, and
+telemetry metadata needed for the invocation.
 
 Credential fields contain environment-variable names, not resolved secret
 values. Environment values can be available in
@@ -135,9 +137,9 @@ the same namespaced contract.
 ## Split Static and Startup Validation
 
 Planning validates static shape and compatibility without executing adapter
-code. Adapter `start` validates facts available only in the target environment,
-such as imports, installed factories, executable presence, credential
-availability, and service reachability. Startup errors must identify the
-failing field without exposing secret values.
+code. During `start`, the adapter validates only requirements that depend on
+the target environment, such as imports, installed factories, executable
+presence, credential availability, and service reachability. Report the
+failing requirement or configuration field without exposing secret values.
 
 After the mapping is defined, [implement the required lifecycle](execution.md).

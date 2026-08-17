@@ -9,35 +9,22 @@ Every invocation produces one terminal outcome. Keep target-specific parsing
 inside the adapter so consumers receive a stable NeMo Fabric `RunResult` and do
 not need to understand the target's native response objects.
 
-## Return the Current Host Value
+## Return AgentRunResult
 
-The v1alpha2 local-host binding accepts one JSON-compatible terminal value from
-`invoke`. Return a small mapping that contains the target output the consumer
-needs:
+`invoke` returns one typed `AgentRunResult`. Translate the target's native
+outcome into the normalized status, output, usage, errors, and artifacts that
+apply:
 
 ```python
-async def invoke(self, payload):
-    native = await self.target.run(payload["request"]["input"])
-    return {
-        "response": native.final_text,
-        "usage": {"api_calls": native.api_calls},
-    }
+return AgentRunResult(
+    status=AgentRunStatus.SUCCEEDED,
+    output={"response": native.final_text},
+    usage=AgentUsage(
+        input_tokens=native.input_tokens,
+        output_tokens=native.output_tokens,
+    ),
+)
 ```
-
-Use the host's lifecycle error mechanism when the adapter cannot complete the
-operation. Do not return the preview `AgentRunResult` envelope from the current
-host: the host treats it as ordinary JSON and does not interpret
-`status: failed`.
-
-Put target response normalization in one function. That keeps the target code
-independent of NeMo Fabric and makes a later typed-boundary migration local to
-the adapter edge.
-
-## Understand the Preview Result Boundary
-
-`AgentRunResult` defines the intended typed southbound outcome. It is published
-for schema and binding development but is not negotiated by the current local
-host.
 
 | Field | Requirement | Purpose |
 | --- | --- | --- |
@@ -50,9 +37,9 @@ host.
 
 Use the canonical
 [`agent-run-result.schema.json`](https://github.com/NVIDIA/NeMo-Fabric/blob/main/schemas/adapter-contract/agent-run-result.schema.json)
-when developing the future typed boundary. A failed typed result contains an
-error; a successful typed result does not contain a non-null error. Status is
-explicit and is not inferred from arbitrary output fields.
+for the exact shape. A failed result contains an error; a successful result
+does not contain a non-null error. Status is explicit and is not inferred from
+arbitrary output fields.
 
 ## Separate Failure Classes
 
@@ -62,9 +49,8 @@ Use these failure classes consistently:
   `invoke`, or `stop`. It is reported at the relevant NeMo Fabric error stage
   and can invalidate the runtime.
 - A **terminal target failure** means the target completed the invocation with
-  a failed outcome. In the current host, represent this through the adapter's
-  documented JSON-compatible terminal shape. The preview typed boundary will
-  represent it as `AgentRunResult.status: failed`.
+  a failed outcome. Return `AgentRunResult` with
+  `status=AgentRunStatus.FAILED` and a safe, structured error.
 
 Set retry guidance only when retrying at the consumer boundary is safe. NeMo
 Fabric propagates failure information but does not automatically retry adapter
@@ -79,7 +65,7 @@ artifacts with its collected artifact manifest.
 
 ## Let NeMo Fabric Enrich the Outcome
 
-NeMo Fabric combines the adapter value with runtime-owned information when it
+NeMo Fabric combines `AgentRunResult` with runtime-owned information when it
 constructs the consumer-facing `RunResult`:
 
 | NeMo Fabric Adds | Source |

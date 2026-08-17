@@ -30,9 +30,9 @@ Import `AgentConfig` from the contract models module:
 from nemo_fabric_adapter_contract.models import AgentConfig
 ```
 
-An adapter descriptor opts into the southbound configuration with
-`config.input=agent_config`. Python adapters using the optional common
-lifecycle host pass `AgentConfig.from_mapping` as the `config_loader`.
+NeMo Fabric delivers `AgentConfig` as the southbound configuration. Python
+adapters using the optional common lifecycle host pass
+`AgentConfig.from_mapping` as the `config_loader`.
 
 ## Install
 
