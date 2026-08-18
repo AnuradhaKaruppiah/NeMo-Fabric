@@ -5,10 +5,10 @@ SPDX-License-Identifier: Apache-2.0
 
 # Examples and References
 
-Use the example that matches the integration shape you chose. Read its
-descriptor first, its lifecycle implementation second, and its consumer
-configuration last. The canonical schemas remain authoritative when an example
-omits a field.
+Use the example that matches the integration shape you chose. Review its
+descriptor, lifecycle implementation, and consumer configuration, in that
+order. The canonical schemas remain authoritative when an example omits a
+field.
 
 | Integration Shape | Start With | What It Demonstrates |
 | --- | --- | --- |
@@ -19,18 +19,18 @@ omits a field.
 
 ## Harness Adapter
 
-Use Hermes Agent as the primary reference for integrating an opinionated
-harness. Its descriptor and runtime demonstrate normalized models, MCP,
-instructions, runtime settings, persistent session state, and Relay telemetry
-through one harness adapter.
+Use the Hermes Agent adapter as the primary reference for integrating an
+opinionated harness. Its descriptor and runtime demonstrate normalized models,
+MCP, instructions, runtime settings, persistent session state, and Relay
+telemetry through one harness adapter.
 
 Use mini-SWE-agent as the secondary minimum-surface reference when you want to
 understand the required boundary at a glance. Its package contains:
 
-- a static Adapter Descriptor that accepts a small normalized config surface;
-- one runtime class with `start`, `invoke`, and `stop`;
-- the optional common Python lifecycle host; and
-- one package README with a complete consumer configuration.
+- A static Adapter Descriptor that accepts a small normalized config surface
+- One runtime class with `start`, `invoke`, and `stop`
+- The optional common Python lifecycle host
+- One package README with a complete consumer configuration
 
 The adapter retains the model, environment, agent, and conversation state in
 one runtime instance. It does not implement MCP, skills, telemetry, or native

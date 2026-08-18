@@ -92,7 +92,7 @@ telemetry metadata needed for the invocation.
 
 Credential fields contain environment-variable names, not resolved secret
 values. Environment values can be available in
-`RuntimeContext.environment.env`; never persist or log the unredacted context.
+`RuntimeContext.environment.env`. Never persist or log the unredacted context.
 
 ## Translate Once at the Boundary
 

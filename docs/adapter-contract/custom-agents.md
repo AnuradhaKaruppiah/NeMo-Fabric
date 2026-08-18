@@ -80,8 +80,8 @@ permit consumers to bypass target registration with a direct entry point.
 
 The [NeMo Agent Toolkit reference adapter](https://github.com/NVIDIA/NeMo-Fabric/tree/main/external/nat)
 implements the current shared-adapter example. Its registered targets use
-`kind: factory` and `ref: fabric.agent.react`; the adapter maps that portable
-intent to the NeMo Agent Toolkit ReAct workflow factory.
+`kind: factory` and `ref: fabric.agent.react`. The adapter then maps that
+portable intent to the NeMo Agent Toolkit ReAct workflow factory.
 
 ## Keep Workflow Settings Agent-Specific
 
@@ -101,8 +101,8 @@ adapter-defined build context. It should not parse `FabricConfig` or implement
 the adapter's `AgentConfig` mapping again.
 
 An intentionally open workflow settings schema can preserve compatibility with
-an existing framework configuration, but NeMo Fabric cannot validate or vary
-the data inside that free-form object portably. Prefer a closed schema and keep
+an existing framework configuration, but NeMo Fabric cannot validate its fields
+or vary them portably. Use a closed schema and keep
 models, tools, MCP servers, and other normalized capabilities in their
 dedicated `AgentConfig` blocks.
 
@@ -128,11 +128,11 @@ graph lifecycle, and returns terminal JSON-compatible output.
 
 Use these questions to choose the boundary:
 
-1. Can one adapter locate and construct multiple agents without agent-specific
-   implementation code?
-2. Can the adapter define stable meanings for each target entry-point kind?
-3. Can every target publish a bounded workflow settings schema?
-4. Can the adapter translate normalized capabilities once for all targets?
+- Can one adapter locate and construct multiple agents without agent-specific
+  implementation code?
+- Can the adapter define stable meanings for each target entry-point kind?
+- Can every target publish a bounded workflow settings schema?
+- Can the adapter translate normalized capabilities once for all targets?
 
 If all answers are yes, build a shared adapter and register targets separately.
 Otherwise, build a dedicated adapter and keep the target construction logic
