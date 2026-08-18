@@ -16,17 +16,16 @@ SPDX-License-Identifier: Apache-2.0
   <img src="assets/fabric-hero.png" alt="Diagram showing NeMo Fabric connecting applications, evaluation systems, and reinforcement learning rollouts to Hermes Agent, Codex, Claude Code, LangChain Deep Agents, and custom agents, with results, artifacts, and telemetry as outputs." width="1000">
 </p>
 
-NeMo Fabric gives applications, evaluation systems, and rollout platforms one
-configurable, observable way to run agent harnesses and custom agents.
-NeMo Fabric refers to those applications, systems, and platforms as
-*consumers*.
+NeMo Fabric gives applications and platforms one configurable, observable way
+to run agent harnesses and custom agents. It standardizes configuration,
+lifecycle management, and run outputs—including results, artifacts, and
+telemetry—so teams do not need to build a separate integration for every
+harness or agent.
 
-An **adapter** translates NeMo Fabric configuration and lifecycle operations
-into the native execution model of an agent harness, framework, or custom
-agent. That system is the **Adapter Target**. Consumers integrate with NeMo
-Fabric once, then change Adapter Targets without adding target-specific launch
-and control code. Every run returns normalized results, artifacts, and
-telemetry.
+Any system that invokes an agent through NeMo Fabric is a **consumer**. An
+**adapter** translates NeMo Fabric configuration and lifecycle operations into
+the native execution model of an agent harness, framework, or custom agent.
+That system is the **Adapter Target**.
 
 **Consumers** use the Python SDK and typed `FabricConfig` to compose experiment
 variants, plan and run targets, and receive normalized results, artifact
@@ -61,25 +60,6 @@ flowchart TB
   Core -. telemetry configuration .-> Relay
   Target -. target telemetry .-> Relay
 ```
-
-## What's New in NeMo Fabric 0.2
-
-NeMo Fabric 0.2 expands the adapter boundary beyond bundled harness
-integrations:
-
-- The [`v1alpha2` adapter contract](docs/adapter-contract/README.md) publishes
-  canonical JSON Schemas, dependency-free Python dataclasses, generated
-  TypeScript types, maintained authoring documentation, and a public
-  adapter-building skill.
-- The published contract supports third-party adapters maintained outside this
-  repository for both agent harnesses and custom agents.
-- Custom agents can use a shared framework adapter, demonstrated by the
-  [NVIDIA NeMo Agent Toolkit reference](external/nat/README.md) with multiple
-  registered workflows, or a dedicated adapter, demonstrated by the
-  [LangGraph email-phishing example](examples/langgraph_custom_agent/README.md).
-- The [mini-SWE-agent integration](adapters/mini-swe-agent/README.md)
-  demonstrates a minimalist adapter that preserves the harness's compact
-  implementation style.
 
 ## Supported Platforms
 
@@ -190,6 +170,8 @@ Capabilities vary by harness. Review the
 [configuration compatibility matrix](adapters/README.md#configuration-compatibility)
 and use `Fabric.plan()` and `Fabric.doctor()` before relying on optional
 capabilities such as MCP, skills, blocked tools, subagents, or telemetry.
+
+## Custom Agents
 
 Custom agents use the same adapter contract. A shared framework adapter can
 load multiple registered agents selected by `FabricConfig.workflow.target_id`;
