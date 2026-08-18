@@ -34,13 +34,12 @@ construction, invocation, and cleanup semantics. One adapter can then translate
 normalized configuration once and support many separately installed custom
 agents.
 
-Each custom agent publishes an Adapter Target Descriptor. The target record:
+Each custom agent publishes an Adapter Target Descriptor with:
 
-- has a globally stable `id` selected by `FabricConfig.workflow.target_id`;
-- selects the shared adapter with `adapter_id`;
-- fixes the adapter-scoped `spec.entrypoint`; and
-- publishes a closed `spec.settings_schema` for that agent's construction
-  settings.
+- A globally stable `id` selected by `FabricConfig.workflow.target_id`
+- An `adapter_id` that selects the shared adapter
+- An adapter-scoped `spec.entrypoint`
+- A closed `spec.settings_schema` for the agent's construction settings
 
 The consumer selects the registered target and provides settings:
 
