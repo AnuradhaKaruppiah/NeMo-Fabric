@@ -193,6 +193,9 @@ def main() -> None:
 The common host decodes the internal lifecycle envelope before calling the
 adapter and encodes its terminal result afterward. Adapter code does not parse
 the transport envelope or infer failure from fields inside `output`.
+Return `AgentRunStatus.FAILED` with an `AgentRunError` when the target completes
+with a failed outcome. Raise an exception when the adapter cannot produce a
+normalized terminal result.
 
 ## Handle Custom Agents
 

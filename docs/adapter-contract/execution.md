@@ -70,6 +70,10 @@ class TargetRuntime:
 
 def main() -> None:
     lifecycle.serve(TargetRuntime, config_loader=AgentConfig.from_mapping)
+
+
+if __name__ == "__main__":
+    main()
 ```
 
 The host creates one `TargetRuntime` per local host, validates the start config

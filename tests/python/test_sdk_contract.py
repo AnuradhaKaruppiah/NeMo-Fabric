@@ -1880,6 +1880,12 @@ def test_run_usage_rejects_invalid_token_counts(value):
         RunUsage.from_mapping({"input_tokens": value})
 
 
+@pytest.mark.parametrize("field", ["input_tokens", "output_tokens", "total_tokens"])
+def test_run_usage_rejects_token_counts_above_uint64(field):
+    with pytest.raises(FabricConfigError, match="no greater than"):
+        RunUsage.from_mapping({field: 1 << 64})
+
+
 @pytest.mark.parametrize(
     "value", [-1, True, float("nan"), float("inf"), float("-inf")]
 )

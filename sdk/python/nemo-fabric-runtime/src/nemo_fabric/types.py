@@ -24,6 +24,7 @@ JSONScalar = str | int | float | bool | None
 JSONValue = JSONScalar | list["JSONValue"] | dict[str, "JSONValue"]
 
 _T = TypeVar("_T")
+_UINT64_MAX = (1 << 64) - 1
 
 
 def _plain(value: Any) -> Any:
@@ -1704,10 +1705,13 @@ class RunUsage(FabricMapping):
         for field in ("input_tokens", "output_tokens", "total_tokens"):
             value = data.get(field)
             if value is not None and (
-                isinstance(value, bool) or not isinstance(value, int) or value < 0
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not 0 <= value <= _UINT64_MAX
             ):
                 raise FabricConfigError(
-                    f"{field.replace('_', ' ')} must be a nonnegative integer"
+                    f"{field.replace('_', ' ')} must be a nonnegative integer "
+                    f"no greater than {_UINT64_MAX}"
                 )
         cost = data.get("cost_usd")
         if cost is not None and (
