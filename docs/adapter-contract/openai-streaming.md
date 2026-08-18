@@ -45,15 +45,15 @@ class TargetRuntime:
 
 Each chunk contains:
 
-- nonempty `id` and `model` strings;
-- a nonnegative integer `created` value;
-- the exact `chat.completion.chunk` object discriminator; and
-- structurally valid `choices`.
+- Nonempty `id` and `model` strings
+- A nonnegative integer `created` value
+- The exact `chat.completion.chunk` object discriminator
+- Structurally valid `choices`
 
 An invocation can emit zero chunks. Its terminal value remains separate and
-authoritative. Ending iteration early does not cancel the target invocation;
-the SDK drains the invocation so that the runtime can safely accept its next
-turn.
+authoritative. Ending the iteration early does not cancel the target invocation.
+Instead, the SDK drains the invocation so that the runtime can safely accept its
+next turn.
 
 `runtime.timeout_seconds` limits the complete streamed invocation. Receiving a
 chunk does not reset that deadline. A timeout invalidates the local adapter

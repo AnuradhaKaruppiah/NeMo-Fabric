@@ -18,11 +18,11 @@ target's native configuration and execution model.
 
 A Fabric-ready Adapter Target gains the following benefits:
 
-- one consumer-facing `FabricConfig` and runtime lifecycle;
-- compatibility checks before target code starts;
-- isolated, ordered runtime state;
-- normalized failures, artifacts, results, and telemetry references; and
-- optional NeMo Relay streaming without a target-specific streaming method.
+- One consumer-facing `FabricConfig` and runtime lifecycle
+- Compatibility checks before target code starts
+- Isolated, ordered runtime state
+- Normalized failures, artifacts, results, and telemetry references
+- Optional NeMo Relay streaming without a target-specific streaming method
 
 The adapter remains small because NeMo Fabric owns planning, environment
 preparation, adapter selection, correlation, and consumer-facing enrichment.
@@ -55,8 +55,9 @@ Use the narrowest reusable adapter boundary that your target provides:
 | Shared framework adapter | A framework can load multiple registered custom agents through stable entry-point semantics. | One adapter supports many separately installed targets. | [NeMo Agent Toolkit](https://github.com/NVIDIA/NeMo-Fabric/tree/main/external/nat) |
 | Dedicated custom-agent adapter | The application owns execution behavior that does not fit a reusable loading contract. | One adapter packages one custom agent or agent family. | [LangGraph email-phishing analyzer](https://github.com/NVIDIA/NeMo-Fabric/tree/main/examples/langgraph_custom_agent) |
 
-A custom agent does not automatically need a dedicated adapter. Prefer a
-shared adapter when a framework has stable loading and invocation semantics.
+A custom agent does not automatically need a dedicated adapter. A shared
+adapter is appropriate when a framework has stable loading and invocation
+semantics.
 Use a dedicated adapter when the agent itself is the only clear execution
 boundary. Refer to [Custom Agents](custom-agents.md) for the decision model.
 

@@ -60,7 +60,7 @@ NeMo Fabric builds one registry from these sources in deterministic order:
 3. Files or directories listed in `FabricConfig.discovery.local_paths`.
    Relative paths resolve from `base_dir`.
 
-This is discovery order, not precedence. There is no implicit
+The order above controls discovery, not precedence. There is no implicit
 `<base_dir>/adapters` scan and no local override rule.
 
 Semantically identical records with the same ID are deduplicated and retain

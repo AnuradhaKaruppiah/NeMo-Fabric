@@ -255,12 +255,12 @@ following resources to build or validate a consumer integration:
 Adapter integrations are southbound: they connect NeMo Fabric to agent
 harnesses and custom agents. Use these references to compare and build them:
 
-- [Adapter compatibility and guides](adapters/README.md): compare bundled
+- [Adapter compatibility and guides](adapters/README.md): Compare bundled
   harness support, runtime ownership, telemetry integration, and package guides.
-- [Adapter contract](docs/adapter-contract/README.md): follow the incremental
+- [Adapter contract](docs/adapter-contract/README.md): Follow the incremental
   guide for a minimum adapter, custom-agent patterns, canonical schemas, and
   Python or TypeScript contract bindings.
-- [Adapter examples](docs/adapter-contract/examples.md): compare the complete
+- [Adapter examples](docs/adapter-contract/examples.md): Compare the complete
   Hermes Agent harness adapter, the minimum-surface mini-SWE-agent adapter, the
   shared NeMo Agent Toolkit reference, and the dedicated LangGraph example.
 
