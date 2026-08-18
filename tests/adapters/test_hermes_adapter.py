@@ -1415,6 +1415,24 @@ async def test_persistent_runtime_reuses_hermes_agent_session_and_history(
     )
 
 
+@pytest.mark.parametrize(
+    ("request_input", "expected_message"),
+    [
+        (0, "0"),
+        (False, "false"),
+        ([], "[]"),
+        ({}, "{}"),
+    ],
+)
+def test_user_message_preserves_falsy_request_input(
+    request_input: object,
+    expected_message: str,
+):
+    request = AgentRunRequest(input=request_input)
+
+    assert adapter._user_message(request.input) == expected_message
+
+
 async def test_runtime_stop_waits_for_cancelled_invoke_worker(monkeypatch):
     worker_started = threading.Event()
     worker_release = threading.Event()

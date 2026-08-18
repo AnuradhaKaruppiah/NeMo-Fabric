@@ -1461,6 +1461,15 @@ fn run_local_host_invocation_with_timeout(
         )
     })?;
     validate_agent_run_result_extensions(&agent_result, plan.adapter_descriptor.as_ref())?;
+    if !agent_result.artifacts.is_empty() && artifacts.root.is_none() {
+        return Err(lifecycle_error(
+            operation,
+            &runtime.runtime_id,
+            "invalid_agent_run_result",
+            "adapter returned artifacts without a configured runtime artifact root",
+            &stderr,
+        ));
+    }
     let output = agent_result.output.clone();
 
     let mut events = vec![event_with_metadata(
@@ -4042,6 +4051,29 @@ for line in sys.stdin:
             Some(&serde_json::json!({"trace_id": "trace-1"}))
         );
 
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn local_host_rejects_typed_artifacts_without_runtime_root() {
+        let (root, mut plan) = local_host_plan("typed_result");
+        plan.config.runtime.artifacts = None;
+        plan.environment_plan
+            .as_mut()
+            .expect("resolved environment plan")
+            .artifacts = None;
+        let runtime = start_runtime(&plan).expect("start local host");
+
+        let error = invoke_runtime(&plan, &runtime, RunRequest::text("enrich"))
+            .expect_err("adapter artifacts require a runtime artifact root");
+
+        assert!(matches!(
+            &error,
+            FabricError::AdapterLifecycleOperation { code, message, .. }
+                if code == "invalid_agent_run_result"
+                    && message.contains("configured runtime artifact root")
+        ));
+        stop_runtime(&plan, &runtime).expect("stop local host");
         let _ = fs::remove_dir_all(root);
     }
 

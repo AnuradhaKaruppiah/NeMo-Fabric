@@ -72,7 +72,7 @@ constructs the consumer-facing `RunResult`:
 
 | NeMo Fabric Adds | Source |
 | --- | --- |
-| Adapter, target, and runtime identity | Resolved plan and runtime handle. |
+| Adapter and runtime identity | Resolved plan and runtime handle. |
 | Runtime, invocation, and request correlation | `RuntimeContext`. |
 | Lifecycle stage and events | Runtime orchestration. |
 | Collected artifact manifest | NeMo Fabric and adapter artifact declarations. |

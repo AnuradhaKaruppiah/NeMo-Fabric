@@ -97,8 +97,9 @@ values. Environment values can be available in
 ## Translate Once at the Boundary
 
 Keep translation in a small adapter-owned function. The following
-representative code resolves one normalized model and system instruction into
-target-native values:
+representative code assumes the adapter's documented consumer configuration
+requires a model named `default`, then resolves that model and the system
+instruction into target-native values:
 
 ```python
 def build_target(config: AgentConfig):

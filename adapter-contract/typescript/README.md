@@ -68,12 +68,11 @@ import type {
 } from "nemo-fabric-adapter-contract";
 ```
 
-These types remain documented as preview because the current local-host
-transport does not yet enforce them. Keep request and result translation at the
-adapter edge until the typed invocation boundary is negotiated. In particular,
-token counts originate from JSON Schema `uint64` values but are represented as
-JavaScript `number`; values greater than `Number.MAX_SAFE_INTEGER` cannot be
-represented exactly.
+The local-host transport validates requests against the typed invocation
+boundary and requires adapters to return a valid `AgentRunResult` before NeMo
+Fabric normalizes the result. Token counts originate from JSON Schema `uint64`
+values but are represented as JavaScript `number`; values greater than
+`Number.MAX_SAFE_INTEGER` cannot be represented exactly.
 
 ## JSON Schemas
 

@@ -35,6 +35,7 @@ shows the complete method surface:
 
 ```python
 from nemo_fabric_adapter_contract.models import AgentConfig
+from nemo_fabric_adapter_contract.models import AgentRunError
 from nemo_fabric_adapter_contract.models import AgentRunRequest
 from nemo_fabric_adapter_contract.models import AgentRunResult
 from nemo_fabric_adapter_contract.models import AgentRunStatus
@@ -56,7 +57,16 @@ class TargetRuntime:
         request: AgentRunRequest,
         context: RuntimeContext,
     ) -> AgentRunResult:
-        native = await self.target.run(request.input)
+        try:
+            native = await self.target.run(request.input)
+        except TargetInvocationError:  # Use the target SDK's documented failure type.
+            return AgentRunResult(
+                status=AgentRunStatus.FAILED,
+                error=AgentRunError(
+                    code="target_failed",
+                    message="The target could not complete the invocation",
+                ),
+            )
         return AgentRunResult(
             status=AgentRunStatus.SUCCEEDED,
             output={"response": native.text},

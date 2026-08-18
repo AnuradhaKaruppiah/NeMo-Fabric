@@ -42,6 +42,10 @@ LOGGER = logging.getLogger(__name__)
 hermes_mcp_server_config = configuration.hermes_mcp_server_config
 
 
+def _user_message(value: Any) -> str:
+    return value if isinstance(value, str) else json.dumps(value, sort_keys=True)
+
+
 def main() -> None:
     """Serve the persistent local-host lifecycle protocol."""
 
@@ -230,9 +234,7 @@ class HermesRuntime:
                 "Hermes invocation does not match the active runtime",
             )
 
-        user_message = request.input or ""
-        if not isinstance(user_message, str):
-            user_message = json.dumps(user_message, sort_keys=True)
+        user_message = _user_message(request.input)
         instructions = agent_config.instructions
         system_prompt = (
             instructions.system.content
