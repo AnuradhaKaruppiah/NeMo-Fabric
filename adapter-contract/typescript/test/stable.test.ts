@@ -3,7 +3,6 @@
 
 import { ADAPTER_CONTRACT_VERSION } from "../src/index.js";
 import type {
-  AdapterConfigInput,
   AdapterContractVersion,
   AdapterDescriptor,
   AdapterKind,
@@ -98,7 +97,6 @@ const jsonValues: JsonValue[] = [
 ];
 
 const supportTypes: [
-  AdapterConfigInput,
   AdapterContractVersion,
   AdapterKind,
   ControlLocation,
@@ -107,7 +105,6 @@ const supportTypes: [
   TelemetryProvider,
   AdapterTelemetryProviderSupport,
 ] = [
-  "agent_config",
   ADAPTER_CONTRACT_VERSION,
   "process",
   "external_control",

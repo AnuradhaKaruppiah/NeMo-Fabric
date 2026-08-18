@@ -144,13 +144,6 @@ def test_virtualenv_subprocess_env_preserves_environment_outside_virtualenv(
     assert env is not os.environ
 
 
-def test_request_payload():
-    assert common_utils.request_payload({"request": {"input": "hello"}}) == {
-        "input": "hello"
-    }
-    assert common_utils.request_payload({}) == {}
-
-
 @pytest.mark.parametrize(
     ("model_config", "expected"),
     [

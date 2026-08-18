@@ -369,10 +369,9 @@ class TestHermesE2E:
         assert output["harness"] == "hermes"
         assert output["mode"] == self.mode
         assert output["base_url"] == f"{self.api_server}/v1"
-        assert output["error"] is None
+        assert self.result.error is None
         assert output["relay_runtime"]["enabled"] is True
         assert output["relay_runtime"]["emitter"] == "hermes-agent/nemo-relay"
-        assert output["failed"] is False
 
         assert "echo user_count=" in output["response"]
 

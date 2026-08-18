@@ -20,6 +20,7 @@ pub use crate::agent_config::{
     AgentMcpConfig, AgentMcpServerConfig, AgentModelConfig, AgentRuntimeConfig, AgentSkillConfig,
     AgentToolDefinition, AgentToolsConfig, AgentWorkflowConfig, AgentWorkflowEntrypointConfig,
 };
+use crate::agent_execution::{AgentRunRequest, AgentRunResult};
 use crate::error::{FabricError, Result};
 
 /// Versioned NVIDIA NeMo Fabric agent config.
@@ -783,9 +784,6 @@ pub struct AdapterRequirements {
 /// Adapter config support.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AdapterConfigSupport {
-    /// Configuration object delivered to the adapter lifecycle host.
-    #[serde(default)]
-    pub input: AdapterConfigInput,
     /// Normalized NVIDIA NeMo Fabric config areas or policy paths accepted by this adapter.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub accepts: Vec<AdapterConfigField>,
@@ -795,15 +793,6 @@ pub struct AdapterConfigSupport {
     /// Additive adapter config-support fields.
     #[serde(default, flatten)]
     pub extensions: BTreeMap<String, Value>,
-}
-
-/// Configuration object delivered to an adapter lifecycle host.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum AdapterConfigInput {
-    /// Deliver the resolved southbound `AgentConfig` contract.
-    #[default]
-    AgentConfig,
 }
 
 /// Adapter-translated normalized NVIDIA NeMo Fabric configuration fields.
@@ -2983,6 +2972,94 @@ pub(crate) fn validate_agent_config_extensions(
             AdapterExtensionPoint::WorkflowEntrypoint,
             "workflow.entrypoint",
             &target.descriptor.target.workflow().entrypoint.extensions,
+            &mut validators,
+        )?;
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_agent_run_request_extensions(
+    request: &AgentRunRequest,
+    resolved: Option<&ResolvedAdapterDescriptor>,
+) -> Result<()> {
+    let Some(resolved) = resolved else {
+        if request.extensions.is_empty() {
+            return Ok(());
+        }
+        return Err(FabricError::AdapterCompatibility {
+            adapter_id: "unresolved".to_string(),
+            field: "request.extensions".to_string(),
+            reason: "request extensions require a resolved adapter descriptor".to_string(),
+        });
+    };
+    validate_extension_block(
+        resolved,
+        AdapterExtensionPoint::RunRequest,
+        "request.extensions",
+        &request.extensions,
+        &mut BTreeMap::new(),
+    )
+}
+
+pub(crate) fn validate_agent_run_result_extensions(
+    result: &AgentRunResult,
+    resolved: Option<&ResolvedAdapterDescriptor>,
+) -> Result<()> {
+    let Some(resolved) = resolved else {
+        let has_extensions = !result.extensions.is_empty()
+            || result
+                .error
+                .as_ref()
+                .is_some_and(|error| !error.extensions.is_empty())
+            || result
+                .usage
+                .as_ref()
+                .is_some_and(|usage| !usage.extensions.is_empty())
+            || result
+                .artifacts
+                .iter()
+                .any(|artifact| !artifact.extensions.is_empty());
+        if !has_extensions {
+            return Ok(());
+        }
+        return Err(FabricError::AdapterCompatibility {
+            adapter_id: "unresolved".to_string(),
+            field: "result.extensions".to_string(),
+            reason: "result extensions require a resolved adapter descriptor".to_string(),
+        });
+    };
+    let mut validators = BTreeMap::new();
+    validate_extension_block(
+        resolved,
+        AdapterExtensionPoint::RunResult,
+        "result.extensions",
+        &result.extensions,
+        &mut validators,
+    )?;
+    if let Some(error) = &result.error {
+        validate_extension_block(
+            resolved,
+            AdapterExtensionPoint::RunError,
+            "result.error.extensions",
+            &error.extensions,
+            &mut validators,
+        )?;
+    }
+    if let Some(usage) = &result.usage {
+        validate_extension_block(
+            resolved,
+            AdapterExtensionPoint::Usage,
+            "result.usage.extensions",
+            &usage.extensions,
+            &mut validators,
+        )?;
+    }
+    for (index, artifact) in result.artifacts.iter().enumerate() {
+        validate_extension_block(
+            resolved,
+            AdapterExtensionPoint::Artifact,
+            &format!("result.artifacts.{index}.extensions"),
+            &artifact.extensions,
             &mut validators,
         )?;
     }
@@ -5606,7 +5683,6 @@ mod tests {
             .config
             .accepts
             .push(AdapterConfigField::ToolDefinitions);
-        descriptor.config.input = AdapterConfigInput::AgentConfig;
         descriptor.tool_definition_schema = Some(tool_definition_schema());
         descriptor.extension_schemas.insert(
             AdapterExtensionPoint::ToolDefinition,
@@ -5698,7 +5774,6 @@ mod tests {
     fn adapter_extensions_are_fail_closed_and_schema_validated() {
         let path = repository_root().join("adapters/claude/claude.fabric-adapter.json");
         let mut descriptor = load_adapter_descriptor(&path).expect("Claude descriptor");
-        descriptor.config.input = AdapterConfigInput::AgentConfig;
         let resolved = resolved_adapter(path.clone(), descriptor.clone());
         let mut config = typed_config("nvidia.fabric.claude");
         config.skills = None;
@@ -5748,6 +5823,70 @@ mod tests {
             FabricError::InvalidAdapterExtension { extension_path, .. }
                 if extension_path == "models.default.profile"
         ));
+    }
+
+    #[test]
+    fn invocation_extensions_are_fail_closed_and_schema_validated() {
+        let path = repository_root().join("adapters/claude/claude.fabric-adapter.json");
+        let mut descriptor = load_adapter_descriptor(&path).expect("Claude descriptor");
+        let request = AgentRunRequest {
+            input: serde_json::json!("review"),
+            context: BTreeMap::new(),
+            extensions: BTreeMap::from([("profile".to_string(), serde_json::json!("strict"))]),
+        };
+
+        let resolved = resolved_adapter(path.clone(), descriptor.clone());
+        let error = validate_agent_run_request_extensions(&request, Some(&resolved))
+            .expect_err("undeclared request extension schema");
+        assert!(matches!(
+            error,
+            FabricError::AdapterCompatibility { field, .. } if field == "request.extensions"
+        ));
+
+        descriptor.extension_schemas.insert(
+            AdapterExtensionPoint::RunRequest,
+            serde_json::json!({
+                "type": "object",
+                "properties": {"profile": {"const": "strict"}},
+                "required": ["profile"],
+                "additionalProperties": false
+            })
+            .as_object()
+            .expect("request extension schema")
+            .clone(),
+        );
+        let resolved = resolved_adapter(path.clone(), descriptor.clone());
+        validate_agent_run_request_extensions(&request, Some(&resolved))
+            .expect("declared request extension");
+
+        let result: AgentRunResult = serde_json::from_value(serde_json::json!({
+            "status": "succeeded",
+            "output": "done",
+            "extensions": {"trace_id": "trace-1"}
+        }))
+        .expect("agent result");
+        let error = validate_agent_run_result_extensions(&result, Some(&resolved))
+            .expect_err("undeclared result extension schema");
+        assert!(matches!(
+            error,
+            FabricError::AdapterCompatibility { field, .. } if field == "result.extensions"
+        ));
+
+        descriptor.extension_schemas.insert(
+            AdapterExtensionPoint::RunResult,
+            serde_json::json!({
+                "type": "object",
+                "properties": {"trace_id": {"type": "string"}},
+                "required": ["trace_id"],
+                "additionalProperties": false
+            })
+            .as_object()
+            .expect("result extension schema")
+            .clone(),
+        );
+        let resolved = resolved_adapter(path, descriptor);
+        validate_agent_run_result_extensions(&result, Some(&resolved))
+            .expect("declared result extension");
     }
 
     #[test]

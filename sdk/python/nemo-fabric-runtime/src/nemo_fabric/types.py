@@ -24,6 +24,7 @@ JSONScalar = str | int | float | bool | None
 JSONValue = JSONScalar | list["JSONValue"] | dict[str, "JSONValue"]
 
 _T = TypeVar("_T")
+_UINT64_MAX = (1 << 64) - 1
 
 
 def _plain(value: Any) -> Any:
@@ -48,7 +49,9 @@ def _plain(value: Any) -> Any:
         raise FabricConfigError("JSON numbers must be finite")
     if value is None or isinstance(value, (str, int, float, bool)):
         return deepcopy(value)
-    raise FabricConfigError(f"value of type {type(value).__name__} is not JSON-compatible")
+    raise FabricConfigError(
+        f"value of type {type(value).__name__} is not JSON-compatible"
+    )
 
 
 def _mapping(value: Any, name: str) -> dict[str, Any]:
@@ -96,9 +99,12 @@ class _ConfigMapping(dict[str, Any]):
         extras = _mapping({} if extra_fields is None else extra_fields, "extra_fields")
         overlap = self._fields.intersection(extras)
         if overlap:
-            raise FabricConfigError(f"extra_fields duplicates known fields: {', '.join(sorted(overlap))}")
+            raise FabricConfigError(
+                f"extra_fields duplicates known fields: {', '.join(sorted(overlap))}"
+            )
         stored = {
-            key: deepcopy(item) if isinstance(item, _ConfigMapping) else _plain(item) for key, item in values.items()
+            key: deepcopy(item) if isinstance(item, _ConfigMapping) else _plain(item)
+            for key, item in values.items()
         }
         super().__init__({**stored, **extras})
 
@@ -116,13 +122,17 @@ class _ConfigMapping(dict[str, Any]):
             return
         if name not in self._fields:
             raise AttributeError(name)
-        self[name] = deepcopy(value) if isinstance(value, _ConfigMapping) else _plain(value)
+        self[name] = (
+            deepcopy(value) if isinstance(value, _ConfigMapping) else _plain(value)
+        )
 
     @property
     def extra_fields(self) -> dict[str, Any]:
         """Return preserved schema-extension fields as a deep copy."""
 
-        return {key: _plain(value) for key, value in self.items() if key not in self._fields}
+        return {
+            key: _plain(value) for key, value in self.items() if key not in self._fields
+        }
 
     def to_mapping(self) -> dict[str, Any]:
         """Return a detached, JSON-compatible mapping for serialization."""
@@ -165,7 +175,9 @@ class _MetadataConfig(_ConfigMapping):
         return cls(
             name=data.get("name"),
             description=data.get("description"),
-            extra_fields={key: item for key, item in data.items() if key not in cls._fields},
+            extra_fields={
+                key: item for key, item in data.items() if key not in cls._fields
+            },
         )
 
 
@@ -210,7 +222,9 @@ class _HarnessConfig(_ConfigMapping):
             adapter_id=data.get("adapter_id"),
             resolution=data.get("resolution"),
             settings=data.get("settings"),
-            extra_fields={key: item for key, item in data.items() if key not in cls._fields},
+            extra_fields={
+                key: item for key, item in data.items() if key not in cls._fields
+            },
         )
 
 
@@ -248,7 +262,9 @@ class _WorkflowConfig(_ConfigMapping):
         return cls(
             target_id=data["target_id"],
             settings=data.get("settings"),
-            extra_fields={key: item for key, item in data.items() if key not in cls._fields},
+            extra_fields={
+                key: item for key, item in data.items() if key not in cls._fields
+            },
         )
 
 
@@ -276,7 +292,9 @@ class _DiscoveryConfig(_ConfigMapping):
         data = _mapping(value, "discovery")
         return cls(
             local_paths=data.get("local_paths", ()),
-            extra_fields={key: item for key, item in data.items() if key not in cls._fields},
+            extra_fields={
+                key: item for key, item in data.items() if key not in cls._fields
+            },
         )
 
 
@@ -310,7 +328,9 @@ class _InstructionConfig(_ConfigMapping):
         return cls(
             content=data.get("content"),
             mode=data.get("mode", "replace"),
-            extra_fields={key: item for key, item in data.items() if key not in cls._fields},
+            extra_fields={
+                key: item for key, item in data.items() if key not in cls._fields
+            },
         )
 
 
@@ -337,7 +357,9 @@ class _InstructionsConfig(_ConfigMapping):
         data = _mapping(value, "instructions")
         return cls(
             system=data.get("system"),
-            extra_fields={key: item for key, item in data.items() if key not in cls._fields},
+            extra_fields={
+                key: item for key, item in data.items() if key not in cls._fields
+            },
         )
 
 
@@ -410,7 +432,9 @@ class _RuntimeConfig(_ConfigMapping):
             artifacts=data.get("artifacts"),
             timeout_seconds=data.get("timeout_seconds"),
             max_turns=data.get("max_turns"),
-            extra_fields={key: item for key, item in data.items() if key not in cls._fields},
+            extra_fields={
+                key: item for key, item in data.items() if key not in cls._fields
+            },
         )
 
 
@@ -427,7 +451,9 @@ class _EnvironmentConfig(_ConfigMapping):
         extra_fields: Preserved extension fields not recognized by this SDK.
     """
 
-    _fields = frozenset({"provider", "workspace", "artifacts", "env", "settings", "metadata"})
+    _fields = frozenset(
+        {"provider", "workspace", "artifacts", "env", "settings", "metadata"}
+    )
     _omit_if_empty = frozenset({"env", "settings", "metadata"})
 
     def __init__(
@@ -478,7 +504,9 @@ class _EnvironmentConfig(_ConfigMapping):
             env=data.get("env"),
             settings=data.get("settings"),
             metadata=data.get("metadata"),
-            extra_fields={key: item for key, item in data.items() if key not in cls._fields},
+            extra_fields={
+                key: item for key, item in data.items() if key not in cls._fields
+            },
         )
 
 
@@ -498,7 +526,9 @@ class _SkillConfig(_ConfigMapping):
         paths: Sequence[str | Path] | None = None,
         extra_fields: Mapping[str, Any] | None = None,
     ) -> None:
-        values: dict[str, Any] = {"paths": [str(path) for path in ([] if paths is None else paths)]}
+        values: dict[str, Any] = {
+            "paths": [str(path) for path in ([] if paths is None else paths)]
+        }
         super().__init__(values, extra_fields=extra_fields)
 
     @classmethod
@@ -508,7 +538,9 @@ class _SkillConfig(_ConfigMapping):
         data = _mapping(value, "skills")
         return cls(
             paths=data.get("paths", []),
-            extra_fields={key: item for key, item in data.items() if key not in cls._fields},
+            extra_fields={
+                key: item for key, item in data.items() if key not in cls._fields
+            },
         )
 
     def add_path(self, path: str | Path) -> "_SkillConfig":
@@ -564,7 +596,9 @@ class _ToolDefinitionConfig(_ConfigMapping):
             kind=data.get("kind"),
             ref=data.get("ref"),
             settings=data.get("settings"),
-            extra_fields={key: item for key, item in data.items() if key not in cls._fields},
+            extra_fields={
+                key: item for key, item in data.items() if key not in cls._fields
+            },
         )
 
 
@@ -630,7 +664,9 @@ class _ToolsConfig(_ConfigMapping):
             definitions=data.get("definitions"),
             enabled=data.get("enabled"),
             blocked=data.get("blocked", []),
-            extra_fields={key: item for key, item in data.items() if key not in cls._fields},
+            extra_fields={
+                key: item for key, item in data.items() if key not in cls._fields
+            },
         )
 
     def block(self, *tools: str) -> _ToolsConfig:
@@ -692,7 +728,9 @@ class _McpConfig(_ConfigMapping):
         servers: Mapping[str, Any] | None = None,
         extra_fields: Mapping[str, Any] | None = None,
     ) -> None:
-        values: dict[str, Any] = {"servers": _mapping({} if servers is None else servers, "mcp servers")}
+        values: dict[str, Any] = {
+            "servers": _mapping({} if servers is None else servers, "mcp servers")
+        }
         super().__init__(values, extra_fields=extra_fields)
 
     @classmethod
@@ -702,7 +740,9 @@ class _McpConfig(_ConfigMapping):
         data = _mapping(value, "mcp")
         return cls(
             servers=data.get("servers", {}),
-            extra_fields={key: item for key, item in data.items() if key not in cls._fields},
+            extra_fields={
+                key: item for key, item in data.items() if key not in cls._fields
+            },
         )
 
     def add_server(
@@ -810,7 +850,9 @@ class _TelemetryConfig(_ConfigMapping):
         data = _mapping(value, "telemetry")
         return cls(
             providers=data.get("providers", {}),
-            extra_fields={key: item for key, item in data.items() if key not in cls._fields},
+            extra_fields={
+                key: item for key, item in data.items() if key not in cls._fields
+            },
         )
 
     @classmethod
@@ -834,7 +876,9 @@ class _TelemetryConfig(_ConfigMapping):
         self["providers"] = providers
         return self
 
-    def enable_native(self, *, config: Mapping[str, Any] | None = None) -> "_TelemetryConfig":
+    def enable_native(
+        self, *, config: Mapping[str, Any] | None = None
+    ) -> "_TelemetryConfig":
         """Let the selected harness adapter handle telemetry natively."""
 
         providers = dict(self.get("providers", {}))
@@ -927,12 +971,16 @@ class _FabricConfigSnapshot(_ConfigMapping):
         extra_fields: Mapping[str, Any] | None = None,
     ) -> None:
         metadata_value = _coerce(_MetadataConfig, metadata, "metadata")
-        harness_value = None if harness is None else _coerce(_HarnessConfig, harness, "harness")
+        harness_value = (
+            None if harness is None else _coerce(_HarnessConfig, harness, "harness")
+        )
         workflow_value = (
             None if workflow is None else _coerce(_WorkflowConfig, workflow, "workflow")
         )
         discovery_value = (
-            None if discovery is None else _coerce(_DiscoveryConfig, discovery, "discovery")
+            None
+            if discovery is None
+            else _coerce(_DiscoveryConfig, discovery, "discovery")
         )
         if harness_value is None and workflow_value is None:
             raise FabricConfigError(
@@ -943,15 +991,25 @@ class _FabricConfigSnapshot(_ConfigMapping):
             _RuntimeConfig() if runtime is None else runtime,
             "runtime",
         )
-        environment_value = None if environment is None else _coerce(_EnvironmentConfig, environment, "environment")
+        environment_value = (
+            None
+            if environment is None
+            else _coerce(_EnvironmentConfig, environment, "environment")
+        )
         instructions_value = (
             None
             if instructions is None
             else _coerce(_InstructionsConfig, instructions, "instructions")
         )
         mcp_value = None if mcp is None else _coerce(_McpConfig, mcp, "mcp")
-        skills_value = None if skills is None else _coerce(_SkillConfig, skills, "skills")
-        telemetry_value = None if telemetry is None else _coerce(_TelemetryConfig, telemetry, "telemetry")
+        skills_value = (
+            None if skills is None else _coerce(_SkillConfig, skills, "skills")
+        )
+        telemetry_value = (
+            None
+            if telemetry is None
+            else _coerce(_TelemetryConfig, telemetry, "telemetry")
+        )
         relay_value = None if relay is None else _mapping(relay, "relay")
         tools_value = None if tools is None else _coerce(_ToolsConfig, tools, "tools")
         values: dict[str, Any] = {
@@ -1007,7 +1065,9 @@ class _FabricConfigSnapshot(_ConfigMapping):
             telemetry=data.get("telemetry"),
             relay=data.get("relay"),
             tools=data.get("tools"),
-            extra_fields={key: item for key, item in data.items() if key not in cls._fields},
+            extra_fields={
+                key: item for key, item in data.items() if key not in cls._fields
+            },
         )
 
     @property
@@ -1148,7 +1208,9 @@ class _FabricConfigSnapshot(_ConfigMapping):
         if observability is not None:
             relay["observability"] = _mapping(observability, "relay observability")
         if components is not None:
-            relay["components"] = [_mapping(component, "relay component") for component in components]
+            relay["components"] = [
+                _mapping(component, "relay component") for component in components
+            ]
         if policy is not None:
             relay["policy"] = _mapping(policy, "relay policy")
         self["relay"] = relay
@@ -1240,7 +1302,13 @@ class FabricMapping(Mapping[str, Any]):
     def extra_fields(self) -> Mapping[str, Any]:
         """Return an immutable view of preserved extension fields."""
 
-        return MappingProxyType({key: _thaw(value) for key, value in self._data.items() if key not in self._fields})
+        return MappingProxyType(
+            {
+                key: _thaw(value)
+                for key, value in self._data.items()
+                if key not in self._fields
+            }
+        )
 
     def to_mapping(self) -> dict[str, Any]:
         """Return a detached, JSON-compatible mapping for serialization."""
@@ -1348,7 +1416,9 @@ class RunPlan(FabricMapping):
         data["base_dir"] = Path(data["base_dir"])
         data["config"] = _FabricConfigSnapshot.from_mapping(data.get("config", {}))
         data["adapter"] = AdapterInfo.from_mapping(descriptor)
-        data["capabilities"] = RuntimeCapabilities.from_mapping(data.get("capabilities", {}))
+        data["capabilities"] = RuntimeCapabilities.from_mapping(
+            data.get("capabilities", {})
+        )
         return data
 
 
@@ -1391,7 +1461,9 @@ class DoctorReport(FabricMapping):
 
     @classmethod
     def _normalize(cls, data: dict[str, Any]) -> dict[str, Any]:
-        data["checks"] = tuple(DoctorCheck.from_mapping(check) for check in data.get("checks", []))
+        data["checks"] = tuple(
+            DoctorCheck.from_mapping(check) for check in data.get("checks", [])
+        )
         return data
 
 
@@ -1462,7 +1534,9 @@ class ArtifactManifest(FabricMapping):
     @classmethod
     def _normalize(cls, data: dict[str, Any]) -> dict[str, Any]:
         data["root"] = None if data.get("root") is None else Path(data["root"])
-        data["artifacts"] = tuple(ArtifactRef.from_mapping(artifact) for artifact in data.get("artifacts", []))
+        data["artifacts"] = tuple(
+            ArtifactRef.from_mapping(artifact) for artifact in data.get("artifacts", [])
+        )
         return data
 
 
@@ -1491,7 +1565,11 @@ class TelemetryRef(FabricMapping):
         if "relay_enabled" in data:
             providers = metadata.get("telemetry_providers")
             provider = (
-                providers[0] if isinstance(providers, list) and providers and isinstance(providers[0], str) else "relay"
+                providers[0]
+                if isinstance(providers, list)
+                and providers
+                and isinstance(providers[0], str)
+                else "relay"
             )
             metadata.setdefault("relay_enabled", data["relay_enabled"])
             data = {
@@ -1603,6 +1681,52 @@ class RunOutput(FabricMapping):
         return _snapshot_value(self._data.get("response"), json_value=True)
 
 
+class RunUsage(FabricMapping):
+    """Normalized invocation usage reported by an adapter target."""
+
+    input_tokens: int | None
+    output_tokens: int | None
+    total_tokens: int | None
+    cost_usd: float | None
+    metadata: Mapping[str, Any]
+    _fields = frozenset(
+        {
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "cost_usd",
+            "metadata",
+        }
+    )
+    _json_fields = frozenset({"metadata"})
+
+    @classmethod
+    def _normalize(cls, data: dict[str, Any]) -> dict[str, Any]:
+        for field in ("input_tokens", "output_tokens", "total_tokens"):
+            value = data.get(field)
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not 0 <= value <= _UINT64_MAX
+            ):
+                raise FabricConfigError(
+                    f"{field.replace('_', ' ')} must be a nonnegative integer "
+                    f"no greater than {_UINT64_MAX}"
+                )
+        cost = data.get("cost_usd")
+        if cost is not None and (
+            isinstance(cost, bool)
+            or not isinstance(cost, (int, float))
+            or not math.isfinite(cost)
+            or cost < 0
+        ):
+            raise FabricConfigError("cost usd must be a finite nonnegative number")
+        if cost is not None:
+            data["cost_usd"] = float(cost)
+        data["metadata"] = _mapping(data.get("metadata", {}), "usage metadata")
+        return data
+
+
 class RunResult(FabricMapping):
     """Normalized terminal result from one NeMo Fabric invocation.
 
@@ -1622,6 +1746,7 @@ class RunResult(FabricMapping):
         output: Object-shaped adapter output as ``RunOutput``; non-object values
             are preserved as-is.
         error: Structured failure, or ``None`` on success.
+        usage: Normalized invocation usage, or ``None`` when unavailable.
         artifacts: Normalized artifact manifest.
         telemetry: Ordered telemetry references.
         events: Ordered lifecycle and invocation events.
@@ -1638,6 +1763,7 @@ class RunResult(FabricMapping):
     status: str
     output: RunOutput | JSONValue
     error: ErrorInfo | None
+    usage: RunUsage | None
     artifacts: ArtifactManifest
     telemetry: Sequence[TelemetryRef]
     events: Sequence[FabricEvent]
@@ -1654,6 +1780,7 @@ class RunResult(FabricMapping):
             "status",
             "output",
             "error",
+            "usage",
             "artifacts",
             "telemetry",
             "events",
@@ -1674,16 +1801,27 @@ class RunResult(FabricMapping):
             "status",
         ):
             data[field] = _required_text(data.get(field), field.replace("_", " "))
-        data["error"] = None if data.get("error") is None else ErrorInfo.from_mapping(data["error"])
-        data["artifacts"] = ArtifactManifest.from_mapping(data.get("artifacts", {"artifacts": []}))
+        data["error"] = (
+            None if data.get("error") is None else ErrorInfo.from_mapping(data["error"])
+        )
+        data["usage"] = (
+            None if data.get("usage") is None else RunUsage.from_mapping(data["usage"])
+        )
+        data["artifacts"] = ArtifactManifest.from_mapping(
+            data.get("artifacts", {"artifacts": []})
+        )
         telemetry = data.get("telemetry")
         if telemetry is None:
             data["telemetry"] = ()
         elif isinstance(telemetry, Mapping):
             data["telemetry"] = (TelemetryRef.from_mapping(telemetry),)
         else:
-            data["telemetry"] = tuple(TelemetryRef.from_mapping(item) for item in telemetry)
-        data["events"] = tuple(FabricEvent.from_mapping(event) for event in data.get("events", []))
+            data["telemetry"] = tuple(
+                TelemetryRef.from_mapping(item) for item in telemetry
+            )
+        data["events"] = tuple(
+            FabricEvent.from_mapping(event) for event in data.get("events", [])
+        )
         data["metadata"] = _mapping(data.get("metadata", {}), "result metadata")
         raw_output = data.get("output")
         if isinstance(raw_output, RunOutput):

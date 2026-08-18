@@ -45,7 +45,6 @@ def test_descriptor_freezes_the_custom_agent_contract_surface():
         "runner": {"module": "examples.langgraph_custom_agent.adapter.runtime"},
         "requirements": {},
         "config": {
-            "input": "agent_config",
             "accepts": [
                 "models",
                 "models.base_url",

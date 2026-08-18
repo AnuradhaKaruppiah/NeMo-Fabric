@@ -11,6 +11,10 @@ from typing import Any
 
 from langgraph.graph.state import CompiledStateGraph
 from nemo_fabric_adapter_contract.models import AgentConfig
+from nemo_fabric_adapter_contract.models import AgentRunError
+from nemo_fabric_adapter_contract.models import AgentRunRequest
+from nemo_fabric_adapter_contract.models import AgentRunResult
+from nemo_fabric_adapter_contract.models import AgentRunStatus
 from nemo_fabric_adapter_contract.models import RuntimeContext
 from nemo_fabric_adapters.common import lifecycle
 
@@ -24,19 +28,20 @@ from examples.langgraph_custom_agent.agent.graph import build_email_phishing_gra
 LOGGER = logging.getLogger(__name__)
 
 
-def _invocation_failure() -> dict[str, Any]:
+def _invocation_failure() -> AgentRunResult:
     """Return a safe terminal failure without invalidating the runtime."""
 
-    return {
-        "response": None,
-        "completed": False,
-        "failed": True,
-        "error": {
-            "code": "email_phishing_invoke_failed",
-            "message": "The email-phishing agent invocation failed",
-            "retryable": False,
+    return AgentRunResult(
+        status=AgentRunStatus.FAILED,
+        output={
+            "response": None,
+            "completed": False,
         },
-    }
+        error=AgentRunError(
+            code="email_phishing_invoke_failed",
+            message="The email-phishing agent invocation failed",
+        ),
+    )
 
 
 def main() -> None:
@@ -98,7 +103,11 @@ class EmailPhishingRuntime:
         self._model_name = agent_config.models["default"].model
         self._graph = graph
 
-    async def invoke(self, payload: dict[str, Any]) -> dict[str, Any]:
+    async def invoke(
+        self,
+        request: AgentRunRequest,
+        context: RuntimeContext,
+    ) -> AgentRunResult:
         """Run one request against the retained graph and return terminal output."""
 
         if (
@@ -112,14 +121,12 @@ class EmailPhishingRuntime:
                 "email_phishing_runtime_not_started",
                 "The email-phishing runtime is not started",
             )
-        context = _runtime_context(payload)
         if context.runtime_id != self._runtime_id:
             raise lifecycle.LifecycleError(
                 "email_phishing_runtime_mismatch",
                 "The invocation does not match the active email-phishing runtime",
             )
-        request = payload.get("request")
-        email = request.get("input") if isinstance(request, dict) else None
+        email = request.input
         if not isinstance(email, str) or not email.strip():
             raise lifecycle.LifecycleError(
                 "email_phishing_invalid_request",
@@ -153,7 +160,7 @@ class EmailPhishingRuntime:
         relay_artifacts = telemetry.artifacts()
         if relay_artifacts:
             output["relay_artifacts"] = relay_artifacts
-        return output
+        return AgentRunResult(status=AgentRunStatus.SUCCEEDED, output=output)
 
     async def stop(self) -> None:
         """Release the compiled graph and all runtime-owned references."""

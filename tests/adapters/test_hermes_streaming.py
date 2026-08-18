@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 from nemo_fabric_adapter_contract.models import AgentConfig
+from nemo_fabric_adapter_contract.models import AgentRunRequest
 from nemo_fabric_adapter_contract.models import RuntimeContext
 
 if sys.version_info >= (3, 14):
@@ -73,23 +74,21 @@ async def test_relay_invocation_passes_fabric_request_id_to_hermes(
     )
 
     await runtime.invoke(
-        {
-            "runtime_context": RuntimeContext.from_mapping(
-                {
-                    "runtime_id": "runtime-1",
-                    "invocation_id": "invocation-1",
-                    "request_id": "request-1",
-                    "environment": {
-                        "environment_id": "environment-1",
-                        "provider": "test",
-                        "control_location": "in_env_control",
-                        "ownership": "caller_owned",
-                    },
-                    "artifacts": {},
-                }
-            ).to_mapping(),
-            "request": {"input": "hello"},
-        }
+        AgentRunRequest(input="hello"),
+        RuntimeContext.from_mapping(
+            {
+                "runtime_id": "runtime-1",
+                "invocation_id": "invocation-1",
+                "request_id": "request-1",
+                "environment": {
+                    "environment_id": "environment-1",
+                    "provider": "test",
+                    "control_location": "in_env_control",
+                    "ownership": "caller_owned",
+                },
+                "artifacts": {},
+            }
+        ),
     )
 
     assert task_ids == ["request-1"]

@@ -11,10 +11,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
-/// Preview southbound invocation request.
-///
-/// The current local-host transport does not enforce this type. It will join
-/// the negotiated adapter contract when typed invoke transport is implemented.
+/// Southbound invocation request passed to an adapter target.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentRunRequest {
@@ -107,10 +104,7 @@ pub struct AgentUsage {
     pub extensions: BTreeMap<String, Value>,
 }
 
-/// Preview southbound terminal result.
-///
-/// The current local-host transport does not decode this type. It will join
-/// the negotiated adapter contract when typed invoke transport is implemented.
+/// Southbound terminal result returned by an adapter target.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = agent_run_result_schema)]

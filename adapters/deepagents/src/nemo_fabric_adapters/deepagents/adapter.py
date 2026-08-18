@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import math
 import os
 import uuid
 from collections.abc import Callable
@@ -26,6 +27,11 @@ from langchain_core.messages import ToolMessage
 from nemo_fabric_adapter_contract.models import AgentConfig
 from nemo_fabric_adapter_contract.models import AgentMcpServerConfig
 from nemo_fabric_adapter_contract.models import AgentModelConfig
+from nemo_fabric_adapter_contract.models import AgentRunError
+from nemo_fabric_adapter_contract.models import AgentRunRequest
+from nemo_fabric_adapter_contract.models import AgentRunResult
+from nemo_fabric_adapter_contract.models import AgentRunStatus
+from nemo_fabric_adapter_contract.models import AgentUsage
 from nemo_fabric_adapter_contract.models import RuntimeContext
 from nemo_fabric_adapters.common import lifecycle
 import nemo_fabric_adapters.common.utils as common_utils
@@ -585,14 +591,17 @@ class DeepAgentsRuntime:
         self._callback_handler_type = NemoRelayDeepAgentsCallbackHandler
         return add_nemo_relay_integration(agent_kwargs)
 
-    async def invoke(self, invocation: dict[str, Any]) -> dict[str, Any]:
+    async def invoke(
+        self,
+        request: AgentRunRequest,
+        runtime_context: RuntimeContext,
+    ) -> AgentRunResult:
         start_payload = self._start_payload
         if not self._started or self._agent is None or start_payload is None:
             raise lifecycle.LifecycleError(
                 "deepagents_runtime_not_started",
                 "Deep Agents runtime is not started",
             )
-        runtime_context = RuntimeContext.from_mapping(invocation.get("runtime_context"))
         runtime_id = runtime_context.runtime_id
         if runtime_id != self._runtime_id:
             raise lifecycle.LifecycleError(
@@ -600,13 +609,7 @@ class DeepAgentsRuntime:
                 "Deep Agents invocation does not match the active runtime",
             )
 
-        payload = {
-            **start_payload,
-            "runtime_context": invocation.get("runtime_context"),
-            "request": invocation.get("request"),
-        }
-        request = payload.get("request") or {}
-        user_message = request.get("input") or ""
+        user_message = "" if request.input is None else request.input
         if not isinstance(user_message, str):
             user_message = json.dumps(user_message, sort_keys=True)
         request_id = runtime_context.request_id
@@ -624,7 +627,7 @@ class DeepAgentsRuntime:
         telemetry_runtime, relay_artifacts, collect_error = self._telemetry_output(
             inherited_quarantine=inherited_quarantine
         )
-        return normalize_output(
+        output = normalize_output(
             model_name=self._model_name,
             base_url=self._base_url,
             runtime_id=self._runtime_id,
@@ -639,6 +642,47 @@ class DeepAgentsRuntime:
             telemetry_error=_join_faults(outcome.telemetry_error, collect_error),
             telemetry_quarantine_cause=(
                 self._telemetry_quarantine_cause if inherited_quarantine else None
+            ),
+        )
+        failed = bool(output.pop("failed", False))
+        reported_error = output.pop("error", None)
+        raw_usage = output.get("usage")
+        usage = raw_usage if isinstance(raw_usage, dict) else {}
+        token_fields = {
+            "input_tokens": usage.get("prompt_tokens"),
+            "output_tokens": usage.get("completion_tokens"),
+            "total_tokens": usage.get("total_tokens"),
+        }
+        tokens = {
+            name: value
+            for name, value in token_fields.items()
+            if isinstance(value, int)
+            and not isinstance(value, bool)
+            and 0 <= value <= (1 << 64) - 1
+        }
+        cost = usage.get("cost")
+        if (
+            not isinstance(cost, (int, float))
+            or isinstance(cost, bool)
+            or not math.isfinite(cost)
+            or cost < 0
+        ):
+            cost = None
+        return AgentRunResult(
+            status=AgentRunStatus.FAILED if failed else AgentRunStatus.SUCCEEDED,
+            output=output,
+            error=(
+                AgentRunError(
+                    code="deepagents_invocation_failed",
+                    message=str(reported_error or "Deep Agents invocation failed"),
+                )
+                if failed
+                else None
+            ),
+            usage=(
+                AgentUsage(**tokens, cost_usd=cost)
+                if tokens or cost is not None
+                else None
             ),
         )
 
@@ -1098,14 +1142,23 @@ def _aggregate_usage(messages: list[dict[str, Any]]) -> dict[str, Any] | None:
             ("total_tokens", "total_tokens"),
         ):
             value = usage.get(source)
-            if isinstance(value, int):
+            if (
+                isinstance(value, int)
+                and not isinstance(value, bool)
+                and 0 <= value <= (1 << 64) - 1
+            ):
                 totals[target] = int(totals.get(target, 0)) + value
         # Cost is not part of LangChain's UsageMetadata; surface it only when a
         # model/provider reports it on the usage or response metadata.
         candidate = (
             usage.get("total_cost") or usage.get("cost") or _metadata_cost(message)
         )
-        if isinstance(candidate, (int, float)) and not isinstance(candidate, bool):
+        if (
+            isinstance(candidate, (int, float))
+            and not isinstance(candidate, bool)
+            and math.isfinite(candidate)
+            and candidate >= 0
+        ):
             cost += float(candidate)
             has_cost = True
     if has_cost:
@@ -1117,7 +1170,12 @@ def _metadata_cost(message: dict[str, Any]) -> float | None:
     metadata = message.get("response_metadata")
     if isinstance(metadata, dict):
         value = metadata.get("cost")
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+            and value >= 0
+        ):
             return float(value)
     return None
 
