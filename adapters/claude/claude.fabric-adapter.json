@@ -64,8 +64,20 @@
     "required": [],
     "additionalProperties": false
   },
+  "extension_schemas": {
+    "run_error": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "subtype": {"type": "string"},
+        "api_error_status": {"type": "integer"},
+        "exit_code": {"type": "integer"},
+        "timeout_seconds": {"type": "number", "minimum": 0}
+      },
+      "additionalProperties": false
+    }
+  },
   "config": {
-    "input": "agent_config",
     "accepts": [
       "models",
       "models.base_url",

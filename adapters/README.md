@@ -3,12 +3,13 @@ SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# NVIDIA NeMo Fabric Agent Harness Adapters
+# NVIDIA NeMo Fabric Adapters
 
-NeMo Fabric adapters translate the normalized NeMo Fabric contract into
-harness-native models, tools, sessions, and telemetry. Use this reference to
-compare the bundled adapters and then open the linked package guide for
-installation, authentication, and configuration details.
+NeMo Fabric adapters translate the normalized NeMo Fabric contract into the
+native models, tools, sessions, and telemetry of an agent harness or custom
+agent. Use this reference to compare the bundled harness adapters, then refer
+to the custom-agent examples when building a shared framework adapter or a
+dedicated adapter.
 
 The adapter descriptor selected in `RunPlan` is authoritative for normalized
 configuration, its adapter-owned settings schema, and telemetry support.
@@ -39,6 +40,20 @@ schemas come from independently registered Adapter Target Descriptors.
 | [LangChain Deep Agents](deepagents/README.md) | `nvidia.fabric.langchain.deepagents` | `nemo-fabric-adapters-deepagents` | 3.11+ |
 | [Hermes Agent](hermes/README.md) | `nvidia.fabric.hermes` | `nemo-fabric-adapters-hermes` | 3.11-3.13 |
 | [mini-SWE-agent](mini-swe-agent/README.md) | `nvidia.fabric.mini-swe-agent` | `nemo-fabric-adapters-mini-swe-agent` | 3.11+ |
+
+## Custom-Agent Adapter References
+
+Custom-agent support uses the same adapter contract as the bundled harnesses:
+
+- The [NeMo Agent Toolkit reference adapter](../external/nat/README.md) shows
+  one shared framework adapter with separately registered calculator and
+  email-phishing targets.
+- The [LangGraph custom-agent example](../examples/langgraph_custom_agent/README.md)
+  shows a dedicated adapter beside an application-owned graph.
+
+Start with the
+[adapter contract overview](../docs/adapter-contract/README.md) to choose an
+integration shape and implement the minimum lifecycle.
 
 ## Configuration Compatibility
 

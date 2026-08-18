@@ -116,10 +116,6 @@ def virtualenv_subprocess_env() -> dict[str, str]:
     return env
 
 
-def request_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    return payload.get("request") or {}
-
-
 def fabric_config(payload: dict[str, Any]) -> dict[str, Any]:
     return payload.get("config") or {}
 
@@ -424,7 +420,11 @@ def validate_relay_observability_v3(plugin_config: dict[str, Any]) -> None:
             )
         if "version" in config:
             version = config["version"]
-            if isinstance(version, bool) or not isinstance(version, int) or version != 3:
+            if (
+                isinstance(version, bool)
+                or not isinstance(version, int)
+                or version != 3
+            ):
                 raise ValueError(
                     "unsupported NeMo Relay observability config version "
                     f"{version!r}; expected version 3"
@@ -439,15 +439,12 @@ def validate_relay_observability_v3(plugin_config: dict[str, Any]) -> None:
             continue
         opentelemetry = config["opentelemetry"]
         if not isinstance(opentelemetry, dict):
-            raise ValueError(
-                "NeMo Relay opentelemetry config must be an object"
-            )
+            raise ValueError("NeMo Relay opentelemetry config must be an object")
         legacy_fields = sorted(legacy_flat_otel_fields.intersection(opentelemetry))
         if legacy_fields:
             raise ValueError(
                 "NeMo Relay observability config version 3 requires exporter "
-                "fields inside opentelemetry.endpoints: "
-                + ", ".join(legacy_fields)
+                "fields inside opentelemetry.endpoints: " + ", ".join(legacy_fields)
             )
         enabled = opentelemetry.get("enabled", False)
         if not isinstance(enabled, bool):
@@ -466,7 +463,10 @@ def validate_relay_observability_v3(plugin_config: dict[str, Any]) -> None:
                     f"opentelemetry.endpoints[{index}]"
                 )
             endpoint_type = endpoint.get("type")
-            if not isinstance(endpoint_type, str) or endpoint_type not in endpoint_types:
+            if (
+                not isinstance(endpoint_type, str)
+                or endpoint_type not in endpoint_types
+            ):
                 raise ValueError(
                     "NeMo Relay OpenTelemetry endpoint type must be one of "
                     "'full', 'gen_ai', or 'openinference' for "

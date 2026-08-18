@@ -13,10 +13,11 @@ only target translation and lifecycle state.
 
 Read the current
 [adapter contract](https://github.com/NVIDIA/NeMo-Fabric/tree/main/docs/adapter-contract)
-before changing code. Always read the overview, descriptor, normalized
-configuration, execution, results, registration, and conformance pages. Read
-the custom-agents page when the target loads application-defined agents or
-workflows.
+before changing code. Start with the overview, choose an integration shape,
+then follow the numbered descriptor, configuration, execution, results,
+registration, and verification stages. Read the custom-agent page when the
+target loads application-defined agents or workflows. Read the optional native
+OpenAI streaming page only when the adapter claims that capability.
 
 Use the committed
 [adapter-contract JSON Schemas](https://github.com/NVIDIA/NeMo-Fabric/tree/main/schemas/adapter-contract)
@@ -30,12 +31,15 @@ code.
 Establish the adapter boundary before defining its descriptor:
 
 1. Identify the adapter implementation and its stable `adapter_id`.
-2. Reuse one adapter across agents built for the same target. Do not create an
-   adapter per custom agent.
-3. List the normalized fields the target can actually enforce.
-4. Separate target-wide `harness.settings`, per-agent `workflow.settings`, and
-   typed `extensions`.
-5. Keep installation, environment preparation, Relay orchestration, caller
+2. Choose a harness adapter, a shared framework adapter with registered
+   targets, or a dedicated custom-agent adapter.
+3. Reuse one shared adapter across custom agents when the framework provides
+   stable loading and invocation semantics. Use a dedicated adapter when the
+   agent itself is the only unambiguous execution boundary.
+4. List the normalized fields the target can actually enforce.
+5. Separate adapter-wide `harness.settings`, per-target `workflow.settings`,
+   and typed `extensions`.
+6. Keep installation, environment preparation, Relay orchestration, caller
    scheduling, and consumer result enrichment outside the adapter.
 
 If the requested behavior cannot be expressed by the current contract, surface
@@ -49,7 +53,6 @@ translation:
 
 - Set the current `contract_version`, a globally stable `adapter_id`,
   `adapter_kind`, and runner binding.
-- Set `config.input` to `agent_config`.
 - Declare only normalized `config.accepts` fields the implementation enforces.
 - Declare `mcp.auth.oauth2` or `mcp.auth.service_account` only when the adapter
   implements the corresponding MCP authentication mode.
@@ -92,11 +95,9 @@ runtime.
 For a TypeScript adapter, depend on
 `nemo-fabric-adapter-contract`. Import descriptor, configuration,
 runtime-context, request, and result types from the package root, matching the
-Python package's single model namespace. Request and result types are for work
-on the future typed invocation boundary and are not part of the current host
-protocol. TypeScript types do not validate data received from a process or
-network boundary; validate untrusted values against the JSON Schemas included
-with the package.
+Python package's single model namespace. TypeScript types do not validate data
+received from a process or network boundary; validate untrusted values against
+the JSON Schemas included with the package.
 
 ## Map AgentConfig
 
@@ -125,13 +126,14 @@ Implement exactly one `start`, zero or more ordered `invoke` operations, and
 one `stop` for each NeMo Fabric runtime.
 
 - Construct and retain target state in `start`.
-- Translate one request and one terminal outcome in `invoke`.
+- Accept `AgentRunRequest` and `RuntimeContext`, then return one
+  `AgentRunResult` from `invoke`.
 - Make `stop` safe after partial startup and failed invocation.
 - Isolate mutable state between independent runtimes.
 - If the descriptor declares `capabilities.streaming`, implement
-  `async invoke_openai_stream(payload, emit)`. Execute the target exactly once,
+  `async invoke_openai_stream(request, context, emit)`. Execute the target exactly once,
   await `emit(chunk)` only for the `openai.chat_completions.chunk/v1` profile,
-  and return one JSON-compatible terminal outcome. Each chunk requires
+  and return one `AgentRunResult`. Each chunk requires
   non-empty `id` and `model`, a nonnegative integer `created`, the exact
   `chat.completion.chunk` discriminator, and structurally valid `choices`. An
   invocation that emits no chunks is valid.
@@ -149,6 +151,10 @@ For a Python adapter that opts into the common host:
 
 ```python
 from nemo_fabric_adapter_contract.models import AgentConfig
+from nemo_fabric_adapter_contract.models import AgentRunRequest
+from nemo_fabric_adapter_contract.models import AgentRunResult
+from nemo_fabric_adapter_contract.models import AgentRunStatus
+from nemo_fabric_adapter_contract.models import RuntimeContext
 from nemo_fabric_adapters.common import lifecycle
 
 
@@ -157,13 +163,24 @@ class TargetRuntime:
         config: AgentConfig = payload["config"]
         ...
 
-    async def invoke(self, payload):
-        ...
+    async def invoke(
+        self,
+        request: AgentRunRequest,
+        context: RuntimeContext,
+    ) -> AgentRunResult:
+        native = await self.target.run(request.input)
+        return AgentRunResult(
+            status=AgentRunStatus.SUCCEEDED,
+            output={"response": native.text},
+        )
 
-    async def invoke_openai_stream(self, payload, emit):
-        async for chunk in self.target.stream(payload["request"]):
+    async def invoke_openai_stream(self, request, context, emit):
+        async for chunk in self.target.stream(request.input):
             await emit(chunk)
-        return self.target.terminal_result()
+        return AgentRunResult(
+            status=AgentRunStatus.SUCCEEDED,
+            output={"response": self.target.final_text},
+        )
 
     async def stop(self):
         ...
@@ -173,24 +190,37 @@ def main() -> None:
     lifecycle.serve(TargetRuntime, config_loader=AgentConfig.from_mapping)
 ```
 
-Keep current host request/result conversion in dedicated functions. The
-published `AgentRunRequest` and `AgentRunResult` types are preview-only and are
-not part of the negotiated contract. Do not return `AgentRunResult` from the
-current local host: it is treated as ordinary JSON, including `status: failed`.
+The common host decodes the internal lifecycle envelope before calling the
+adapter and encodes its terminal result afterward. Adapter code does not parse
+the transport envelope or infer failure from fields inside `output`.
+Return `AgentRunStatus.FAILED` with an `AgentRunError` when the target completes
+with a failed outcome. Raise an exception when the adapter cannot produce a
+normalized terminal result.
 
 ## Handle Custom Agents
 
-Use the selected Adapter Target Descriptor's `spec.entrypoint.kind` for
-resolution semantics and `ref` for the factory identity. Validate
-`workflow.settings` against that target's `spec.settings_schema`.
+For a shared framework adapter, select the registered target with
+`FabricConfig.workflow.target_id`. Use the selected Adapter Target Descriptor's
+`spec.entrypoint.kind` for adapter-scoped resolution semantics and `ref` for
+the factory identity. Validate `workflow.settings` against that target's
+`spec.settings_schema`.
 
-- Map NeMo Fabric-defined `factory` intents to target-native factories.
-- Resolve `python_entrypoint` only from the fixed `nemo_fabric.agents` group.
-- Resolve `python_module` only as an importable module with `create_agent`.
-- Never load a filesystem path from `ref`.
+- Define only entry-point kinds that the shared adapter resolves
+  unambiguously. The v1alpha2 contract does not define a global kind catalog.
+- Map a declared `factory` intent to the corresponding target-native factory.
+  The current NeMo Agent Toolkit reference maps `fabric.agent.react` to its
+  ReAct workflow factory.
 - Supply factories an adapter-defined build context containing already
   resolved native values; do not require custom agents to parse `FabricConfig`
   or `AgentConfig`.
+- Use a dedicated adapter without an artificial workflow entry point when the
+  selected adapter already identifies one application-owned agent.
+
+Compare the
+[NeMo Agent Toolkit shared adapter](https://github.com/NVIDIA/NeMo-Fabric/tree/main/external/nat)
+with the
+[dedicated LangGraph example](https://github.com/NVIDIA/NeMo-Fabric/tree/main/examples/langgraph_custom_agent)
+before choosing the custom-agent boundary.
 
 ## Validate Before Handoff
 

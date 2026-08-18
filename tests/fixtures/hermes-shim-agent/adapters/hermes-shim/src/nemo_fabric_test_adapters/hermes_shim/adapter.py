@@ -13,6 +13,11 @@ from pathlib import Path
 from typing import Any
 
 from nemo_fabric_adapters.common import lifecycle
+from nemo_fabric_adapter_contract.models import AgentRunError
+from nemo_fabric_adapter_contract.models import AgentRunRequest
+from nemo_fabric_adapter_contract.models import AgentRunResult
+from nemo_fabric_adapter_contract.models import AgentRunStatus
+from nemo_fabric_adapter_contract.models import RuntimeContext
 
 
 def main() -> None:
@@ -27,7 +32,11 @@ class ShimRuntime:
     async def start(self, payload: dict[str, Any]) -> None:
         self._start_payload = payload
 
-    async def invoke(self, invocation: dict[str, Any]) -> dict[str, Any]:
+    async def invoke(
+        self,
+        request: AgentRunRequest,
+        context: RuntimeContext,
+    ) -> AgentRunResult:
         if self._start_payload is None:
             raise lifecycle.LifecycleError(
                 "hermes_runtime_not_started",
@@ -35,25 +44,24 @@ class ShimRuntime:
             )
         payload = {
             **self._start_payload,
-            "runtime_context": invocation.get("runtime_context"),
-            "request": invocation.get("request"),
+            "runtime_context": context.to_mapping(),
+            "request": request.to_mapping(),
         }
-        return run_selected_mode(payload)
+        return agent_result(run_selected_mode(payload))
 
     async def invoke_openai_stream(
         self,
-        invocation: dict[str, Any],
+        request: AgentRunRequest,
+        context: RuntimeContext,
         emit: Callable[[Mapping[str, Any]], Awaitable[None]],
-    ) -> dict[str, Any]:
+    ) -> AgentRunResult:
         if self._start_payload is None:
             raise lifecycle.LifecycleError(
                 "hermes_runtime_not_started",
                 "shim runtime is not started",
             )
         self._openai_stream_invocations += 1
-        request = invocation.get("request") or {}
-        context = request.get("context") or {}
-        if context.get("openai_stream_mode") != "empty":
+        if request.context.get("openai_stream_mode") != "empty":
             for index, content in enumerate(("hel", "lo")):
                 await emit(
                     {
@@ -72,12 +80,12 @@ class ShimRuntime:
                 )
         payload = {
             **self._start_payload,
-            "runtime_context": invocation.get("runtime_context"),
-            "request": request,
+            "runtime_context": context.to_mapping(),
+            "request": request.to_mapping(),
         }
         output = run_selected_mode(payload)
         output["openai_stream_invocation_count"] = self._openai_stream_invocations
-        return output
+        return agent_result(output)
 
     async def stop(self) -> None:
         self._start_payload = None
@@ -119,6 +127,24 @@ def run_selected_mode(payload: dict[str, Any]) -> dict[str, Any]:
     if settings.get("mode") == "swebench_shim":
         return run_swebench_shim(payload)
     return run_shim(payload)
+
+
+def agent_result(output: dict[str, Any]) -> AgentRunResult:
+    normalized = dict(output)
+    failed = bool(normalized.pop("failed", False))
+    reported_error = normalized.pop("error", None)
+    return AgentRunResult(
+        status=AgentRunStatus.FAILED if failed else AgentRunStatus.SUCCEEDED,
+        output=normalized,
+        error=(
+            AgentRunError(
+                code="hermes_shim_failed",
+                message=str(reported_error or "Hermes shim invocation failed"),
+            )
+            if failed
+            else None
+        ),
+    )
 
 
 def run_shim(payload: dict[str, Any]) -> dict[str, Any]:

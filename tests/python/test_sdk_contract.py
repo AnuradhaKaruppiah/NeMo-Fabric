@@ -48,6 +48,7 @@ from nemo_fabric import RunOutput
 from nemo_fabric import RunPlan
 from nemo_fabric import RunRequest
 from nemo_fabric import RunResult
+from nemo_fabric import RunUsage
 from nemo_fabric import Runtime
 from nemo_fabric import RuntimeCapabilities
 from nemo_fabric import RuntimeConfig
@@ -176,12 +177,16 @@ def test_typed_workflow_rejects_blank_target_id():
 
 @pytest.mark.parametrize("path", ["", " ", "\t"])
 def test_discovery_config_rejects_blank_local_paths(path: str):
-    with pytest.raises(ValidationError, match="discovery local paths must not be empty"):
+    with pytest.raises(
+        ValidationError, match="discovery local paths must not be empty"
+    ):
         DiscoveryConfig(local_paths=[path])
 
     raw = _plan()["config"]
     raw["discovery"] = {"local_paths": [path]}
-    with pytest.raises(FabricConfigError, match="discovery local paths must not be empty"):
+    with pytest.raises(
+        FabricConfigError, match="discovery local paths must not be empty"
+    ):
         _FabricConfigSnapshot.from_mapping(raw)
 
 
@@ -624,9 +629,7 @@ def test_typed_config_serializes_normalized_execution_fields():
     assert mapping["runtime"]["max_turns"] == 7
     assert mapping["runtime"]["timeout_seconds"] == 12.5
     assert mapping["environment"]["env"] == {"VISIBLE": "yes"}
-    assert mapping["models"]["default"]["base_url"] == (
-        "https://models.example/v1"
-    )
+    assert mapping["models"]["default"]["base_url"] == ("https://models.example/v1")
     assert mapping["tools"] == {"enabled": [], "blocked": ["browser"]}
 
     with pytest.raises(ValidationError, match="greater than 0"):
@@ -645,9 +648,7 @@ def test_instruction_content_must_be_non_empty(content: str):
         InstructionConfig(content=content)
 
     raw = _plan()["config"]
-    raw["instructions"] = {
-        "system": {"content": content, "mode": "replace"}
-    }
+    raw["instructions"] = {"system": {"content": content, "mode": "replace"}}
     with pytest.raises(FabricConfigError, match="non-empty string"):
         _FabricConfigSnapshot.from_mapping(raw)
 
@@ -717,9 +718,7 @@ def test_run_plan_config_preserves_normalized_tools_and_execution_fields():
     raw = _plan()["config"]
     raw.update(
         {
-            "instructions": {
-                "system": {"content": "Be concise.", "mode": "replace"}
-            },
+            "instructions": {"system": {"content": "Be concise.", "mode": "replace"}},
             "runtime": {"timeout_seconds": 9, "max_turns": 5},
             "environment": {"provider": "local", "env": {"VISIBLE": "yes"}},
             "tools": {"enabled": [], "blocked": ["browser"]},
@@ -745,7 +744,9 @@ def test_run_plan_tools_config_rejects_scalar_blocked_value():
 
 @pytest.mark.parametrize("definitions", [[], [{"kind": "function", "ref": "web"}]])
 def test_run_plan_tools_config_rejects_non_mapping_definitions(definitions: object):
-    with pytest.raises(FabricConfigError, match="tool definitions must be a JSON object"):
+    with pytest.raises(
+        FabricConfigError, match="tool definitions must be a JSON object"
+    ):
         _ToolsConfig(definitions=definitions)  # type: ignore[arg-type]
 
 
@@ -797,9 +798,7 @@ def test_run_plan_snapshot_removes_named_definition():
             "metadata": {"name": "demo"},
             "harness": {"adapter_id": "test.fabric.shim"},
             "tools": {
-                "definitions": {
-                    "web": {"kind": "function_group", "ref": "web_tools"}
-                }
+                "definitions": {"web": {"kind": "function_group", "ref": "web_tools"}}
             },
         }
     )
@@ -902,15 +901,15 @@ def test_fabric_config_authors_first_class_relay_observability():
                         "filename": "events.atof.jsonl",
                         "mode": "overwrite",
                     },
-                        {
-                            "type": "stream",
-                            "url": "http://localhost:4319/events",
-                            "transport": "ndjson",
-                            "header_env": {"authorization": "RELAY_AUTHORIZATION"},
-                            "timeout_millis": 3000,
-                            "field_name_policy": "preserve",
-                            "name": "live-events",
-                        },
+                    {
+                        "type": "stream",
+                        "url": "http://localhost:4319/events",
+                        "transport": "ndjson",
+                        "header_env": {"authorization": "RELAY_AUTHORIZATION"},
+                        "timeout_millis": 3000,
+                        "field_name_policy": "preserve",
+                        "name": "live-events",
+                    },
                 ],
             },
             "atif": {
@@ -1682,7 +1681,9 @@ class NativeRecorder:
         assert json.loads(plan_json)["agent_name"] == "demo"
         return json.dumps(_runtime())
 
-    def invoke_runtime(self, plan_json: str, runtime_json: str, request_json: str) -> str:
+    def invoke_runtime(
+        self, plan_json: str, runtime_json: str, request_json: str
+    ) -> str:
         if self.fail_invoke:
             raise RuntimeError("native invoke failed")
         request = json.loads(request_json)
@@ -1748,7 +1749,9 @@ def test_run_request_is_validated_and_json_safe():
     overrides["limits"]["turns"] = 2
 
     assert request.request_id == "request-1"
-    assert request.to_mapping()["input"] == {"messages": [{"role": "user", "content": "hello"}]}
+    assert request.to_mapping()["input"] == {
+        "messages": [{"role": "user", "content": "hello"}]
+    }
     assert request.to_mapping()["context"] == {"run_id": "run-1", "labels": ["sdk"]}
     assert request.to_mapping()["overrides"] == {
         "temperature": 0,
@@ -1810,7 +1813,9 @@ def test_run_request_preserves_extension_fields():
         future_request={"enabled": True},
     )
 
-    assert request.to_mapping()["input"] == {"messages": [{"role": "user", "content": "hello"}]}
+    assert request.to_mapping()["input"] == {
+        "messages": [{"role": "user", "content": "hello"}]
+    }
     assert request.context == {"job_id": "job-1"}
     assert request.extra_fields["future_request"] == {"enabled": True}
 
@@ -1846,6 +1851,47 @@ def test_run_result_wraps_nested_error_and_keeps_mapping_access():
     assert result.artifacts.artifacts == ()
     assert result.events[0].kind == "log"
     assert result.to_dict()["error"]["code"] == "adapter_failed"
+
+
+def test_run_result_wraps_normalized_usage():
+    result = RunResult.from_mapping(
+        _run_result(
+            output="done",
+            usage={
+                "input_tokens": 3,
+                "output_tokens": 5,
+                "total_tokens": 8,
+                "cost_usd": 0.25,
+                "metadata": {"provider": "test"},
+            },
+        )
+    )
+
+    assert isinstance(result.usage, RunUsage)
+    assert result.usage.total_tokens == 8
+    assert result.usage.cost_usd == 0.25
+    assert isinstance(result.usage.cost_usd, float)
+    assert result.usage.metadata == {"provider": "test"}
+
+
+@pytest.mark.parametrize("value", [-1, True, 1.5])
+def test_run_usage_rejects_invalid_token_counts(value):
+    with pytest.raises(FabricConfigError, match="nonnegative integer"):
+        RunUsage.from_mapping({"input_tokens": value})
+
+
+@pytest.mark.parametrize("field", ["input_tokens", "output_tokens", "total_tokens"])
+def test_run_usage_rejects_token_counts_above_uint64(field):
+    with pytest.raises(FabricConfigError, match="no greater than"):
+        RunUsage.from_mapping({field: 1 << 64})
+
+
+@pytest.mark.parametrize(
+    "value", [-1, True, float("nan"), float("inf"), float("-inf")]
+)
+def test_run_usage_rejects_invalid_costs(value):
+    with pytest.raises(FabricConfigError, match="finite"):
+        RunUsage.from_mapping({"cost_usd": value})
 
 
 def test_run_result_exposes_detached_json_values():
@@ -1892,7 +1938,9 @@ def test_run_output_exposes_response_and_preserves_extensions():
 
 
 def test_run_result_wraps_object_output_as_run_output():
-    result = RunResult.from_mapping(_run_result(output={"response": "hello", "usage": {"tokens": 1}}))
+    result = RunResult.from_mapping(
+        _run_result(output={"response": "hello", "usage": {"tokens": 1}})
+    )
 
     assert isinstance(result.output, RunOutput)
     assert result.output.response == "hello"
@@ -1928,7 +1976,9 @@ def test_run_output_preserves_non_string_response_without_raising():
 
 
 def test_run_result_preserves_structured_response_from_core_valid_output():
-    result = RunResult.from_mapping(_run_result(output={"response": {"text": "hello"}, "usage": {"tokens": 1}}))
+    result = RunResult.from_mapping(
+        _run_result(output={"response": {"text": "hello"}, "usage": {"tokens": 1}})
+    )
 
     assert isinstance(result.output, RunOutput)
     assert result.output.response == {"text": "hello"}

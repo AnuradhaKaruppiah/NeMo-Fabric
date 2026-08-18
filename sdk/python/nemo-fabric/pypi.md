@@ -9,22 +9,23 @@ SPDX-License-Identifier: Apache-2.0
 [![GitHub](https://img.shields.io/badge/github-repo-blue?logo=github)](https://github.com/NVIDIA/NeMo-Fabric/)
 [![Release](https://img.shields.io/github/v/release/NVIDIA/NeMo-Fabric?color=green)](https://github.com/NVIDIA/NeMo-Fabric/releases)
 
-![Diagram showing NeMo Fabric connecting applications, evaluations, and reinforcement learning rollouts to Hermes, Codex, Claude, and Deep Agents, with results, artifacts, and telemetry as outputs.](https://raw.githubusercontent.com/NVIDIA/NeMo-Fabric/refs/heads/main/assets/fabric-hero-option2.png)
+![Diagram showing NeMo Fabric connecting applications, evaluation systems, and reinforcement learning rollouts to harnesses and custom agents, with results, artifacts, and telemetry as outputs.](https://raw.githubusercontent.com/NVIDIA/NeMo-Fabric/refs/heads/main/assets/fabric-hero.png)
 
 NeMo Fabric gives users one configurable, observable way to run applications
-across multiple agent harnesses. It standardizes configuration, lifecycle
-management, and results without requiring a separate integration for every harness.
+across agent harnesses and custom agents. It standardizes configuration,
+lifecycle management, and results without requiring a separate integration for
+every Adapter Target.
 
-NeMo Fabric lets you change harnesses without rebuilding each integration,
-isolate conflicting runtime dependencies, and manage harness configuration,
-execution, and observability consistently. Every run returns normalized
-results, artifacts, and telemetry for downstream systems to consume.
+NeMo Fabric lets you change Adapter Targets without rebuilding each
+integration, isolate conflicting runtime dependencies, and manage target
+configuration, execution, and observability consistently. Every run returns
+normalized results, artifacts, and telemetry for downstream systems to consume.
 
 It provides:
 
 - a versioned, typed configuration contract;
 - ordinary Python composition for experiment variants;
-- adapter integrations for harness-specific launch and control;
+- adapter integrations for target-specific launch and control;
 - a Python SDK backed by the Rust core;
 - normalized run results, artifact manifests, and telemetry references.
 

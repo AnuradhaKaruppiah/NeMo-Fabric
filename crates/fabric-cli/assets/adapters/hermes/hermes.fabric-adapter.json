@@ -60,8 +60,17 @@
     "required": [],
     "additionalProperties": false
   },
+  "extension_schemas": {
+    "run_error": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "provider": {"type": "string"}
+      },
+      "additionalProperties": false
+    }
+  },
   "config": {
-    "input": "agent_config",
     "accepts": [
       "models",
       "models.base_url",

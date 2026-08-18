@@ -15,6 +15,12 @@ provides-extras = ["pydantic"]
 name = "nemo-fabric-adapters-common"
 version = "0.3.0"
 source = { editable = "../common" }
+dependencies = [
+    { name = "nemo-fabric-adapter-contract" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "nemo-fabric-adapter-contract", editable = "../../adapter-contract/python" }]
 
 [[package]]
 name = "nemo-fabric-adapters-hermes"

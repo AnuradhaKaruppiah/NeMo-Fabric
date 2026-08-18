@@ -51,6 +51,16 @@
         "consumer_extension"
       ],
       "additionalProperties": false
+    },
+    "run_request": {
+      "type": "object",
+      "properties": {
+        "max_iterations": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
     }
   },
   "requirements": {

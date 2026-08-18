@@ -16,6 +16,7 @@ Every invocation that reaches the adapter boundary returns a normalized
 | `status` | Terminal invocation status: `succeeded`, `failed`, or `cancelled`. Branch on this. |
 | `error` | Structured failure metadata when available. Branch on `status`, not on this field. |
 | `output` | Harness output normalized to the configured output schema. |
+| `usage` | Optional `RunUsage` with input, output, and total token counts, estimated cost in USD, and provider metadata. |
 | `artifacts` | Output files, logs, patches, and other materialized references. |
 | `telemetry` | References to NVIDIA NeMo Relay or other telemetry streams from the run. |
 | `events` | Ordered normalized lifecycle and invocation events. |
@@ -29,6 +30,18 @@ if result.status == "succeeded":
     use_output(result.output, result.artifacts, result.telemetry)
 else:
     handle_failure(result.status, result.error, result.events)  # failed, cancelled, ...
+```
+
+Read usage only when the target reports it:
+
+```python
+if result.usage is not None:
+    record_usage(
+        input_tokens=result.usage.input_tokens,
+        output_tokens=result.usage.output_tokens,
+        total_tokens=result.usage.total_tokens,
+        cost_usd=result.usage.cost_usd,
+    )
 ```
 
 ## Correlation IDs

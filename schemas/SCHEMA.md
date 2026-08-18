@@ -28,6 +28,7 @@ schemas/
 │   └── ...
 └── adapter-contract/          # Southbound adapter-facing contract
     ├── adapter-descriptor.schema.json
+    ├── adapter-target-descriptor.schema.json
     ├── agent-config.schema.json
     ├── agent-run-request.schema.json
     ├── agent-run-result.schema.json
@@ -41,16 +42,20 @@ An adapter author can treat `adapter-contract/` as the complete schema entry
 point. Contract versions remain explicit fields in the wire format rather than
 directory names.
 
+Start with the
+[adapter contract overview](https://github.com/NVIDIA/NeMo-Fabric/blob/main/docs/adapter-contract/README.md)
+for the implementation sequence. Use these generated schemas for exact wire
+shapes; do not reconstruct the contract from examples.
+
 The language bindings preserve this boundary:
 
 - Python adapters use `nemo-fabric-adapter-contract` for dependency-free
   dataclasses and optional Pydantic models.
 - TypeScript adapters use `nemo-fabric-adapter-contract` for the descriptor,
   configuration, runtime-context, request, and result types, matching the
-  Python package's single model namespace. Request and result types retain
-  their documented preview status until the typed invocation transport is
-  negotiated. The package also includes these canonical schemas for runtime
-  validation without selecting a validation-library dependency.
+  Python package's single model namespace. The package also includes these
+  canonical schemas for runtime validation without selecting a
+  validation-library dependency.
 
 `FabricConfig` is the northbound source of consumer intent. Planning produces
 the `CapabilityPlan` as routed evidence and projects the fields accepted by the
@@ -63,6 +68,9 @@ these related representations do not drift.
 - `adapter-contract/adapter-descriptor`: adapter identity, runner,
   requirements, accepted normalized fields, schemas, telemetry support, and
   runtime capability claims.
+- `adapter-contract/adapter-target-descriptor`: separately registered target
+  identity, selected adapter, target type, adapter-scoped entry point, and
+  target settings schema.
 - `adapter-contract/agent-config`: typed configuration projected southbound to
   one adapter target. Adapter-owned additions are carried only through explicit
   `extensions` blocks and validated against schemas declared by the selected
@@ -85,13 +93,14 @@ descriptor schema.
 
 - `adapter-contract/adapter-invocation`: current per-turn payload sent to
   an initialized persistent local adapter host. It contains `runtime_context`
-  and the northbound `run-request`. It will be removed after adapters consume
-  the typed southbound request directly.
+  and the projected southbound `agent-run-request`. This envelope is an
+  internal transport detail; the common Python host passes its members to the
+  adapter as typed arguments.
 - `adapter-contract/openai-stream-invocation`: current native OpenAI
   stream payload sent to an initialized persistent local adapter host. It
   contains the per-turn runtime context and request plus a NeMo Fabric-owned
   authenticated loopback stream sink. The common host validates and removes the
-  sink before calling `invoke_openai_stream(payload, emit)`.
+  sink before calling `invoke_openai_stream(request, context, emit)`.
 - `adapter-contract/openai-stream-record`: correlated chunk and explicit
   end records carried as chunked NDJSON. The chunk variant freezes the
   `openai.chat_completions.chunk/v1` profile accepted by the SDK listener.

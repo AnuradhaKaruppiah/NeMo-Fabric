@@ -24,6 +24,10 @@ from typing import Any
 import nemo_fabric_adapters.common.utils as common_utils
 from nemo_fabric_adapter_contract.models import AgentConfig
 from nemo_fabric_adapter_contract.models import AgentModelConfig
+from nemo_fabric_adapter_contract.models import AgentRunError
+from nemo_fabric_adapter_contract.models import AgentRunRequest
+from nemo_fabric_adapter_contract.models import AgentRunResult
+from nemo_fabric_adapter_contract.models import AgentRunStatus
 from nemo_fabric_adapter_contract.models import RuntimeContext
 from nemo_fabric_adapters.common import lifecycle
 from nemo_fabric_adapters.hermes import configuration
@@ -203,7 +207,11 @@ class HermesRuntime:
             await self.stop()
             raise
 
-    async def invoke(self, invocation: dict[str, Any]) -> dict[str, Any]:
+    async def invoke(
+        self,
+        request: AgentRunRequest,
+        runtime_context: RuntimeContext,
+    ) -> AgentRunResult:
         agent_config = self._agent_config
         model_config = self._model_config
         if (
@@ -216,15 +224,13 @@ class HermesRuntime:
                 "hermes_runtime_not_started",
                 "Hermes runtime is not started",
             )
-        runtime_context = RuntimeContext.from_mapping(invocation.get("runtime_context"))
         if runtime_context.runtime_id != self._runtime_id:
             raise lifecycle.LifecycleError(
                 "hermes_runtime_mismatch",
                 "Hermes invocation does not match the active runtime",
             )
 
-        request = common_utils.request_payload(invocation)
-        user_message = request.get("input") or ""
+        user_message = request.input or ""
         if not isinstance(user_message, str):
             user_message = json.dumps(user_message, sort_keys=True)
         instructions = agent_config.instructions
@@ -304,11 +310,9 @@ class HermesRuntime:
             "base_url": model_config.base_url,
             "response": result.get("response") or result.get("final_response"),
             "completed": bool(result.get("completed")),
-            "failed": failed,
             "api_calls": result.get("api_calls"),
             "messages": messages,
             "message_count": len(messages),
-            "error": reported_error,
             "adapter_stdout": adapter_stdout,
             "hermes_home": str(self._hermes_home),
             "hermes_config_path": str(self._hermes_config_path),
@@ -327,7 +331,34 @@ class HermesRuntime:
             output["relay_artifacts"] = common_utils.collect_relay_artifacts(
                 self._relay_plugin_config
             )
-        return output
+        error = None
+        if failed:
+            if isinstance(reported_error, dict):
+                metadata = reported_error.get("metadata")
+                provider = (
+                    metadata.get("provider") if isinstance(metadata, dict) else None
+                )
+                error = AgentRunError(
+                    code=str(reported_error.get("code") or "hermes_reported_failure"),
+                    message=str(
+                        reported_error.get("message")
+                        or "Hermes did not complete the invocation"
+                    ),
+                    retryable=bool(reported_error.get("retryable", False)),
+                    extensions={"provider": provider}
+                    if isinstance(provider, str)
+                    else {},
+                )
+            else:
+                error = AgentRunError(
+                    code="hermes_reported_failure",
+                    message="Hermes did not complete the invocation",
+                )
+        return AgentRunResult(
+            status=AgentRunStatus.FAILED if failed else AgentRunStatus.SUCCEEDED,
+            output=output,
+            error=error,
+        )
 
     async def _authenticate_mcp_servers(self) -> None:
         if self._mcp_authentication_checked:

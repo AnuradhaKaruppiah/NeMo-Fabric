@@ -29,6 +29,9 @@ from claude_agent_sdk import SystemMessage
 from claude_agent_sdk import TextBlock
 from claude_agent_sdk._errors import MessageParseError
 from nemo_fabric_adapter_contract.models import AgentConfig
+from nemo_fabric_adapter_contract.models import AgentRunRequest
+from nemo_fabric_adapter_contract.models import AgentRunResult
+from nemo_fabric_adapter_contract.models import AgentRunStatus
 from nemo_fabric_adapter_contract.models import RuntimeContext
 from nemo_fabric_adapters.claude import adapter
 
@@ -47,14 +50,26 @@ ANTHROPIC_AUTH_ENV_NAMES = {
 }
 
 
-def lifecycle_invocation(payload: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "runtime_context": {
-            **payload["runtime_context"],
-            "request_id": payload["request"]["request_id"],
-        },
-        "request": payload["request"],
+def lifecycle_invocation(
+    payload: dict[str, Any],
+) -> tuple[AgentRunRequest, RuntimeContext]:
+    request = {
+        key: value for key, value in payload["request"].items() if key != "request_id"
     }
+    return AgentRunRequest.from_mapping(request), runtime_context(payload)
+
+
+def result_view(result: AgentRunResult) -> dict[str, Any]:
+    assert isinstance(result, AgentRunResult)
+    output = dict(result.output)
+    raw_usage = output.get("usage")
+    if isinstance(raw_usage, dict) and any(
+        name in raw_usage for name in ("input_tokens", "output_tokens", "total_tokens")
+    ):
+        assert result.usage is not None
+    output["failed"] = result.status is AgentRunStatus.FAILED
+    output["error"] = None if result.error is None else result.error.to_mapping()
+    return output
 
 
 def agent_config(payload: dict[str, Any]) -> AgentConfig:
@@ -194,8 +209,20 @@ def test_claude_descriptor_is_narrow_and_versioned():
             "required": [],
             "additionalProperties": False,
         },
+        "extension_schemas": {
+            "run_error": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                    "subtype": {"type": "string"},
+                    "api_error_status": {"type": "integer"},
+                    "exit_code": {"type": "integer"},
+                    "timeout_seconds": {"type": "number", "minimum": 0},
+                },
+                "additionalProperties": False,
+            }
+        },
         "config": {
-            "input": "agent_config",
             "accepts": [
                 "models",
                 "models.base_url",
@@ -416,7 +443,7 @@ async def test_claude_invoke_passes_remaining_budget_to_query(
     loop = asyncio.get_running_loop()
     before = loop.time()
 
-    await runtime.invoke(lifecycle_invocation(claude_payload))
+    await runtime.invoke(*lifecycle_invocation(claude_payload))
 
     after = loop.time()
     invocation_deadline = remaining_timeout.call_args.args[0]
@@ -842,6 +869,22 @@ def test_normalize_result_exposes_session_usage_cost_and_buffered_events(
     ]
 
 
+@pytest.mark.parametrize("cost", [float("nan"), float("inf"), float("-inf")])
+def test_agent_run_result_discards_nonfinite_cost(cost):
+    result = adapter._agent_run_result({"response": "done", "cost_usd": cost})
+
+    assert result.output["cost_usd"] is None
+    assert result.usage is None
+
+
+def test_agent_run_result_discards_tokens_larger_than_uint64():
+    result = adapter._agent_run_result(
+        {"response": "done", "usage": {"input_tokens": 1 << 64}}
+    )
+
+    assert result.usage is None
+
+
 async def test_claude_runtime_reuses_one_connected_sdk_client(
     claude_payload, monkeypatch
 ):
@@ -892,13 +935,13 @@ async def test_claude_runtime_reuses_one_connected_sdk_client(
     mcp_config_path = clients[0].options.mcp_servers
     assert isinstance(mcp_config_path, Path)
     assert mcp_config_path.exists()
-    first = await runtime.invoke(lifecycle_invocation(claude_payload))
+    first = result_view(await runtime.invoke(*lifecycle_invocation(claude_payload)))
     claude_payload["runtime_context"]["invocation_id"] = "invocation-2"
     claude_payload["request"]["input"] = {"not": "text"}
-    invalid = await runtime.invoke(lifecycle_invocation(claude_payload))
+    invalid = result_view(await runtime.invoke(*lifecycle_invocation(claude_payload)))
     claude_payload["runtime_context"]["invocation_id"] = "invocation-3"
     claude_payload["request"]["input"] = "Inspect the tests"
-    second = await runtime.invoke(lifecycle_invocation(claude_payload))
+    second = result_view(await runtime.invoke(*lifecycle_invocation(claude_payload)))
     await runtime.stop()
 
     assert not mcp_config_path.exists()
@@ -1007,9 +1050,9 @@ async def test_claude_runtime_owns_one_relay_gateway_until_stop(
     start_payload.pop("request")
     runtime = adapter.ClaudeRuntime()
     await runtime.start(lifecycle_start(start_payload))
-    first = await runtime.invoke(lifecycle_invocation(relay_payload))
+    first = result_view(await runtime.invoke(*lifecycle_invocation(relay_payload)))
     relay_payload["runtime_context"]["invocation_id"] = "invocation-2"
-    second = await runtime.invoke(lifecycle_invocation(relay_payload))
+    second = result_view(await runtime.invoke(*lifecycle_invocation(relay_payload)))
 
     mock_start.assert_called_once_with(
         launch=relay.gateway,
@@ -1038,7 +1081,7 @@ def atif_plugin_config(output_directory: Path) -> dict[str, Any]:
                         "enabled": True,
                         "output_directory": str(output_directory),
                         "filename_template": "trajectory-{session_id}.atif.json",
-                    }
+                    },
                 },
             }
         ],
@@ -1121,7 +1164,7 @@ async def test_runtime_waits_for_delayed_relay_artifact(
     }
     await runtime.start(lifecycle_start(start_payload))
     try:
-        output = await runtime.invoke(lifecycle_invocation(relay_payload))
+        output = result_view(await runtime.invoke(*lifecycle_invocation(relay_payload)))
         assert write_task is not None
         await write_task
     finally:
@@ -1178,8 +1221,10 @@ async def test_relay_atif_timeout_fails_successful_turn_explicitly(
     }
     await runtime.start(lifecycle_start(start_payload))
     try:
-        output = await runtime.invoke(lifecycle_invocation(relay_payload))
-        unavailable = await runtime.invoke(lifecycle_invocation(relay_payload))
+        output = result_view(await runtime.invoke(*lifecycle_invocation(relay_payload)))
+        unavailable = result_view(
+            await runtime.invoke(*lifecycle_invocation(relay_payload))
+        )
     finally:
         await runtime.stop()
 
@@ -1188,7 +1233,7 @@ async def test_relay_atif_timeout_fails_successful_turn_explicitly(
         "code": "claude_relay_atif_timeout",
         "message": "NeMo Relay did not finalize an ATIF artifact before the deadline",
         "retryable": False,
-        "metadata": {
+        "extensions": {
             "timeout_seconds": adapter.relay_artifacts.ATIF_FINALIZATION_TIMEOUT_SECONDS
         },
     }
@@ -1248,7 +1293,7 @@ async def test_runtime_stop_reports_relay_gateway_failure(
         key: value for key, value in relay_payload.items() if key != "request"
     }
     await runtime.start(lifecycle_start(start_payload))
-    output = await runtime.invoke(lifecycle_invocation(relay_payload))
+    output = result_view(await runtime.invoke(*lifecycle_invocation(relay_payload)))
     with pytest.raises(adapter.lifecycle.LifecycleError) as caught:
         await runtime.stop()
 
@@ -1314,7 +1359,7 @@ async def test_runtime_stop_reports_relay_plugin_cleanup_failure(
     }
     await runtime.start(lifecycle_start(start_payload))
     mcp_config_root = runtime._mcp_config_path.parent
-    output = await runtime.invoke(lifecycle_invocation(relay_payload))
+    output = result_view(await runtime.invoke(*lifecycle_invocation(relay_payload)))
     with pytest.raises(adapter.lifecycle.LifecycleError) as caught:
         await runtime.stop()
 
@@ -1371,9 +1416,11 @@ async def test_runtime_stops_relay_after_sdk_failure_or_cancellation(
     try:
         if isinstance(failure, asyncio.CancelledError):
             with pytest.raises(asyncio.CancelledError):
-                await runtime.invoke(lifecycle_invocation(relay_payload))
+                await runtime.invoke(*lifecycle_invocation(relay_payload))
         else:
-            output = await runtime.invoke(lifecycle_invocation(relay_payload))
+            output = result_view(
+                await runtime.invoke(*lifecycle_invocation(relay_payload))
+            )
             assert output["error"]["code"] == "claude_failed"
             assert output["relay_runtime"]["enabled"] is True
     finally:
@@ -1412,7 +1459,7 @@ async def test_runtime_preserves_failed_result_when_sdk_stream_raises(
         key: value for key, value in claude_payload.items() if key != "request"
     }
     await runtime.start(lifecycle_start(start_payload))
-    output = await runtime.invoke(lifecycle_invocation(claude_payload))
+    output = result_view(await runtime.invoke(*lifecycle_invocation(claude_payload)))
     await runtime.stop()
 
     assert output["response"] == "Not logged in"
@@ -1420,7 +1467,7 @@ async def test_runtime_preserves_failed_result_when_sdk_stream_raises(
         "code": "claude_result_failed",
         "message": "Claude returned an error result",
         "retryable": False,
-        "metadata": {"subtype": subtype},
+        "extensions": {"subtype": subtype},
     }
     assert "raw SDK stream error" not in json.dumps(output)
     assert "raw SDK stream error" in caplog.text

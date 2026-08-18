@@ -42,15 +42,19 @@ import type {
 
 const descriptor: AdapterDescriptor = {
   contract_version: ADAPTER_CONTRACT_VERSION,
-  adapter_id: "pi",
-  harness: "pi",
-  adapter_kind: "process",
+  adapter_id: "com.acme.fabric.example",
+  adapter_kind: "http",
 };
 ```
 
 Property names intentionally match the JSON wire format and remain
 `snake_case`. Optional properties are distinct from properties whose value may
 be `null`.
+
+Use the maintained
+[adapter contract documentation](https://github.com/NVIDIA/NeMo-Fabric/tree/main/docs/adapter-contract)
+for the implementation sequence and the bundled schemas for runtime
+validation.
 
 ## Invocation Types
 

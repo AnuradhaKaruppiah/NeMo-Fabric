@@ -22,6 +22,10 @@ from typing import Any
 from typing import Protocol
 from typing import TextIO
 
+from nemo_fabric_adapter_contract.models import AgentRunRequest
+from nemo_fabric_adapter_contract.models import AgentRunResult
+from nemo_fabric_adapter_contract.models import RuntimeContext
+
 
 class AdapterRuntime(Protocol):
     """One adapter-owned runtime living for the complete host lifetime."""
@@ -29,7 +33,11 @@ class AdapterRuntime(Protocol):
     async def start(self, payload: dict[str, Any]) -> None:
         """Initialize runtime-owned SDK clients and resources."""
 
-    async def invoke(self, payload: dict[str, Any]) -> Any:
+    async def invoke(
+        self,
+        request: AgentRunRequest,
+        context: RuntimeContext,
+    ) -> AgentRunResult:
         """Execute one invocation against the initialized runtime."""
 
     async def stop(self) -> None:
@@ -337,12 +345,16 @@ def _validated_openai_chunk(value: dict[str, Any]) -> dict[str, Any]:
             or not isinstance(index, int)
             or not 0 <= index <= _UINT32_MAX
         ):
-            raise invalid("OpenAI stream choice index must be an unsigned 32-bit integer")
+            raise invalid(
+                "OpenAI stream choice index must be an unsigned 32-bit integer"
+            )
         if not isinstance(delta, dict):
             raise invalid("OpenAI stream choice delta must be a mapping")
         for name in ("content", "refusal", "role"):
-            if name in delta and delta[name] is not None and not isinstance(
-                delta[name], str
+            if (
+                name in delta
+                and delta[name] is not None
+                and not isinstance(delta[name], str)
             ):
                 raise invalid(
                     f"OpenAI stream choice delta {name} must be a string or null"
@@ -573,9 +585,13 @@ async def _handle_invoke(
             "lifecycle_runtime_failed",
             "Lifecycle runtime cannot accept another invocation",
         )
+    request, context = _typed_invocation(payload)
     with _invocation_environment(payload):
-        output = await _adapter_call("invoke", lambda: runtime.invoke(payload))
-    return _response("invoke", output=output)
+        result = await _adapter_call(
+            "invoke",
+            lambda: runtime.invoke(request, context),
+        )
+    return _response("invoke", output=_typed_result(result))
 
 
 async def _handle_invoke_openai_stream(
@@ -595,13 +611,14 @@ async def _handle_invoke_openai_stream(
             "Adapter runtime does not implement OpenAI streaming",
         )
     writer, adapter_payload = await _OpenAIStreamWriter.connect(payload)
+    request, context = _typed_invocation(adapter_payload)
     adapter_error: BaseException | None = None
     output: Any = None
     try:
         with _invocation_environment(adapter_payload):
             output = await _adapter_call(
                 "invoke_openai_stream",
-                lambda: invoke(adapter_payload, writer.emit),
+                lambda: invoke(request, context, writer.emit),
             )
     except BaseException as error:
         adapter_error = error
@@ -614,7 +631,36 @@ async def _handle_invoke_openai_stream(
         raise
     if adapter_error is not None:
         raise adapter_error
-    return _response("invoke_openai_stream", output=output)
+    return _response("invoke_openai_stream", output=_typed_result(output))
+
+
+def _typed_invocation(
+    payload: dict[str, Any],
+) -> tuple[AgentRunRequest, RuntimeContext]:
+    try:
+        request = AgentRunRequest.from_mapping(payload.get("request"))
+        context = RuntimeContext.from_mapping(payload.get("runtime_context"))
+    except Exception as error:
+        raise LifecycleError(
+            "lifecycle_invalid_request",
+            "Invocation does not match the typed adapter contract",
+        ) from error
+    return request, context
+
+
+def _typed_result(result: Any) -> dict[str, Any]:
+    if not isinstance(result, AgentRunResult):
+        raise LifecycleError(
+            "lifecycle_invalid_response",
+            "Adapter must return AgentRunResult",
+        )
+    try:
+        return result.to_mapping()
+    except Exception as error:
+        raise LifecycleError(
+            "lifecycle_invalid_response",
+            "Adapter returned an invalid AgentRunResult",
+        ) from error
 
 
 async def _handle_stop(
@@ -661,7 +707,10 @@ def _encode_response(
         return json.dumps(response, sort_keys=True)
     except (TypeError, ValueError):
         traceback.print_exc(file=sys.stderr)
-        if operation in {"invoke", "invoke_openai_stream"} and state.runtime is not None:
+        if (
+            operation in {"invoke", "invoke_openai_stream"}
+            and state.runtime is not None
+        ):
             state.failed = True
         return json.dumps(
             _response(
@@ -756,9 +805,8 @@ def serve(
     ``config_loader`` decodes and validates the southbound start configuration.
     Contract-compliant adapters use ``AgentConfig.from_mapping`` so the runtime
     receives the canonical ``AgentConfig`` in ``payload["config"]``. The
-    callable is generic only to keep this lifecycle host framework-neutral; it
-    does not define alternative adapter contract types. Omitting it preserves
-    the untyped mapping for adapters that have not yet migrated.
+    callable remains optional because normalizing the complete start payload is
+    separate from the typed invocation boundary.
     """
 
     # Reserve process stdout for the protocol for the entire host lifetime,
