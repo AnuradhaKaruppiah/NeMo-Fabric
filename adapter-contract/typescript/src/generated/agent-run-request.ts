@@ -7,10 +7,7 @@
 import type { JsonObject, JsonValue } from "../json.js";
 
 /**
- * Preview southbound invocation request.
- *
- * The current local-host transport does not enforce this type. It will join
- * the negotiated adapter contract when typed invoke transport is implemented.
+ * Southbound invocation request passed to an adapter target.
  */
 export interface AgentRunRequest {
   /**

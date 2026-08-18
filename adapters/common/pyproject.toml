@@ -24,12 +24,18 @@ license = "Apache-2.0"
 license-files = ["LICENSE"]
 readme = "pypi.md"
 requires-python = ">=3.11"
+dependencies = [
+  "nemo-fabric-adapter-contract == 0.3.0",
+]
 
 [project.urls]
 Repository = "https://github.com/NVIDIA/NeMo-Fabric"
 Homepage = "https://github.com/NVIDIA/NeMo-Fabric"
 Issues = "https://github.com/NVIDIA/NeMo-Fabric/issues"
 Documentation = "https://docs.nvidia.com/nemo/fabric"
+
+[tool.uv.sources]
+nemo-fabric-adapter-contract = { path = "../../adapter-contract/python", editable = true }
 
 [tool.setuptools.packages.find]
 where = ["src"]

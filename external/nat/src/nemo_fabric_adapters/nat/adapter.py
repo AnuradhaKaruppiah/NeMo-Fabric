@@ -22,7 +22,12 @@ from nemo_fabric_adapters.common import lifecycle
 import nemo_fabric_adapters.common.utils as common_utils
 from nemo_fabric_adapter_contract.models import AgentConfig
 from nemo_fabric_adapter_contract.models import AgentMcpServerConfig
+from nemo_fabric_adapter_contract.models import AgentRunError
+from nemo_fabric_adapter_contract.models import AgentRunRequest
+from nemo_fabric_adapter_contract.models import AgentRunResult
+from nemo_fabric_adapter_contract.models import AgentRunStatus
 from nemo_fabric_adapter_contract.models import AgentToolDefinition
+from nemo_fabric_adapter_contract.models import RuntimeContext
 
 HARNESS = "nat"
 MODE = "agent_config"
@@ -641,19 +646,15 @@ def build_nat_config(agent_config: AgentConfig) -> Any:
         ) from error
 
 
-def _session_kwargs(request: dict[str, Any]) -> dict[str, str]:
-    context = request.get("context")
-    if context is None:
-        context = {}
-    if not isinstance(context, dict):
-        raise ValueError(
-            "NeMo Agent Toolkit invocation request.context must be a mapping"
-        )
-
+def _session_kwargs(
+    request: AgentRunRequest,
+    runtime_context: RuntimeContext,
+) -> dict[str, str]:
+    context = request.context
     values = {
         "user_id": context.get("user_id"),
         "conversation_id": context.get("conversation_id"),
-        "user_message_id": context.get("user_message_id") or request.get("request_id"),
+        "user_message_id": context.get("user_message_id") or runtime_context.request_id,
     }
     result: dict[str, str] = {}
     for name, value in values.items():
@@ -667,32 +668,31 @@ def _session_kwargs(request: dict[str, Any]) -> dict[str, str]:
     return result
 
 
-def _success_output(response: Any) -> dict[str, Any]:
-    return {
-        "harness": HARNESS,
-        "adapter": "python",
-        "mode": MODE,
-        "response": response,
-        "completed": True,
-        "failed": False,
-        "error": None,
-    }
-
-
-def _failure_output(code: str, message: str) -> dict[str, Any]:
-    return {
-        "harness": HARNESS,
-        "adapter": "python",
-        "mode": MODE,
-        "response": None,
-        "completed": False,
-        "failed": True,
-        "error": {
-            "code": code,
-            "message": message,
-            "retryable": False,
+def _success_output(response: Any) -> AgentRunResult:
+    return AgentRunResult(
+        status=AgentRunStatus.SUCCEEDED,
+        output={
+            "harness": HARNESS,
+            "adapter": "python",
+            "mode": MODE,
+            "response": response,
+            "completed": True,
         },
-    }
+    )
+
+
+def _failure_output(code: str, message: str) -> AgentRunResult:
+    return AgentRunResult(
+        status=AgentRunStatus.FAILED,
+        output={
+            "harness": HARNESS,
+            "adapter": "python",
+            "mode": MODE,
+            "response": None,
+            "completed": False,
+        },
+        error=AgentRunError(code=code, message=message),
+    )
 
 
 async def _close_after_failed_start(stack: AsyncExitStack) -> None:
@@ -715,30 +715,23 @@ class NatRuntime:
         self._sessions: Any = None
         self._exit_stack: AsyncExitStack | None = None
 
-    def _invocation_request(
+    def _invocation_failure(
         self,
-        payload: dict[str, Any],
-    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-        """Validate common invocation state and return a safe request failure."""
+        runtime_context: RuntimeContext,
+    ) -> AgentRunResult | None:
+        """Validate common invocation state and return a safe failure."""
 
         if self._sessions is None or self._runtime_id is None:
             raise lifecycle.LifecycleError(
                 "nat_runtime_not_started",
                 "NeMo Agent Toolkit runtime is not started",
             )
-        if _runtime_id(payload) != self._runtime_id:
+        if runtime_context.runtime_id != self._runtime_id:
             raise lifecycle.LifecycleError(
                 "nat_runtime_mismatch",
                 "NeMo Agent Toolkit invocation does not match the active runtime",
             )
-
-        request = common_utils.request_payload(payload)
-        if not isinstance(request, dict):
-            return None, _failure_output(
-                "nat_invalid_request",
-                "NeMo Agent Toolkit invocation request must be a mapping",
-            )
-        return request, None
+        return None
 
     async def start(self, payload: dict[str, Any]) -> None:
         if self._exit_stack is not None:
@@ -780,13 +773,16 @@ class NatRuntime:
         self._sessions = sessions
         self._exit_stack = stack
 
-    async def invoke(self, payload: dict[str, Any]) -> dict[str, Any]:
-        request, failure = self._invocation_request(payload)
+    async def invoke(
+        self,
+        request: AgentRunRequest,
+        runtime_context: RuntimeContext,
+    ) -> AgentRunResult:
+        failure = self._invocation_failure(runtime_context)
         if failure is not None:
             return failure
-        assert request is not None
         try:
-            session_kwargs = _session_kwargs(request)
+            session_kwargs = _session_kwargs(request, runtime_context)
         except ValueError as error:
             return _failure_output("nat_invalid_request", str(error))
 
@@ -795,7 +791,7 @@ class NatRuntime:
 
             async with self._sessions.session(**session_kwargs) as session:
                 async with session.run(
-                    request.get("input", ""),
+                    request.input,
                     runtime_type=RuntimeTypeEnum.RUN_OR_SERVE,
                 ) as runner:
                     result = await runner.result()
@@ -828,15 +824,15 @@ class NatRuntime:
 
     async def invoke_openai_stream(
         self,
-        payload: dict[str, Any],
+        request: AgentRunRequest,
+        runtime_context: RuntimeContext,
         emit: lifecycle.OpenAIChunkEmitter,
-    ) -> dict[str, Any]:
+    ) -> AgentRunResult:
         """Forward one NeMo Agent Toolkit result stream declared as OpenAI chunks."""
 
-        request, failure = self._invocation_request(payload)
+        failure = self._invocation_failure(runtime_context)
         if failure is not None:
             return failure
-        assert request is not None
         assert self._sessions is not None
 
         try:
@@ -862,7 +858,7 @@ class NatRuntime:
             )
 
         try:
-            session_kwargs = _session_kwargs(request)
+            session_kwargs = _session_kwargs(request, runtime_context)
         except ValueError as error:
             return _failure_output("nat_invalid_request", str(error))
 
@@ -873,7 +869,7 @@ class NatRuntime:
 
             async with self._sessions.session(**session_kwargs) as session:
                 async with session.run(
-                    request.get("input", ""),
+                    request.input,
                     runtime_type=RuntimeTypeEnum.RUN_OR_SERVE,
                 ) as runner:
                     stream = runner.result_stream(to_type=ChatResponseChunk)

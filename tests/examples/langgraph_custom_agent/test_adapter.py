@@ -14,9 +14,22 @@ from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_core.tools import tool
 from nemo_fabric_adapters.common import lifecycle
 from nemo_fabric_adapter_contract.models import AgentConfig
+from nemo_fabric_adapter_contract.models import AgentRunRequest
+from nemo_fabric_adapter_contract.models import AgentRunStatus
+from nemo_fabric_adapter_contract.models import RuntimeContext
 
 from examples.langgraph_custom_agent.adapter.configuration import AgentDependencies
 from examples.langgraph_custom_agent.adapter import runtime as runtime_module
+
+
+def invocation(
+    runtime_context: dict[str, object],
+    input_value: object,
+) -> tuple[AgentRunRequest, RuntimeContext]:
+    return (
+        AgentRunRequest(input=input_value),
+        RuntimeContext.from_mapping(runtime_context),
+    )
 
 
 def test_lifecycle_host_starts_once_invokes_repeatedly_and_stops(
@@ -37,17 +50,13 @@ def test_lifecycle_host_starts_once_invokes_repeatedly_and_stops(
             "start",
             {
                 "config": agent_config_mapping,
-                "runtime_context": runtime_context_factory(
-                    runtime_id, "runtime-start"
-                ),
+                "runtime_context": runtime_context_factory(runtime_id, "runtime-start"),
             },
         ),
         lifecycle_request_factory(
             "invoke",
             {
-                "runtime_context": runtime_context_factory(
-                    runtime_id, "invocation-1"
-                ),
+                "runtime_context": runtime_context_factory(runtime_id, "invocation-1"),
                 "request": {
                     "input": "Urgent: verify your password at https://one.invalid."
                 },
@@ -56,9 +65,7 @@ def test_lifecycle_host_starts_once_invokes_repeatedly_and_stops(
         lifecycle_request_factory(
             "invoke",
             {
-                "runtime_context": runtime_context_factory(
-                    runtime_id, "invocation-2"
-                ),
+                "runtime_context": runtime_context_factory(runtime_id, "invocation-2"),
                 "request": {"input": "Team lunch is at noon."},
             },
         ),
@@ -83,39 +90,27 @@ def test_lifecycle_host_starts_once_invokes_repeatedly_and_stops(
         "succeeded",
         "succeeded",
     ]
-    assert responses[1]["outcome"]["output"] == {
+    assert responses[1]["outcome"]["output"]["output"] == {
         "response": "first explanation",
         "classification": "phishing",
         "signals": ["urgency", "credential_request", "external_link"],
     }
-    assert responses[2]["outcome"]["output"] == {
+    assert responses[2]["outcome"]["output"]["output"] == {
         "response": "second explanation",
         "classification": "benign",
         "signals": [],
     }
 
 
-def test_invocation_failure_does_not_invalidate_runtime(
+def test_invocation_failure_propagates_to_lifecycle_host(
     monkeypatch,
     runtime_context_factory,
     agent_config_mapping,
-    lifecycle_request_factory,
 ):
-    class FailThenSucceedGraph:
-        def __init__(self):
-            self.calls = 0
-
+    class FailingGraph:
         async def ainvoke(self, _input, *, config):
-            self.calls += 1
-            if self.calls == 1:
-                raise TimeoutError("provider details must not escape")
-            return {
-                "explanation": "second invocation succeeded",
-                "classification": "benign",
-                "signals": [],
-            }
+            raise TimeoutError("provider request timed out")
 
-    graph = FailThenSucceedGraph()
     monkeypatch.setattr(
         runtime_module,
         "resolve_agent_dependencies",
@@ -127,71 +122,31 @@ def test_invocation_failure_does_not_invalidate_runtime(
     monkeypatch.setattr(
         runtime_module,
         "build_email_phishing_graph",
-        lambda *_args: graph,
+        lambda *_args: FailingGraph(),
     )
-    runtime_id = "runtime-1"
-    requests = [
-        lifecycle_request_factory(
-            "start",
+    runtime = runtime_module.EmailPhishingRuntime()
+    asyncio.run(
+        runtime.start(
             {
-                "config": agent_config_mapping,
+                "config": AgentConfig.from_mapping(agent_config_mapping),
                 "runtime_context": runtime_context_factory(
-                    runtime_id, "runtime-start"
+                    "runtime-1", "runtime-start"
                 ),
-            },
-        ),
-        lifecycle_request_factory(
-            "invoke",
-            {
-                "runtime_context": runtime_context_factory(
-                    runtime_id, "invocation-1"
-                ),
-                "request": {"input": "first"},
-            },
-        ),
-        lifecycle_request_factory(
-            "invoke",
-            {
-                "runtime_context": runtime_context_factory(
-                    runtime_id, "invocation-2"
-                ),
-                "request": {"input": "second"},
-            },
-        ),
-        lifecycle_request_factory("stop", {"runtime_id": runtime_id}),
-    ]
-    input_stream = io.StringIO(
-        "".join(f"{json.dumps(request)}\n" for request in requests)
-    )
-    output_stream = io.StringIO()
-
-    lifecycle.serve(
-        runtime_module.EmailPhishingRuntime,
-        config_loader=AgentConfig.from_mapping,
-        input_stream=input_stream,
-        output_stream=output_stream,
+            }
+        )
     )
 
-    responses = [json.loads(line) for line in output_stream.getvalue().splitlines()]
-    assert responses[1]["outcome"] == {
-        "status": "succeeded",
-        "output": {
-            "response": None,
-            "completed": False,
-            "failed": True,
-            "error": {
-                "code": "email_phishing_invoke_failed",
-                "message": "The email-phishing agent invocation failed",
-                "retryable": False,
-            },
-        },
-    }
-    assert responses[2]["outcome"]["output"] == {
-        "response": "second invocation succeeded",
-        "classification": "benign",
-        "signals": [],
-    }
-    assert graph.calls == 2
+    with pytest.raises(TimeoutError, match="provider request timed out"):
+        asyncio.run(
+            runtime.invoke(
+                *invocation(
+                    runtime_context_factory("runtime-1", "invocation-1"),
+                    "first",
+                )
+            )
+        )
+
+    asyncio.run(runtime.stop())
 
 
 def test_runtime_rejects_invoke_before_start(runtime_context_factory):
@@ -200,12 +155,10 @@ def test_runtime_rejects_invoke_before_start(runtime_context_factory):
     with pytest.raises(lifecycle.LifecycleError) as error:
         asyncio.run(
             runtime.invoke(
-                {
-                    "runtime_context": runtime_context_factory(
-                        "runtime-1", "invocation-1"
-                    ),
-                    "request": {"input": "hello"},
-                }
+                *invocation(
+                    runtime_context_factory("runtime-1", "invocation-1"),
+                    "hello",
+                )
             )
         )
 
@@ -240,12 +193,10 @@ def test_runtime_rejects_runtime_mismatch(
     with pytest.raises(lifecycle.LifecycleError) as error:
         asyncio.run(
             runtime.invoke(
-                {
-                    "runtime_context": runtime_context_factory(
-                        "runtime-2", "invocation-1"
-                    ),
-                    "request": {"input": "hello"},
-                }
+                *invocation(
+                    runtime_context_factory("runtime-2", "invocation-1"),
+                    "hello",
+                )
             )
         )
 
@@ -279,12 +230,10 @@ def test_stop_is_safe_after_partial_start(
     with pytest.raises(lifecycle.LifecycleError) as error:
         asyncio.run(
             runtime.invoke(
-                {
-                    "runtime_context": runtime_context_factory(
-                        "runtime-1", "invocation-after-stop"
-                    ),
-                    "request": {"input": "hello"},
-                }
+                *invocation(
+                    runtime_context_factory("runtime-1", "invocation-after-stop"),
+                    "hello",
+                )
             )
         )
 
@@ -333,21 +282,20 @@ def test_runtime_returns_optional_mcp_link_inspections(
 
     output = asyncio.run(
         runtime.invoke(
-            {
-                "runtime_context": runtime_context_factory(
-                    "runtime-1", "invocation-1"
-                ),
-                "request": {"input": "Review https://example.invalid/login."},
-            }
+            *invocation(
+                runtime_context_factory("runtime-1", "invocation-1"),
+                "Review https://example.invalid/login.",
+            )
         )
     )
 
-    assert output["signals"] == [
+    assert output.status is AgentRunStatus.SUCCEEDED
+    assert output.output["signals"] == [
         "credential_request",
         "external_link",
         "suspicious_link",
     ]
-    assert output["link_inspections"] == [
+    assert output.output["link_inspections"] == [
         {
             "url": "https://example.invalid/login",
             "hostname": "example.invalid",

@@ -12,6 +12,10 @@ from typing import Any
 import pytest
 from nemo_fabric_adapters.common import lifecycle
 from nemo_fabric_adapter_contract.models import AgentConfig
+from nemo_fabric_adapter_contract.models import AgentRunRequest
+from nemo_fabric_adapter_contract.models import AgentRunResult
+from nemo_fabric_adapter_contract.models import AgentRunStatus
+from nemo_fabric_adapter_contract.models import RuntimeContext
 from nemo_fabric.openai_streaming import (
     _END,
     _OpenAIStreamListener,
@@ -21,10 +25,42 @@ from nemo_fabric.openai_streaming import (
 
 
 def _request(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if operation in {"invoke", "invoke_openai_stream"}:
+        payload = dict(payload)
+        raw_context = payload.get("runtime_context")
+        if not isinstance(raw_context, dict):
+            return {"operation": operation, "payload": payload}
+        context = dict(raw_context)
+        runtime_id = context.get("runtime_id", "runtime-1")
+        context.setdefault("invocation_id", "invocation-1")
+        context.setdefault("request_id", "request-1")
+        context.setdefault(
+            "environment",
+            {
+                "environment_id": f"environment-{runtime_id}",
+                "provider": "local",
+                "control_location": "external_control",
+                "ownership": "caller_owned",
+            },
+        )
+        context.setdefault("artifacts", {})
+        if isinstance(context.get("telemetry"), dict):
+            context["telemetry"] = {
+                "relay_enabled": False,
+                **context["telemetry"],
+            }
+        payload["runtime_context"] = context
+        request = dict(payload.get("request") or {})
+        request.pop("request_id", None)
+        payload["request"] = request
     return {
         "operation": operation,
         "payload": payload,
     }
+
+
+def _success(output: Any) -> AgentRunResult:
+    return AgentRunResult(status=AgentRunStatus.SUCCEEDED, output=output)
 
 
 def _streams(requests: list[dict[str, Any]]) -> tuple[io.StringIO, io.StringIO]:
@@ -99,11 +135,11 @@ async def test_lifecycle_host_streams_openai_chunks_out_of_band():
         async def start(self, _payload):
             pass
 
-        async def invoke(self, _payload):
+        async def invoke(self, _request, _context):
             raise AssertionError("ordinary invoke is not expected")
 
-        async def invoke_openai_stream(self, payload, emit):
-            received_payloads.append(payload)
+        async def invoke_openai_stream(self, request, context, emit):
+            received_payloads.append((request, context))
             await emit(
                 {
                     "id": "chunk-1",
@@ -122,7 +158,7 @@ async def test_lifecycle_host_streams_openai_chunks_out_of_band():
                     "choices": [{"index": 0, "delta": {"content": "lo"}}],
                 }
             )
-            return {"response": "hello"}
+            return _success({"response": "hello"})
 
         async def stop(self):
             pass
@@ -150,16 +186,16 @@ async def test_lifecycle_host_streams_openai_chunks_out_of_band():
     ]
     assert responses[1]["outcome"] == {
         "status": "succeeded",
-        "output": {"response": "hello"},
+        "output": {"status": "succeeded", "output": {"response": "hello"}},
     }
     assert [record["id"] for record in records[:2]] == ["chunk-1", "chunk-2"]
     assert records[2] is _END
-    assert received_payloads == [
-        {
-            "runtime_context": stream_payload["runtime_context"],
-            "request": stream_payload["request"],
-        }
-    ]
+    assert len(received_payloads) == 1
+    request, context = received_payloads[0]
+    assert isinstance(request, AgentRunRequest)
+    assert request.input == "hello"
+    assert isinstance(context, RuntimeContext)
+    assert context.runtime_id == "runtime-1"
 
 
 async def test_openai_stream_writer_serializes_concurrent_emits_under_backpressure():
@@ -293,15 +329,19 @@ async def test_openai_stream_preserves_adapter_failure_over_finish_failure(
             raise finish_error
 
     async def connect(_payload):
-        return FailingWriter(), {
-            "runtime_context": {"runtime_id": "runtime-1"},
-            "request": {"input": "fail"},
-        }
+        adapter_payload = _request(
+            "invoke",
+            {
+                "runtime_context": {"runtime_id": "runtime-1"},
+                "request": {"input": "fail"},
+            },
+        )["payload"]
+        return FailingWriter(), adapter_payload
 
     monkeypatch.setattr(lifecycle._OpenAIStreamWriter, "connect", connect)
 
     class Runtime:
-        async def invoke_openai_stream(self, _payload, _emit):
+        async def invoke_openai_stream(self, _request, _context, _emit):
             raise primary_error
 
     with pytest.raises(type(primary_error)) as caught:
@@ -346,8 +386,8 @@ def test_lifecycle_host_rejects_unimplemented_openai_stream_without_poisoning_ru
         async def start(self, _payload):
             pass
 
-        async def invoke(self, payload):
-            return {"input": payload["request"]["input"]}
+        async def invoke(self, request, _context):
+            return _success({"input": request.input})
 
         async def stop(self):
             pass
@@ -363,7 +403,7 @@ def test_lifecycle_host_rejects_unimplemented_openai_stream_without_poisoning_ru
     }
     assert responses[2]["outcome"] == {
         "status": "succeeded",
-        "output": {"input": "still works"},
+        "output": {"status": "succeeded", "output": {"input": "still works"}},
     }
 
 
@@ -484,7 +524,7 @@ def test_malformed_openai_stream_request_uses_the_invoke_error_stage():
         async def start(self, _payload):
             pass
 
-        async def invoke(self, _payload):
+        async def invoke(self, _request, _context):
             pass
 
         async def stop(self):
@@ -537,13 +577,10 @@ def test_lifecycle_host_reuses_one_runtime_and_one_event_loop():
         async def start(self, _payload):
             self.loop_ids.append(id(asyncio.get_running_loop()))
 
-        async def invoke(self, payload):
+        async def invoke(self, request, _context):
             self.loop_ids.append(id(asyncio.get_running_loop()))
             self.invocations += 1
-            return {
-                "count": self.invocations,
-                "input": payload["request"]["input"],
-            }
+            return _success({"count": self.invocations, "input": request.input})
 
         async def stop(self):
             self.loop_ids.append(id(asyncio.get_running_loop()))
@@ -559,13 +596,19 @@ def test_lifecycle_host_reuses_one_runtime_and_one_event_loop():
     ]
     assert all(item["outcome"]["status"] == "succeeded" for item in responses)
     assert all(set(item) == {"operation", "outcome"} for item in responses)
-    assert responses[1]["outcome"]["output"] == {"count": 1, "input": "first"}
-    assert responses[2]["outcome"]["output"] == {"count": 2, "input": "second"}
+    assert responses[1]["outcome"]["output"] == {
+        "status": "succeeded",
+        "output": {"count": 1, "input": "first"},
+    }
+    assert responses[2]["outcome"]["output"] == {
+        "status": "succeeded",
+        "output": {"count": 2, "input": "second"},
+    }
     assert len(instances) == 1
     assert len(set(instances[0].loop_ids)) == 1
 
 
-def test_lifecycle_host_passes_minimal_invoke_payload_unchanged():
+def test_lifecycle_host_passes_typed_invocation_objects():
     runtime_id = "runtime-1"
     start_payload = {
         "agent_name": "agent",
@@ -597,16 +640,21 @@ def test_lifecycle_host_passes_minimal_invoke_payload_unchanged():
         async def start(self, _payload) -> None:
             pass
 
-        async def invoke(self, payload) -> dict[str, str]:
-            invocations.append(payload)
-            return {"input": payload["request"]["input"]}
+        async def invoke(self, request, context) -> AgentRunResult:
+            invocations.append((request, context))
+            return _success({"input": request.input})
 
         async def stop(self) -> None:
             pass
 
     lifecycle.serve(Runtime, input_stream=input_stream, output_stream=output_stream)
 
-    assert invocations == [invoke_payload]
+    assert len(invocations) == 1
+    request, context = invocations[0]
+    assert isinstance(request, AgentRunRequest)
+    assert request.input == "hello"
+    assert isinstance(context, RuntimeContext)
+    assert context.runtime_id == runtime_id
 
 
 def test_lifecycle_host_validates_opt_in_typed_config_before_adapter_start():
@@ -629,7 +677,7 @@ def test_lifecycle_host_validates_opt_in_typed_config_before_adapter_start():
         async def start(self, payload) -> None:
             starts.append(payload["config"])
 
-        async def invoke(self, _payload):
+        async def invoke(self, _request, _context):
             raise AssertionError("invoke is not expected")
 
         async def stop(self) -> None:
@@ -669,7 +717,7 @@ def test_lifecycle_host_rejects_invalid_opt_in_config_before_runtime_creation():
         async def start(self, _payload) -> None:
             pass
 
-        async def invoke(self, _payload):
+        async def invoke(self, _request, _context):
             raise AssertionError("invoke is not expected")
 
         async def stop(self) -> None:
@@ -714,9 +762,9 @@ def test_lifecycle_host_rejects_runtime_mismatch_without_poisoning_runtime():
         async def start(self, _payload):
             pass
 
-        async def invoke(self, payload):
-            invocations.append(payload)
-            return {"input": payload["request"]["input"]}
+        async def invoke(self, request, context):
+            invocations.append((request, context))
+            return _success({"input": request.input})
 
         async def stop(self):
             pass
@@ -728,7 +776,7 @@ def test_lifecycle_host_rejects_runtime_mismatch_without_poisoning_runtime():
     assert responses[1]["outcome"]["error"]["code"] == "lifecycle_runtime_mismatch"
     assert responses[2]["outcome"] == {
         "status": "succeeded",
-        "output": {"input": "run"},
+        "output": {"status": "succeeded", "output": {"input": "run"}},
     }
     assert len(invocations) == 1
 
@@ -753,9 +801,9 @@ def test_lifecycle_host_keeps_adapter_stdout_out_of_protocol(capsys):
         async def start(self, _payload):
             pass
 
-        async def invoke(self, _payload):
+        async def invoke(self, _request, _context):
             print("adapter diagnostic")
-            return {"failed": False}
+            return _success({})
 
         async def stop(self):
             pass
@@ -791,8 +839,8 @@ def test_lifecycle_host_scopes_invocation_telemetry_environment():
         async def start(self, _payload):
             pass
 
-        async def invoke(self, _payload):
-            return {"value": os.environ[variable]}
+        async def invoke(self, _request, _context):
+            return _success({"value": os.environ[variable]})
 
         async def stop(self):
             pass
@@ -800,7 +848,10 @@ def test_lifecycle_host_scopes_invocation_telemetry_environment():
     lifecycle.serve(Runtime, input_stream=input_stream, output_stream=output_stream)
 
     responses = [json.loads(line) for line in output_stream.getvalue().splitlines()]
-    assert responses[1]["outcome"]["output"] == {"value": "invocation-value"}
+    assert responses[1]["outcome"]["output"] == {
+        "status": "succeeded",
+        "output": {"value": "invocation-value"},
+    }
     assert os.environ[variable] == "host-value"
 
 
@@ -814,7 +865,7 @@ def test_lifecycle_host_stops_runtime_when_fabric_closes_stdin():
         async def start(self, _payload):
             pass
 
-        async def invoke(self, _payload):
+        async def invoke(self, _request, _context):
             return None
 
         async def stop(self):
@@ -855,8 +906,8 @@ def test_lifecycle_host_rejects_invoke_after_adapter_failure(failure, expected_c
         async def start(self, _payload):
             pass
 
-        async def invoke(self, payload):
-            invocations.append(payload)
+        async def invoke(self, request, context):
+            invocations.append((request, context))
             raise failure
 
         async def stop(self) -> None:
@@ -880,7 +931,7 @@ def test_lifecycle_host_cleans_up_and_exits_after_start_failure():
         async def start(self, _payload):
             raise RuntimeError("start failed")
 
-        async def invoke(self, _payload):
+        async def invoke(self, _request, _context):
             raise AssertionError("failed runtime must not be invoked")
 
         async def stop(self):
