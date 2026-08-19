@@ -1,0 +1,53 @@
+{
+  "contract_version": "fabric.adapter/v1alpha2",
+  "adapter_id": "nvidia.fabric.pi",
+  "adapter_kind": "process",
+  "runner": {
+    "command": "node",
+    "script": "dist/cli.js"
+  },
+  "requirements": {
+    "binaries": ["node"]
+  },
+  "config": {
+    "accepts": [
+      "models",
+      "models.base_url",
+      "instructions.system",
+      "tools.enabled",
+      "tools.blocked"
+    ]
+  },
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "extensions": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "uniqueItems": true
+      }
+    },
+    "additionalProperties": false
+  },
+  "model_schema": {
+    "type": "object",
+    "properties": {
+      "provider": {"type": "string", "minLength": 1},
+      "model": {"type": "string", "minLength": 1},
+      "api_key_env": {"type": "string", "minLength": 1},
+      "base_url": {"type": ["string", "null"], "format": "uri"},
+      "extensions": {"type": "object"}
+    },
+    "required": ["provider", "model", "api_key_env"],
+    "additionalProperties": false
+  },
+  "capabilities": {
+    "streaming": false,
+    "cancellation": false,
+    "updates": false,
+    "service": false
+  }
+}

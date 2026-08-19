@@ -1,0 +1,36 @@
+{
+  "name": "nemo-fabric-adapter-pi",
+  "version": "0.1.0",
+  "description": "Pi SDK harness adapter POC for NVIDIA NeMo Fabric.",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "bin": {
+    "nemo-fabric-adapter-pi": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "pi.fabric-adapter.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist",
+    "test": "npm run clean && npm run build && node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "0.84.2",
+    "@earendil-works/pi-coding-agent": "0.84.2",
+    "nemo-fabric-adapter-contract": "file:../../adapter-contract/typescript",
+    "nemo-fabric-adapters-common": "file:../common-typescript"
+  },
+  "devDependencies": {
+    "@types/node": "24.12.4",
+    "typescript": "5.9.3"
+  }
+}
