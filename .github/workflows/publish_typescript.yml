@@ -26,7 +26,6 @@ defaults:
 jobs:
   publish-typescript:
     name: Publish (npmjs.com)
-    if: ${{ github.event_name == 'workflow_call' || github.ref_type == 'tag' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
