@@ -18,6 +18,7 @@ from examples.code_review_agent.config import (
     codex_config,
     deepagents_config,
     hermes_config,
+    pi_config,
     with_relay,
 )
 
@@ -26,6 +27,7 @@ CONFIG_BUILDERS: dict[str, Callable[[], FabricConfig]] = {
     "claude": claude_config,
     "codex": codex_config,
     "deepagents": deepagents_config,
+    "pi": pi_config,
 }
 
 
@@ -45,6 +47,9 @@ async def main() -> None:
     )
     parser.add_argument("--input", default="Review the workspace changes.")
     args = parser.parse_args()
+
+    if args.variant == "pi" and args.relay:
+        parser.error("the Pi adapter does not support Relay yet")
 
     config = CONFIG_BUILDERS[args.variant]()
     if args.relay:

@@ -35,6 +35,20 @@ installing outside a source checkout must follow the
 If Hermes Agent uses a separate environment, set `ADAPTER_PYTHON` to that
 environment's Python interpreter only for Hermes Agent commands.
 
+The Pi variant uses the source-built Pi SDK adapter and requires Node.js
+22.19.0 or newer. Install and build its TypeScript packages from the repository
+root:
+
+```bash
+npm ci --prefix adapters/common-typescript --ignore-scripts
+npm run build --prefix adapters/common-typescript
+npm ci --prefix adapters/pi --ignore-scripts
+npm run build --prefix adapters/pi
+```
+
+The example discovers `adapters/pi/pi.fabric-adapter.json` directly from the
+source checkout. Set `NVIDIA_API_KEY` before running the Pi variant.
+
 ## Inspect the plan
 
 Resolve the default config without starting a runtime or calling a model:
@@ -69,6 +83,7 @@ The entrypoint exposes complete harness configs defined in
 | Codex | `--variant codex` | Installed [Codex adapter](../../adapters/codex/README.md) and an existing ChatGPT or API key login |
 | Claude | `--variant claude` | Installed [Claude adapter requirements](../../adapters/claude/README.md) and `ANTHROPIC_API_KEY` |
 | Deep Agents | `--variant deepagents` | Installed [Deep Agents adapter requirements](../../adapters/deepagents/README.md) and `NVIDIA_API_KEY` |
+| Pi SDK | `--variant pi` | Built the [Pi adapter](../../adapters/pi/README.md) with Node.js 22.19 or newer and set `NVIDIA_API_KEY` |
 
 Add `--relay` to any variant to enable the Relay ATOF and ATIF configuration:
 
@@ -89,6 +104,20 @@ for the current compatibility requirements.
 Use `--plan` with these options to inspect a variant before running it.
 Use `--show-output` to print the adapter's `output.response` value on the final
 line after the normalized result.
+
+Run the read-only Pi code-review variant with:
+
+```bash
+.venv/bin/python -m examples.code_review_agent \
+  --variant pi \
+  --show-output \
+  --input "Read calculator.py and review it for correctness risks. Cite the file and line you inspected."
+```
+
+The Pi variant loads the example's explicit `skills/code-review` skill and
+enables only Pi's built-in `read` tool. It does not enable `bash`, editing
+tools, MCP, or Relay. Passing `--relay` with `--variant pi` is rejected until
+the adapter supports that integration.
 
 ## Compose configs in Python
 

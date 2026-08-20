@@ -15,7 +15,8 @@
       "models.base_url",
       "instructions.system",
       "tools.enabled",
-      "tools.blocked"
+      "tools.blocked",
+      "skills"
     ]
   },
   "settings_schema": {

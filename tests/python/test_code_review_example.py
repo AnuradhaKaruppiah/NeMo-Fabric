@@ -18,6 +18,7 @@ from examples.code_review_agent import claude_config
 from examples.code_review_agent import codex_config
 from examples.code_review_agent import deepagents_config
 from examples.code_review_agent import hermes_config
+from examples.code_review_agent import pi_config
 from examples.code_review_agent import with_github_mcp
 from examples.code_review_agent import with_native_otel
 from examples.code_review_agent import with_opensandbox
@@ -35,8 +36,9 @@ def test_variant_builders_return_independent_complete_configs():
     codex = codex_config()
     claude = claude_config()
     deepagents = deepagents_config()
+    pi = pi_config()
 
-    for config in (base, hermes, codex, claude, deepagents):
+    for config in (base, hermes, codex, claude, deepagents, pi):
         assert isinstance(config, FabricConfig)
         assert config.metadata.name == "code-review-agent"
         assert config.environment is not None
@@ -60,6 +62,16 @@ def test_variant_builders_return_independent_complete_configs():
     assert deepagents.harness.adapter_id == "nvidia.fabric.langchain.deepagents"
     assert deepagents.mcp is None
     assert deepagents.skills is None
+    assert pi is not base
+    assert pi.harness is not base.harness
+    assert pi.harness.adapter_id == "nvidia.fabric.pi"
+    assert pi.models["default"].provider == "nvidia"
+    assert pi.models["default"].api_key_env == "NVIDIA_API_KEY"
+    assert pi.models["default"].temperature is None
+    assert pi.skills is not None
+    assert pi.skills.paths == ["./skills/code-review"]
+    assert pi.tools is not None
+    assert pi.tools.enabled == ["read"]
     assert base.mcp is None
     assert base.skills is not None
     skill_path = BASE_DIR / base.skills.paths[0]
@@ -167,11 +179,14 @@ def test_variants_plan_from_complete_configs():
         codex_config(),
         claude_config(),
         deepagents_config(),
+        pi_config(),
     ):
         plan = client.plan(config, base_dir=BASE_DIR)
         assert plan.base_dir == BASE_DIR
         assert plan.agent_name == "code-review-agent"
         assert plan.adapter.adapter_id == config.harness.adapter_id
+        if config.harness.adapter_id == "nvidia.fabric.pi":
+            continue
         github_plan = client.plan(with_github_mcp(config), base_dir=BASE_DIR)
         assert "github" in github_plan["capability_plan"]["native"]["mcp_servers"]
         assert "mcp_servers" not in github_plan["capability_plan"]["unsupported"]
@@ -183,6 +198,7 @@ def test_example_entrypoint_plans_without_starting_a_runtime():
         ("codex", "nvidia.fabric.codex"),
         ("claude", "nvidia.fabric.claude"),
         ("deepagents", "nvidia.fabric.langchain.deepagents"),
+        ("pi", "nvidia.fabric.pi"),
     )
     cases = tuple(
         (
@@ -191,7 +207,7 @@ def test_example_entrypoint_plans_without_starting_a_runtime():
             relay_enabled,
         )
         for variant, adapter_id in variants
-        for relay_enabled in (False, True)
+        for relay_enabled in ((False,) if variant == "pi" else (False, True))
     )
 
     for options, adapter_id, relay_enabled in cases:
@@ -218,6 +234,39 @@ def test_example_entrypoint_plans_without_starting_a_runtime():
             assert telemetry_plan["relay_enabled"] is True
         else:
             assert telemetry_plan is None
+
+
+def test_pi_variant_projects_explicit_skill_and_read_only_tool_policy():
+    plan = Fabric().plan(pi_config(), base_dir=BASE_DIR)
+    agent_config = plan.to_mapping()["agent_config"]
+
+    assert agent_config["skills"] == {
+        "paths": [str((BASE_DIR / "skills/code-review").resolve())]
+    }
+    assert agent_config["tools"] == {"enabled": ["read"]}
+    assert plan.config.runtime.input_schema == "text"
+    assert plan.config.runtime.output_schema == "message"
+
+
+def test_pi_variant_rejects_relay_before_planning():
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "examples.code_review_agent",
+            "--variant",
+            "pi",
+            "--relay",
+            "--plan",
+        ],
+        cwd=BASE_DIR.parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 2
+    assert "Pi adapter does not support Relay yet" in completed.stderr
 
 
 async def test_example_entrypoint_shows_response_after_normalized_output(

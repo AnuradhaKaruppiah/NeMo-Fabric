@@ -8,6 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from nemo_fabric import DiscoveryConfig
 from nemo_fabric import EnvironmentConfig
 from nemo_fabric import FabricConfig
 from nemo_fabric import HarnessConfig
@@ -28,6 +29,7 @@ from nemo_fabric import ToolsConfig
 BASE_DIR = Path(__file__).resolve().parent
 WORKSPACE = "./repos/my-service"
 SKILL_PATH = "./skills/code-review"
+PI_DESCRIPTOR = "../../adapters/pi/pi.fabric-adapter.json"
 
 
 def base_config() -> FabricConfig:
@@ -96,6 +98,46 @@ def hermes_config() -> FabricConfig:
         provider="local",
         workspace=WORKSPACE,
         artifacts="./artifacts/hermes",
+    )
+    return config
+
+
+def pi_config() -> FabricConfig:
+    """Return the complete Pi SDK adapter variant."""
+
+    config = base_config().model_copy(deep=True)
+    config.discovery = DiscoveryConfig(local_paths=[PI_DESCRIPTOR])
+    config.harness = HarnessConfig(
+        adapter_id="nvidia.fabric.pi",
+        resolution="preinstalled",
+        settings={},
+    )
+    config.models = {
+        "default": ModelConfig(
+            provider="nvidia",
+            model="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+            api_key_env="NVIDIA_API_KEY",
+            base_url="https://integrate.api.nvidia.com/v1",
+        )
+    }
+    config.instructions = InstructionsConfig(
+        system=InstructionConfig(
+            content=(
+                "You are a concise code reviewer. Read the relevant workspace "
+                "files before reporting correctness risks."
+            )
+        )
+    )
+    config.tools = ToolsConfig(enabled=["read"])
+    config.runtime = RuntimeConfig(
+        input_schema="text",
+        output_schema="message",
+        artifacts="./artifacts/pi",
+    )
+    config.environment = EnvironmentConfig(
+        provider="local",
+        workspace=WORKSPACE,
+        artifacts="./artifacts/pi",
     )
     return config
 

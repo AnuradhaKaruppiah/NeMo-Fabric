@@ -81,6 +81,39 @@ async function resolveExtensionPaths(workspace: string, configured: string[]): P
   return resolved;
 }
 
+async function resolveSkillPaths(baseDir: string, configured: string[]): Promise<string[]> {
+  const resolved: string[] = [];
+  for (const entry of configured) {
+    let candidate: string;
+    try {
+      candidate = await realpath(resolve(baseDir, entry));
+    } catch {
+      throw new LifecycleError("pi_skill_not_found", "A configured NeMo Fabric skill path does not exist");
+    }
+    let info;
+    try {
+      info = await stat(candidate);
+    } catch {
+      throw new LifecycleError("pi_skill_not_found", "A configured NeMo Fabric skill path does not exist");
+    }
+    if (!info.isDirectory()) {
+      throw new LifecycleError("pi_skill_invalid", "NeMo Fabric skill paths must be directories");
+    }
+    try {
+      if (!(await stat(join(candidate, "SKILL.md"))).isFile()) {
+        throw new Error("not a file");
+      }
+    } catch {
+      throw new LifecycleError(
+        "pi_skill_invalid",
+        "NeMo Fabric skill directories must contain a SKILL.md file",
+      );
+    }
+    resolved.push(candidate);
+  }
+  return resolved;
+}
+
 function credentialValue(input: AdapterStartInput, name: string): string | undefined {
   return input.runtimeContext.environment.env?.[name] ?? process.env[name];
 }
@@ -179,12 +212,14 @@ export class PiSdkSessionFactory implements PiSessionFactory {
 
     const settings = SettingsManager.inMemory({}, { projectTrusted: false });
     const extensionPaths = await resolveExtensionPaths(workspace, harnessSettings(input.config).extensions);
+    const skillPaths = await resolveSkillPaths(input.baseDir, input.config.skills?.paths ?? []);
     const agentDir = join(workspace, ".fabric-pi");
     const resourceLoader = new DefaultResourceLoader({
       cwd: workspace,
       agentDir,
       settingsManager: settings,
       additionalExtensionPaths: extensionPaths,
+      additionalSkillPaths: skillPaths,
       noExtensions: true,
       noSkills: true,
       noPromptTemplates: true,
@@ -197,6 +232,18 @@ export class PiSdkSessionFactory implements PiSessionFactory {
     if (extensionErrors.length > 0) {
       throw new LifecycleError("pi_extension_load_failed", "One or more configured Pi extensions failed to load", {
         metadata: { count: extensionErrors.length },
+      });
+    }
+    const skillDiagnostics = resourceLoader.getSkills().diagnostics;
+    const blockingSkillDiagnostics = skillDiagnostics.filter(
+      (diagnostic) => diagnostic.type === "error" || diagnostic.type === "collision",
+    );
+    for (const diagnostic of skillDiagnostics.filter((entry) => entry.type === "warning")) {
+      process.stderr.write(`Pi skill warning: ${diagnostic.message}\n`);
+    }
+    if (blockingSkillDiagnostics.length > 0) {
+      throw new LifecycleError("pi_skill_load_failed", "One or more configured NeMo Fabric skills failed to load", {
+        metadata: { count: blockingSkillDiagnostics.length },
       });
     }
 

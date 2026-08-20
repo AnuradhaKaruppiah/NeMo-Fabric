@@ -49,6 +49,7 @@ def test_pi_descriptor_declares_the_poc_surface():
         "instructions.system",
         "tools.enabled",
         "tools.blocked",
+        "skills",
     ]
     assert descriptor["capabilities"] == {
         "streaming": False,
