@@ -154,7 +154,7 @@ class PiSdkSessionHandle implements PiSessionHandle {
   async prompt(text: string): Promise<PiPromptOutcome> {
     let accepted = false;
     let finalAssistant:
-      | { role: "assistant"; content: unknown; stopReason: string }
+      | { role: "assistant"; content: unknown; stopReason: string; errorMessage?: string }
       | undefined;
     const unsubscribe = this.session.subscribe((event) => {
       if (event.type === "message_end" && event.message.role === "assistant") {
@@ -176,6 +176,7 @@ class PiSdkSessionHandle implements PiSessionHandle {
       accepted,
       text: finalAssistant === undefined ? undefined : promptText(finalAssistant),
       stopReason: finalAssistant?.stopReason,
+      errorMessage: finalAssistant?.errorMessage,
       shutdownRequested: this.state.shutdownRequested,
     };
   }

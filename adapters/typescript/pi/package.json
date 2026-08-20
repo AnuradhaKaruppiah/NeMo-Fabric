@@ -26,8 +26,8 @@
   "dependencies": {
     "@earendil-works/pi-ai": "0.84.2",
     "@earendil-works/pi-coding-agent": "0.84.2",
-    "nemo-fabric-adapter-contract": "file:../../adapter-contract/typescript",
-    "nemo-fabric-adapters-common": "file:../common-typescript"
+    "nemo-fabric-adapter-contract": "file:../../../adapter-contract/typescript",
+    "nemo-fabric-adapters-common": "0.3.0"
   },
   "devDependencies": {
     "@types/node": "24.12.4",

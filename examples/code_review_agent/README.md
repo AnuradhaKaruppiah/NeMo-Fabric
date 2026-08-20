@@ -40,13 +40,11 @@ The Pi variant uses the source-built Pi SDK adapter and requires Node.js
 root:
 
 ```bash
-npm ci --prefix adapters/common-typescript --ignore-scripts
-npm run build --prefix adapters/common-typescript
-npm ci --prefix adapters/pi --ignore-scripts
-npm run build --prefix adapters/pi
+npm ci --prefix adapters/typescript --ignore-scripts
+npm run build --prefix adapters/typescript
 ```
 
-The example discovers `adapters/pi/pi.fabric-adapter.json` directly from the
+The example discovers `adapters/typescript/pi/pi.fabric-adapter.json` directly from the
 source checkout. Set `NVIDIA_API_KEY` before running the Pi variant.
 
 ## Inspect the plan
@@ -83,7 +81,7 @@ The entrypoint exposes complete harness configs defined in
 | Codex | `--variant codex` | Installed [Codex adapter](../../adapters/codex/README.md) and an existing ChatGPT or API key login |
 | Claude | `--variant claude` | Installed [Claude adapter requirements](../../adapters/claude/README.md) and `ANTHROPIC_API_KEY` |
 | Deep Agents | `--variant deepagents` | Installed [Deep Agents adapter requirements](../../adapters/deepagents/README.md) and `NVIDIA_API_KEY` |
-| Pi SDK | `--variant pi` | Built the [Pi adapter](../../adapters/pi/README.md) with Node.js 22.19 or newer and set `NVIDIA_API_KEY` |
+| Pi SDK | `--variant pi` | Built the [Pi adapter](../../adapters/typescript/pi/README.md) with Node.js 22.19 or newer and set `NVIDIA_API_KEY` |
 
 Add `--relay` to any variant to enable the Relay ATOF and ATIF configuration:
 

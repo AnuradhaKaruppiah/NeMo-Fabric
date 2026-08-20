@@ -35,9 +35,9 @@ The maintained code-review example exercises the controlled Pi profile with an
 explicit Fabric skill and only Pi's built-in `read` tool:
 
 ```bash
-npm run build --prefix adapters/pi
+npm run build --prefix adapters/typescript
 .venv/bin/python -m examples.code_review_agent --variant pi --plan
 ```
 
-See the [code-review example](../../examples/code_review_agent/README.md) for
+See the [code-review example](../../../examples/code_review_agent/README.md) for
 the live NVIDIA-backed run command. Relay and MCP are not supported by this POC.

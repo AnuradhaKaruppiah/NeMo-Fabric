@@ -46,7 +46,7 @@ async function exchange(workspace, requests) {
   child.stderr.on("data", (chunk) => {
     stderr += chunk;
   });
-  child.stdin.end(`${requests.map((request) => JSON.stringify(request)).join("\n")}\n`);
+  child.stdin.write(`${requests.map((request) => JSON.stringify(request)).join("\n")}\n`);
 
   const exitCode = await new Promise((resolve, reject) => {
     child.once("error", reject);

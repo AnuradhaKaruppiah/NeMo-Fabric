@@ -10,6 +10,7 @@ export interface PiPromptOutcome {
   accepted: boolean;
   text?: string;
   stopReason?: PiStopReason;
+  errorMessage?: string;
   shutdownRequested?: boolean;
 }
 
@@ -71,7 +72,7 @@ export class PiAdapterRuntime implements AdapterRuntime {
       };
     }
     if (outcome.stopReason === "error") {
-      return failed("pi_model_error", "The Pi model invocation failed");
+      return failed("pi_model_error", outcome.errorMessage || "The Pi model invocation failed");
     }
     if (outcome.text === undefined || outcome.text.length === 0) {
       return failed("pi_no_assistant_response", "Pi completed without a final assistant text response");

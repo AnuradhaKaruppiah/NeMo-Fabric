@@ -14,6 +14,13 @@ dedicated adapter.
 The adapter descriptor selected in `RunPlan` is authoritative for normalized
 configuration, its adapter-owned settings schema, and telemetry support.
 
+## Repository Layout
+
+Language-specific adapter packages and shared runtime utilities live under a
+language directory. TypeScript packages are under `adapters/typescript/`.
+Existing Python packages remain at the adapter root until they move together
+in a separate repository-organization change.
+
 ## Descriptor Discovery
 
 The Python SDK builds one descriptor registry from three sources:
@@ -31,7 +38,7 @@ provenance. Different records with the same ID fail as ambiguous; discovery
 does not merge fields or choose an override. Workflow entry points and settings
 schemas come from independently registered Adapter Target Descriptors.
 
-## Bundled Adapter Packages
+## Bundled Python Adapter Packages
 
 | Agent Harness | Adapter ID | Python Package | Supported Python |
 | --- | --- | --- | --- |
@@ -40,6 +47,15 @@ schemas come from independently registered Adapter Target Descriptors.
 | [LangChain Deep Agents](deepagents/README.md) | `nvidia.fabric.langchain.deepagents` | `nemo-fabric-adapters-deepagents` | 3.11+ |
 | [Hermes Agent](hermes/README.md) | `nvidia.fabric.hermes` | `nemo-fabric-adapters-hermes` | 3.11-3.13 |
 | [mini-SWE-agent](mini-swe-agent/README.md) | `nvidia.fabric.mini-swe-agent` | `nemo-fabric-adapters-mini-swe-agent` | 3.11+ |
+
+## TypeScript Adapter Packages
+
+| Agent Harness | Adapter ID | npm Package | Supported Node.js |
+| --- | --- | --- | --- |
+| [Pi](typescript/pi/README.md) | `nvidia.fabric.pi` | `nemo-fabric-adapter-pi` | 22.19+ |
+
+Shared TypeScript lifecycle utilities live under
+[`typescript/common`](typescript/common/README.md).
 
 ## Custom-Agent Adapter References
 

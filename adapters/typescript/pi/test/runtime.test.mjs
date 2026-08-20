@@ -79,7 +79,7 @@ test("rejects non-text POC input without invoking Pi", async () => {
 test("normalizes rejected, failed, empty, and aborted Pi outcomes", async () => {
   const outcomes = [
     { accepted: false },
-    { accepted: true, stopReason: "error" },
+    { accepted: true, stopReason: "error", errorMessage: "provider rejected the request" },
     { accepted: true, stopReason: "stop" },
     { accepted: true, stopReason: "aborted" },
   ];
@@ -103,6 +103,7 @@ test("normalizes rejected, failed, empty, and aborted Pi outcomes", async () => 
   assert.equal(rejected.status, "failed");
   assert.equal(rejected.error.code, "pi_prompt_rejected");
   assert.equal(failed.error.code, "pi_model_error");
+  assert.equal(failed.error.message, "provider rejected the request");
   assert.equal(empty.error.code, "pi_no_assistant_response");
   assert.equal(aborted.status, "cancelled");
   assert.equal(aborted.error.code, "pi_aborted");

@@ -18,7 +18,7 @@ from nemo_fabric import MetadataConfig
 from nemo_fabric import ModelConfig
 
 ROOT = Path(__file__).resolve().parents[2]
-DESCRIPTOR = ROOT / "adapters/pi/pi.fabric-adapter.json"
+DESCRIPTOR = ROOT / "adapters/typescript/pi/pi.fabric-adapter.json"
 
 
 def config(*, api_key_env: str | None = "POC_FAKE_KEY") -> FabricConfig:

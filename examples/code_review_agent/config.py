@@ -29,7 +29,7 @@ from nemo_fabric import ToolsConfig
 BASE_DIR = Path(__file__).resolve().parent
 WORKSPACE = "./repos/my-service"
 SKILL_PATH = "./skills/code-review"
-PI_DESCRIPTOR = "../../adapters/pi/pi.fabric-adapter.json"
+PI_DESCRIPTOR = "../../adapters/typescript/pi/pi.fabric-adapter.json"
 
 
 def base_config() -> FabricConfig:
