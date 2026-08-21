@@ -28,6 +28,8 @@ const expectedByPackage = {
     "README.md",
     "dist/cli.d.ts",
     "dist/cli.js",
+    "dist/node-version.d.ts",
+    "dist/node-version.js",
     "dist/pi-sdk.d.ts",
     "dist/pi-sdk.js",
     "dist/runtime.d.ts",

@@ -11,14 +11,14 @@ SDK in a persistent Node.js process.
 ## Install the Adapter
 
 Pi requires Node.js 22.19.0 or newer. Install the npm adapter in the project
-that owns the Fabric configuration:
+that owns the NeMo Fabric configuration:
 
 ```bash
 npm install nemo-fabric-adapters-pi
 ```
 
 The package includes the process entry point and adapter descriptor. Point
-Fabric discovery at the installed descriptor:
+NeMo Fabric discovery at the installed descriptor:
 
 ```yaml
 discovery:
@@ -68,10 +68,10 @@ config = FabricConfig(
 The provider and model pair must already exist in Pi's catalog. A base URL can
 override a known model endpoint, but it does not define a new provider.
 
-## Add a Fabric Tool Definition
+## Add a NeMo Fabric Tool Definition
 
 Pi accepts trusted local JavaScript and TypeScript tool factories. The
-normalized definition uses `kind: "module"`; `ref` is relative to the Fabric
+normalized definition uses `kind: "module"`; `ref` is relative to the NeMo Fabric
 workspace and may include a named export after `#`.
 
 ```python
@@ -87,7 +87,7 @@ config.tools.enabled = ["read", "review_context"]
 The factory receives `{ name, settings, workspace }` and returns a Pi
 `ToolDefinition` with the same name. Tool modules and explicit Pi extensions
 run as trusted code in the adapter process. The adapter rejects paths outside
-the workspace and duplicate names across built-ins, Fabric definitions, and
+the workspace and duplicate names across built-ins, NeMo Fabric definitions, and
 extensions.
 
 The current adapter does not expose Relay, MCP, streaming, caller-driven

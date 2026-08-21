@@ -261,11 +261,15 @@ async function dispatch(
     if (state.runtime !== undefined) {
       throw new LifecycleError("lifecycle_already_started", "Lifecycle host already owns a runtime");
     }
-    const candidate = factory();
+    let candidate: AdapterRuntime | undefined;
     try {
-      await callAdapter("start", () => candidate.start(decodeStart(request.payload)));
+      candidate = await callAdapter("start", async () => factory());
+      const active = candidate;
+      await callAdapter("start", () => active.start(decodeStart(request.payload)));
     } catch (error) {
-      await stopQuietly(candidate, diagnostics);
+      if (candidate !== undefined) {
+        await stopQuietly(candidate, diagnostics);
+      }
       throw error;
     }
     state.runtime = candidate;
@@ -283,10 +287,10 @@ async function dispatch(
 
   if (request.operation === "stop") {
     const active = state.runtime;
+    await callAdapter("stop", () => active.stop());
     state.runtime = undefined;
     state.runtimeId = undefined;
     state.failed = false;
-    await callAdapter("stop", () => active.stop());
     return success("stop");
   }
 

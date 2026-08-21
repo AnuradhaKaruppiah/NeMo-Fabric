@@ -7,6 +7,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+import { assertSupportedNodeVersion } from "../dist/node-version.js";
 
 const [major, minor] = process.versions.node.split(".").map(Number);
 const supportsPi = major > 22 || (major === 22 && minor >= 19);
@@ -31,7 +34,7 @@ function context(workspace, invocationId) {
 async function exchange(workspace, requests) {
   const childEnv = { ...process.env };
   delete childEnv.NODE_TEST_CONTEXT;
-  const child = spawn(process.execPath, [new URL("../dist/cli.js", import.meta.url).pathname], {
+  const child = spawn(process.execPath, [fileURLToPath(new URL("../dist/cli.js", import.meta.url))], {
     cwd: workspace,
     env: childEnv,
     stdio: ["pipe", "pipe", "pipe"],
@@ -55,6 +58,19 @@ async function exchange(workspace, requests) {
   const responses = stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
   return { exitCode, responses, stderr, stdout };
 }
+
+test("enforces the package Node.js engine floor", () => {
+  assert.doesNotThrow(() => assertSupportedNodeVersion("22.19.0", ">=22.19.0"));
+  assert.doesNotThrow(() => assertSupportedNodeVersion("24.0.0", ">=22.19.0"));
+  assert.throws(
+    () => assertSupportedNodeVersion("22.18.9", ">=22.19.0"),
+    /requires Node\.js >=22\.19\.0/,
+  );
+  assert.throws(
+    () => assertSupportedNodeVersion("22.19.0", "^22.19.0"),
+    /cannot enforce Node\.js engine requirement/,
+  );
+});
 
 test(
   "launches the Pi process host and loads an explicit extension tool",

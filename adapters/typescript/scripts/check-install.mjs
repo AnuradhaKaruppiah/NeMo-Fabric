@@ -71,9 +71,15 @@ try {
     cwd: consumerRoot,
     encoding: "utf8",
     input: "{}\n",
+    timeout: 60_000,
   });
+  if (invocation.error) {
+    throw invocation.error;
+  }
   if (invocation.status !== 0) {
-    throw new Error(`Installed Pi CLI exited with ${invocation.status}: ${invocation.stderr}`);
+    throw new Error(
+      `Installed Pi CLI failed (status ${invocation.status}, signal ${invocation.signal}): ${invocation.stderr}`,
+    );
   }
   const response = JSON.parse(invocation.stdout.trim());
   if (response.outcome?.error?.code !== "lifecycle_invalid_operation") {

@@ -28,6 +28,27 @@ function startInput() {
 
 const context = startInput().runtimeContext;
 
+test("enforces the runtime start and invoke lifecycle guards", async () => {
+  const runtime = new PiAdapterRuntime({
+    async create() {
+      return {
+        async prompt() {
+          return { accepted: true, text: "ok" };
+        },
+        async stop() {},
+      };
+    },
+  });
+
+  await assert.rejects(
+    runtime.invoke({ input: "before start" }, context),
+    (error) => error.code === "pi_not_started",
+  );
+  await runtime.start(startInput());
+  await assert.rejects(runtime.start(startInput()), (error) => error.code === "pi_already_started");
+  await runtime.stop();
+});
+
 test("normalizes successful plain-text prompts and reuses one session", async () => {
   const prompts = [];
   let stopped = false;

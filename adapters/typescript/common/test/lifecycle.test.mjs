@@ -122,6 +122,38 @@ test("rejects invalid typed configuration before adapter startup", async () => {
   assert.equal(response.outcome.error.code, "lifecycle_invalid_config");
 });
 
+test("classifies factory failures as adapter startup failures", async () => {
+  const [response] = await exchange(
+    () => {
+      throw new Error("private factory detail");
+    },
+    [start("runtime-1")],
+  );
+
+  assert.equal(response.outcome.error.code, "lifecycle_adapter_start_failed");
+  assert.equal(response.outcome.error.message, "Adapter failed during lifecycle start");
+});
+
+test("retains a runtime for final cleanup when stop fails", async () => {
+  let stopCount = 0;
+  const responses = await exchange(
+    () => ({
+      async start() {},
+      async invoke() {
+        return { status: "succeeded", output: null };
+      },
+      async stop() {
+        stopCount += 1;
+        throw new Error("private stop detail");
+      },
+    }),
+    [start("runtime-1"), stop("runtime-1")],
+  );
+
+  assert.equal(stopCount, 2);
+  assert.equal(responses[1].outcome.error.code, "lifecycle_adapter_stop_failed");
+});
+
 test("marks a runtime unusable after an adapter invocation failure", async () => {
   let invokeCount = 0;
   const responses = await exchange(

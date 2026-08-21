@@ -24,7 +24,7 @@ jobs:
     timeout-minutes: 25
     permissions:
       contents: read
-      id-token: write
+      id-token: write # Required for npm trusted-publishing OIDC token issuance.
     environment: npmjs
     steps:
       - name: Checkout

@@ -103,7 +103,7 @@ Use `--plan` with these options to inspect a variant before running it.
 Use `--show-output` to print the adapter's `output.response` value on the final
 line after the normalized result.
 
-Run the read-only Pi code-review variant with:
+Run the Pi variant with:
 
 ```bash
 .venv/bin/python -m examples.code_review_agent \
@@ -112,10 +112,10 @@ Run the read-only Pi code-review variant with:
   --input "Read calculator.py and review it for correctness risks. Cite the file and line you inspected."
 ```
 
-The Pi variant loads the example's explicit `skills/code-review` skill and
-enables only Pi's built-in `read` tool. It does not enable `bash`, editing
-tools, MCP, or Relay. Passing `--relay` with `--variant pi` is rejected until
-the adapter supports that integration.
+The Pi variant loads the example's explicit `skills/code-review` skill. Its
+example-specific tool policy supports inspecting files without enabling shell
+or editing capabilities. MCP and Relay are also not enabled; passing `--relay`
+with `--variant pi` is rejected until the adapter supports that integration.
 
 ## Compose configs in Python
 

@@ -32,7 +32,7 @@ def test_updates_only_the_selected_adapter_package(
     package_name: str,
     workspace: str,
     version: str,
-) -> None:
+):
     _write_json(
         tmp_path / f"adapters/typescript/{workspace}/package.json",
         {
@@ -113,8 +113,31 @@ def test_updates_only_the_selected_adapter_package(
     )
 
 
-def test_rejects_unknown_adapter_package(tmp_path: Path) -> None:
+def test_rejects_unknown_adapter_package(tmp_path: Path):
     with pytest.raises(SystemExit, match="Unsupported TypeScript adapter package"):
         set_typescript_adapter_version.set_typescript_adapter_version(
             tmp_path, "unknown", "0.1.0"
+        )
+
+
+def test_rejects_unsupported_version(tmp_path: Path):
+    with pytest.raises(SystemExit, match="Unsupported TypeScript package version"):
+        set_typescript_adapter_version.set_typescript_adapter_version(
+            tmp_path, "nemo-fabric-adapters-common", "not-a-version"
+        )
+
+
+def test_rejects_desynchronized_lock_entry(tmp_path: Path):
+    _write_json(
+        tmp_path / "adapters/typescript/common/package.json",
+        {"name": "nemo-fabric-adapters-common", "version": "0.1.0"},
+    )
+    _write_json(
+        tmp_path / "adapters/typescript/package-lock.json",
+        {"packages": {"common": {"name": "other", "version": "0.1.0"}}},
+    )
+
+    with pytest.raises(SystemExit, match="Expected synchronized"):
+        set_typescript_adapter_version.set_typescript_adapter_version(
+            tmp_path, "nemo-fabric-adapters-common", "0.4.0"
         )
