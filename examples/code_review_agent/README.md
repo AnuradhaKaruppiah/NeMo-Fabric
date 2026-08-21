@@ -87,15 +87,15 @@ The entrypoint exposes complete harness configs defined in
 | Deep Agents | `--variant deepagents` | Installed [Deep Agents adapter requirements](../../adapters/deepagents/README.md) and `NVIDIA_API_KEY` |
 | Pi | `--variant pi` | Built the [Pi adapter](../../adapters/typescript/pi/README.md) with Node.js 22.19 or newer and set `NVIDIA_API_KEY` |
 
-Add `--relay` to a supported variant to enable the Relay ATOF and ATIF
-configuration:
-
-Relay requirements depend on the selected adapter. The Codex and Claude
+Relay is available only for supported variants. Requirements depend on the
+selected adapter. The Codex and Claude
 adapters require a `nemo-relay` CLI in the `>=0.7.2,<0.8` range. NeMo Fabric's
 `relay` extra does not install the CLI. Hermes Agent and Deep Agents require the
 Relay Python package in their selected adapter environment. Refer to the
 [installation guide](../../docs/getting-started/install.mdx#install-nemo-relay)
 for the current compatibility requirements.
+
+For example, run the Hermes Agent variant with Relay:
 
 ```bash
 .venv/bin/python -m examples.code_review_agent \
