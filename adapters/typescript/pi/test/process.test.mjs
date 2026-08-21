@@ -67,6 +67,10 @@ test("enforces the package Node.js engine floor", () => {
     /requires Node\.js >=22\.19\.0/,
   );
   assert.throws(
+    () => assertSupportedNodeVersion("22.19.0-rc.1", ">=22.19.0"),
+    /requires Node\.js >=22\.19\.0/,
+  );
+  assert.throws(
     () => assertSupportedNodeVersion("22.19.0", "^22.19.0"),
     /cannot enforce Node\.js engine requirement/,
   );

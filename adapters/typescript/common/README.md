@@ -23,6 +23,9 @@ import { serve } from "nemo-fabric-adapters-common";
 await serve(() => new MyAdapterRuntime());
 ```
 
+The factory may return a runtime directly or resolve one asynchronously. The
+host begins reading lifecycle input before it awaits asynchronous adapter setup.
+
 This package is intended to be published as the shared runtime dependency for
 TypeScript adapters. Its public API will be versioned independently from the
 adapters that use it.

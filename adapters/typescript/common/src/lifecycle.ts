@@ -29,7 +29,7 @@ export interface AdapterRuntime {
   stop(): Promise<void>;
 }
 
-export type AdapterRuntimeFactory = () => AdapterRuntime;
+export type AdapterRuntimeFactory = () => AdapterRuntime | Promise<AdapterRuntime>;
 
 export interface LifecycleHostOptions {
   input?: Readable;
@@ -203,7 +203,7 @@ function decodeInvocation(payload: Record<string, unknown>): {
   };
 }
 
-async function callAdapter<T>(operation: string, call: () => Promise<T>): Promise<T> {
+async function callAdapter<T>(operation: string, call: () => T | Promise<T>): Promise<T> {
   try {
     return await call();
   } catch (error) {
@@ -263,7 +263,7 @@ async function dispatch(
     }
     let candidate: AdapterRuntime | undefined;
     try {
-      candidate = await callAdapter("start", async () => factory());
+      candidate = await callAdapter("start", factory);
       const active = candidate;
       await callAdapter("start", () => active.start(decodeStart(request.payload)));
     } catch (error) {

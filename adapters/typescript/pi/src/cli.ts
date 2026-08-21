@@ -13,8 +13,10 @@ const manifest = createRequire(import.meta.url)("../package.json") as {
 };
 assertSupportedNodeVersion(process.versions.node, manifest.engines?.node);
 
-const [{ PiSdkSessionFactory }, { PiAdapterRuntime }] = await Promise.all([
-  import("./pi-sdk.js"),
-  import("./runtime.js"),
-]);
-await serve(() => new PiAdapterRuntime(new PiSdkSessionFactory()));
+await serve(async () => {
+  const [{ PiSdkSessionFactory }, { PiAdapterRuntime }] = await Promise.all([
+    import("./pi-sdk.js"),
+    import("./runtime.js"),
+  ]);
+  return new PiAdapterRuntime(new PiSdkSessionFactory());
+});
