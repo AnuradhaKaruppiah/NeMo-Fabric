@@ -9,8 +9,16 @@
     "pi"
   ],
   "scripts": {
-    "build": "npm run build --workspace nemo-fabric-adapters-common && npm run build --workspace nemo-fabric-adapter-pi",
-    "test": "npm test --workspace nemo-fabric-adapters-common && npm test --workspace nemo-fabric-adapter-pi"
+    "build": "npm run build --workspace nemo-fabric-adapters-common && npm run build --workspace nemo-fabric-adapters-pi",
+    "pack:check": "npm run pack:contents && npm run pack:install-check",
+    "pack:contents": "npm run pack:check --workspace nemo-fabric-adapters-common && npm run pack:check --workspace nemo-fabric-adapters-pi",
+    "pack:install-check": "node scripts/check-install.mjs",
+    "test": "npm run test:units && npm run test:dependencies && npm run pack:check",
+    "test:dependencies": "npm ls --all && npm audit --audit-level=high",
+    "test:units": "npm test --workspace nemo-fabric-adapters-common && npm test --workspace nemo-fabric-adapters-pi"
+  },
+  "devDependencies": {
+    "nemo-fabric-adapter-contract": "file:../../adapter-contract/typescript"
   },
   "engines": {
     "node": ">=22.19.0"

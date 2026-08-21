@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { realpath, stat } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import {
@@ -13,8 +13,10 @@ import {
   SettingsManager,
   type AgentSession,
   type ExtensionCommandContextActions,
+  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import type { AgentConfig, AgentModelConfig } from "nemo-fabric-adapter-contract";
+import { createJiti } from "jiti/static";
+import type { AgentConfig, AgentModelConfig, AgentToolDefinition, JsonObject } from "nemo-fabric-adapter-contract";
 import { LifecycleError, type AdapterStartInput } from "nemo-fabric-adapters-common";
 
 import type { PiPromptOutcome, PiSessionFactory, PiSessionHandle } from "./runtime.js";
@@ -22,6 +24,17 @@ import type { PiPromptOutcome, PiSessionFactory, PiSessionHandle } from "./runti
 interface PiHarnessSettings {
   extensions: string[];
 }
+
+interface PiToolFactoryContext {
+  name: string;
+  settings: JsonObject;
+  workspace: string;
+}
+
+type PiToolFactory = (context: PiToolFactoryContext) => ToolDefinition | Promise<ToolDefinition>;
+
+const PI_BUILTIN_TOOL_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
+const TOOL_MODULE_EXTENSIONS = new Set([".js", ".mjs", ".cjs", ".ts", ".mts", ".cts"]);
 
 function selectModel(config: AgentConfig): AgentModelConfig {
   const entries = Object.entries(config.models ?? {});
@@ -62,19 +75,141 @@ function containedBy(root: string, candidate: string): boolean {
   return path === "" || (!path.startsWith(`..${sep}`) && path !== ".." && !isAbsolute(path));
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function resolveToolModule(workspace: string, reference: string): Promise<{ path: string; exportName: string }> {
+  const match = /^(?<path>[^#]+?)(?:#(?<export>[A-Za-z_$][\w$]*))?$/.exec(reference);
+  const configuredPath = match?.groups?.path;
+  if (configuredPath === undefined || isAbsolute(configuredPath)) {
+    throw new LifecycleError(
+      "pi_tool_ref_invalid",
+      "Pi tool module references must use a workspace-relative path with an optional export fragment",
+    );
+  }
+  let candidate: string;
+  try {
+    candidate = await realpath(resolve(workspace, configuredPath));
+  } catch {
+    throw new LifecycleError("pi_tool_module_not_found", "A configured Pi tool module does not exist");
+  }
+  if (!containedBy(workspace, candidate)) {
+    throw new LifecycleError("pi_tool_module_outside_workspace", "Pi tool modules must be contained by the workspace");
+  }
+  if (!(await stat(candidate)).isFile() || !TOOL_MODULE_EXTENSIONS.has(extname(candidate))) {
+    throw new LifecycleError(
+      "pi_tool_module_invalid",
+      "Pi tool modules must be JavaScript or TypeScript files",
+    );
+  }
+  return { path: candidate, exportName: match?.groups?.export ?? "default" };
+}
+
+function validateToolDefinition(name: string, value: unknown): ToolDefinition {
+  if (
+    !isRecord(value) ||
+    value.name !== name ||
+    typeof value.label !== "string" ||
+    value.label.length === 0 ||
+    typeof value.description !== "string" ||
+    value.description.length === 0 ||
+    !isRecord(value.parameters) ||
+    typeof value.execute !== "function"
+  ) {
+    throw new LifecycleError(
+      "pi_tool_factory_invalid",
+      "A Pi tool factory returned an invalid tool definition or a mismatched tool name",
+      { metadata: { tool: name } },
+    );
+  }
+  return value as unknown as ToolDefinition;
+}
+
+export async function resolveCustomTools(
+  workspace: string,
+  definitions: Record<string, AgentToolDefinition>,
+): Promise<ToolDefinition[]> {
+  const jiti = createJiti(import.meta.url, { interopDefault: false });
+  const tools: ToolDefinition[] = [];
+  for (const [name, definition] of Object.entries(definitions)) {
+    if (PI_BUILTIN_TOOL_NAMES.has(name)) {
+      throw new LifecycleError("pi_tool_collision", "A Fabric tool definition collides with a Pi built-in tool", {
+        metadata: { tool: name },
+      });
+    }
+    if (definition.kind !== "module") {
+      throw new LifecycleError("pi_tool_kind_unsupported", "Pi supports only module tool definitions");
+    }
+    const moduleReference = await resolveToolModule(workspace, definition.ref);
+    let loaded: unknown;
+    try {
+      loaded = await jiti.import(moduleReference.path);
+    } catch {
+      throw new LifecycleError("pi_tool_module_load_failed", "A configured Pi tool module could not be loaded", {
+        metadata: { tool: name },
+      });
+    }
+    const factory = isRecord(loaded) ? loaded[moduleReference.exportName] : undefined;
+    if (typeof factory !== "function") {
+      throw new LifecycleError("pi_tool_factory_missing", "A configured Pi tool module export is not a factory", {
+        metadata: { tool: name },
+      });
+    }
+    let tool: unknown;
+    try {
+      tool = await (factory as PiToolFactory)({
+        name,
+        settings: definition.settings ?? {},
+        workspace,
+      });
+    } catch {
+      throw new LifecycleError("pi_tool_factory_failed", "A configured Pi tool factory failed", {
+        metadata: { tool: name },
+      });
+    }
+    tools.push(validateToolDefinition(name, tool));
+  }
+  return tools;
+}
+
+function extensionToolNames(resourceLoader: DefaultResourceLoader): string[] {
+  return resourceLoader
+    .getExtensions()
+    .extensions.flatMap((extension) => Array.from(extension.tools.keys()));
+}
+
+function rejectToolCollisions(customTools: ToolDefinition[], configuredExtensionTools: string[]): void {
+  const customNames = new Set(customTools.map((tool) => tool.name));
+  const seenExtensionNames = new Set<string>();
+  for (const name of configuredExtensionTools) {
+    if (PI_BUILTIN_TOOL_NAMES.has(name) || customNames.has(name) || seenExtensionNames.has(name)) {
+      throw new LifecycleError("pi_tool_collision", "Two configured Pi tool sources use the same tool name", {
+        metadata: { tool: name },
+      });
+    }
+    seenExtensionNames.add(name);
+  }
+}
+
 async function resolveExtensionPaths(workspace: string, configured: string[]): Promise<string[]> {
   const resolved: string[] = [];
   for (const entry of configured) {
     if (isAbsolute(entry)) {
-      throw new LifecycleError("pi_extension_outside_workspace", "Pi POC extension paths must be workspace-relative");
+      throw new LifecycleError("pi_extension_outside_workspace", "Pi extension paths must be workspace-relative");
     }
-    const candidate = await realpath(resolve(workspace, entry));
+    let candidate: string;
+    try {
+      candidate = await realpath(resolve(workspace, entry));
+    } catch {
+      throw new LifecycleError("pi_extension_not_found", "A configured Pi extension path does not exist");
+    }
     if (!containedBy(workspace, candidate)) {
       throw new LifecycleError("pi_extension_outside_workspace", "Pi extension path resolves outside the workspace");
     }
     const info = await stat(candidate);
     if (!info.isFile() || (!candidate.endsWith(".ts") && !candidate.endsWith(".js"))) {
-      throw new LifecycleError("pi_unsupported_extension", "Pi POC extensions must be .ts or .js files");
+      throw new LifecycleError("pi_unsupported_extension", "Pi extensions must be .ts or .js files");
     }
     resolved.push(candidate);
   }
@@ -163,7 +298,7 @@ class PiSdkSessionHandle implements PiSessionHandle {
     });
     try {
       await this.session.prompt(text, {
-        expandPromptTemplates: false,
+        expandPromptTemplates: true,
         source: "interactive",
         preflightResult: (result) => {
           accepted = result;
@@ -186,19 +321,37 @@ class PiSdkSessionHandle implements PiSessionHandle {
       return;
     }
     this.stopped = true;
+    let failure: unknown;
     try {
       await this.session.abort();
+    } catch (error) {
+      failure = error;
+    }
+    try {
       await this.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
-    } finally {
+    } catch (error) {
+      failure ??= error;
+    }
+    try {
       this.session.dispose();
+    } catch (error) {
+      failure ??= error;
+    }
+    if (failure !== undefined) {
+      throw failure;
     }
   }
 }
 
 export class PiSdkSessionFactory implements PiSessionFactory {
   async create(input: AdapterStartInput): Promise<PiSessionHandle> {
-    const workspace = await realpath(resolve(input.runtimeContext.environment.workspace ?? input.baseDir));
-    if (!(await stat(workspace)).isDirectory()) {
+    let workspace: string;
+    try {
+      workspace = await realpath(resolve(input.runtimeContext.environment.workspace ?? input.baseDir));
+      if (!(await stat(workspace)).isDirectory()) {
+        throw new Error("not a directory");
+      }
+    } catch {
       throw new LifecycleError("pi_workspace_invalid", "The Fabric runtime workspace must be a directory");
     }
     const selected = selectModel(input.config);
@@ -214,6 +367,7 @@ export class PiSdkSessionFactory implements PiSessionFactory {
     const settings = SettingsManager.inMemory({}, { projectTrusted: false });
     const extensionPaths = await resolveExtensionPaths(workspace, harnessSettings(input.config).extensions);
     const skillPaths = await resolveSkillPaths(input.baseDir, input.config.skills?.paths ?? []);
+    const customTools = await resolveCustomTools(workspace, input.config.tools?.definitions ?? {});
     const agentDir = join(workspace, ".fabric-pi");
     const resourceLoader = new DefaultResourceLoader({
       cwd: workspace,
@@ -235,6 +389,7 @@ export class PiSdkSessionFactory implements PiSessionFactory {
         metadata: { count: extensionErrors.length },
       });
     }
+    rejectToolCollisions(customTools, extensionToolNames(resourceLoader));
     const skillDiagnostics = resourceLoader.getSkills().diagnostics;
     const blockingSkillDiagnostics = skillDiagnostics.filter(
       (diagnostic) => diagnostic.type === "error" || diagnostic.type === "collision",
@@ -272,6 +427,7 @@ export class PiSdkSessionFactory implements PiSessionFactory {
       resourceLoader,
       sessionManager: SessionManager.inMemory(workspace),
       settingsManager: settings,
+      customTools,
       tools: enabled === null ? undefined : enabled,
       excludeTools: blocked,
     });
@@ -310,7 +466,11 @@ export class PiSdkSessionFactory implements PiSessionFactory {
       });
       return handle;
     } catch (error) {
-      await handle.stop();
+      try {
+        await handle.stop();
+      } catch {
+        process.stderr.write("Pi session cleanup failed after adapter startup error\n");
+      }
       throw error;
     }
   }

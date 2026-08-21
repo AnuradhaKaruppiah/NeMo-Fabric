@@ -314,7 +314,7 @@ def publish_package(
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Publish and reconcile the TypeScript adapter-contract package"
+        description="Publish and reconcile a TypeScript package"
     )
     parser.add_argument("--package-directory", type=Path, required=True)
     parser.add_argument("--version", required=True)

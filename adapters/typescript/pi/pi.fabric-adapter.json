@@ -14,6 +14,7 @@
       "models",
       "models.base_url",
       "instructions.system",
+      "tools.definitions",
       "tools.enabled",
       "tools.blocked",
       "skills"
@@ -39,10 +40,24 @@
       "provider": {"type": "string", "minLength": 1},
       "model": {"type": "string", "minLength": 1},
       "api_key_env": {"type": "string", "minLength": 1},
-      "base_url": {"type": ["string", "null"], "format": "uri"},
-      "extensions": {"type": "object"}
+      "base_url": {"type": ["string", "null"], "format": "uri"}
     },
     "required": ["provider", "model", "api_key_env"],
+    "additionalProperties": false
+  },
+  "tool_definition_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "kind": {"const": "module"},
+      "ref": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[^#]+(?:#[A-Za-z_$][A-Za-z0-9_$]*)?$"
+      },
+      "settings": {"type": "object"}
+    },
+    "required": ["kind", "ref"],
     "additionalProperties": false
   },
   "capabilities": {

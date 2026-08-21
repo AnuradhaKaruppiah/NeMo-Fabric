@@ -1,13 +1,16 @@
 {
-  "name": "nemo-fabric-adapter-pi",
+  "name": "nemo-fabric-adapters-pi",
   "version": "0.1.0",
-  "description": "Pi SDK harness adapter POC for NVIDIA NeMo Fabric.",
+  "description": "Pi SDK harness adapter for NVIDIA NeMo Fabric.",
   "license": "Apache-2.0",
-  "private": true,
   "type": "module",
   "sideEffects": false,
+  "exports": {
+    "./descriptor": "./pi.fabric-adapter.json",
+    "./package.json": "./package.json"
+  },
   "bin": {
-    "nemo-fabric-adapter-pi": "dist/cli.js"
+    "nemo-fabric-adapters-pi": "dist/cli.js"
   },
   "files": [
     "dist",
@@ -18,15 +21,31 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "clean": "rm -rf dist",
+    "pack:check": "npm run build && node ../scripts/check-package.mjs",
+    "prepack": "npm run build",
     "test": "npm run clean && npm run build && node --test test/*.test.mjs"
   },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NVIDIA/NeMo-Fabric.git",
+    "directory": "adapters/typescript/pi"
+  },
+  "bugs": {
+    "url": "https://github.com/NVIDIA/NeMo-Fabric/issues"
+  },
+  "homepage": "https://github.com/NVIDIA/NeMo-Fabric/tree/main/adapters/typescript/pi#readme",
   "engines": {
     "node": ">=22.19.0"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.84.2",
     "@earendil-works/pi-coding-agent": "0.84.2",
-    "nemo-fabric-adapter-contract": "file:../../../adapter-contract/typescript",
+    "jiti": "2.7.0",
+    "nemo-fabric-adapter-contract": "0.3.0",
     "nemo-fabric-adapters-common": "0.3.0"
   },
   "devDependencies": {

@@ -358,7 +358,23 @@ export async function serve(factory: AdapterRuntimeFactory, options: LifecycleHo
         shouldStop = operation === "start" || operation === "stop";
       }
 
-      protocolWrite(`${JSON.stringify(response)}\n`);
+      let encoded: string;
+      try {
+        encoded = JSON.stringify(response);
+      } catch {
+        if (operation === "invoke") {
+          state.failed = true;
+        }
+        response = failure(
+          operation,
+          new LifecycleError(
+            "lifecycle_invalid_response",
+            "Adapter response could not be encoded as lifecycle JSON",
+          ),
+        );
+        encoded = JSON.stringify(response);
+      }
+      protocolWrite(`${encoded}\n`);
       if (shouldStop) {
         break;
       }

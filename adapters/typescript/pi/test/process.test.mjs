@@ -16,7 +16,7 @@ function context(workspace, invocationId) {
     artifacts: {},
     environment: {
       control_location: "external_control",
-      env: { POC_FAKE_KEY: "not-a-real-key" },
+      env: { TEST_API_KEY: "not-a-real-key" },
       environment_id: "environment-1",
       ownership: "caller_owned",
       provider: "local",
@@ -46,7 +46,7 @@ async function exchange(workspace, requests) {
   child.stderr.on("data", (chunk) => {
     stderr += chunk;
   });
-  child.stdin.write(`${requests.map((request) => JSON.stringify(request)).join("\n")}\n`);
+  child.stdin.end(`${requests.map((request) => JSON.stringify(request)).join("\n")}\n`);
 
   const exitCode = await new Promise((resolve, reject) => {
     child.once("error", reject);
@@ -83,8 +83,8 @@ Read the implementation before reporting findings.
         `export default function (pi) {
   console.log("extension-loaded");
   pi.registerTool({
-    name: "poc_echo",
-    label: "POC Echo",
+    name: "test_echo",
+    label: "Test Echo",
     description: "Echo text for a process-host smoke test",
     parameters: {
       type: "object",
@@ -100,6 +100,27 @@ Read the implementation before reporting findings.
 `,
         "utf8",
       );
+      await writeFile(
+        join(workspace, "fabric-tool.ts"),
+        `export default function ({ name }) {
+  return {
+    name,
+    label: "Fabric Echo",
+    description: "Echo text from a Fabric tool definition",
+    parameters: {
+      type: "object",
+      properties: { text: { type: "string" } },
+      required: ["text"],
+      additionalProperties: false
+    },
+    async execute(_toolCallId, params) {
+      return { content: [{ type: "text", text: params.text }], details: {} };
+    }
+  };
+}
+`,
+        "utf8",
+      );
 
       const start = {
         operation: "start",
@@ -110,13 +131,18 @@ Read the implementation before reporting findings.
             harness: { settings: { extensions: ["extension.js"] } },
             models: {
               default: {
-                api_key_env: "POC_FAKE_KEY",
+                api_key_env: "TEST_API_KEY",
                 model: "gpt-4.1-mini",
                 provider: "openai",
               },
             },
             skills: { paths: ["skills/code-review"] },
-            tools: { enabled: ["poc_echo"] },
+            tools: {
+              definitions: {
+                fabric_echo: { kind: "module", ref: "fabric-tool.ts" },
+              },
+              enabled: ["test_echo", "fabric_echo"],
+            },
           },
           runtime_context: context(workspace, "start"),
         },
@@ -154,7 +180,7 @@ test(
           config: {
             models: {
               default: {
-                api_key_env: "POC_FAKE_KEY",
+                api_key_env: "TEST_API_KEY",
                 model: "gpt-4.1-mini",
                 provider: "openai",
               },
@@ -172,6 +198,111 @@ test(
       assert.equal(responses[0].operation, "start");
       assert.equal(responses[0].outcome.status, "failed");
       assert.equal(responses[0].outcome.error.code, "pi_skill_not_found");
+    } finally {
+      await rm(baseDir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "dispatches extension commands and rejects work after extension shutdown",
+  { skip: supportsPi ? false : "Pi 0.84.2 requires Node 22.19 or newer" },
+  async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "fabric-pi-shutdown-"));
+    const workspace = join(baseDir, "workspace");
+    try {
+      await mkdir(workspace);
+      await writeFile(
+        join(workspace, "shutdown.js"),
+        `export default function (pi) {
+  pi.registerCommand("shutdown-test", {
+    description: "Request adapter shutdown",
+    handler: async (_args, ctx) => ctx.shutdown()
+  });
+}
+`,
+        "utf8",
+      );
+      const start = {
+        operation: "start",
+        payload: {
+          agent_name: "pi-shutdown-test",
+          base_dir: baseDir,
+          config: {
+            harness: { settings: { extensions: ["shutdown.js"] } },
+            models: {
+              default: {
+                api_key_env: "TEST_API_KEY",
+                model: "gpt-4.1-mini",
+                provider: "openai",
+              },
+            },
+            tools: { enabled: [] },
+          },
+          runtime_context: context(workspace, "start"),
+        },
+      };
+      const invoke = (invocationId, input) => ({
+        operation: "invoke",
+        payload: {
+          request: { input },
+          runtime_context: context(workspace, invocationId),
+        },
+      });
+      const stop = { operation: "stop", payload: { runtime_id: "runtime-1" } };
+
+      const { exitCode, responses, stderr } = await exchange(workspace, [
+        start,
+        invoke("shutdown", "/shutdown-test"),
+        invoke("after-shutdown", "do not run"),
+        stop,
+      ]);
+
+      assert.equal(exitCode, 0, stderr);
+      assert.equal(responses.length, 4);
+      assert.equal(responses[1].outcome.output.status, "cancelled");
+      assert.equal(responses[1].outcome.output.error.code, "pi_extension_shutdown");
+      assert.equal(responses[2].outcome.error.code, "pi_runtime_unusable");
+      assert.equal(responses[3].outcome.status, "succeeded");
+    } finally {
+      await rm(baseDir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "returns a stable error for a missing configured extension",
+  { skip: supportsPi ? false : "Pi 0.84.2 requires Node 22.19 or newer" },
+  async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "fabric-pi-missing-extension-"));
+    const workspace = join(baseDir, "workspace");
+    try {
+      await mkdir(workspace);
+      const start = {
+        operation: "start",
+        payload: {
+          agent_name: "pi-missing-extension-test",
+          base_dir: baseDir,
+          config: {
+            harness: { settings: { extensions: ["missing.ts"] } },
+            models: {
+              default: {
+                api_key_env: "TEST_API_KEY",
+                model: "gpt-4.1-mini",
+                provider: "openai",
+              },
+            },
+            tools: { enabled: [] },
+          },
+          runtime_context: context(workspace, "start"),
+        },
+      };
+
+      const { exitCode, responses, stderr } = await exchange(workspace, [start]);
+
+      assert.equal(exitCode, 0, stderr);
+      assert.equal(responses.length, 1);
+      assert.equal(responses[0].outcome.error.code, "pi_extension_not_found");
     } finally {
       await rm(baseDir, { recursive: true, force: true });
     }

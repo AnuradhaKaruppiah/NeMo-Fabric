@@ -34,6 +34,7 @@ function failed(code: string, message: string): AgentRunResult {
 export class PiAdapterRuntime implements AdapterRuntime {
   private readonly factory: PiSessionFactory;
   private session?: PiSessionHandle;
+  private unusable = false;
 
   constructor(factory: PiSessionFactory) {
     this.factory = factory;
@@ -44,14 +45,18 @@ export class PiAdapterRuntime implements AdapterRuntime {
       throw new LifecycleError("pi_already_started", "Pi adapter runtime is already started");
     }
     this.session = await this.factory.create(input);
+    this.unusable = false;
   }
 
   async invoke(request: AgentRunRequest, _context: RuntimeContext): Promise<AgentRunResult> {
     if (this.session === undefined) {
       throw new LifecycleError("pi_not_started", "Pi adapter runtime is not started");
     }
+    if (this.unusable) {
+      throw new LifecycleError("pi_runtime_unusable", "Pi adapter runtime cannot accept another invocation");
+    }
     if (typeof request.input !== "string") {
-      return failed("pi_unsupported_input", "The Pi POC accepts only plain-text input");
+      return failed("pi_unsupported_input", "The Pi adapter accepts only plain-text input");
     }
 
     const outcome = await this.session.prompt(request.input);
@@ -59,6 +64,9 @@ export class PiAdapterRuntime implements AdapterRuntime {
       return failed("pi_prompt_rejected", "Pi rejected the prompt before starting an agent run");
     }
     if (outcome.shutdownRequested || outcome.stopReason === "aborted") {
+      if (outcome.shutdownRequested) {
+        this.unusable = true;
+      }
       return {
         status: "cancelled",
         output: null,
@@ -83,6 +91,7 @@ export class PiAdapterRuntime implements AdapterRuntime {
   async stop(): Promise<void> {
     const session = this.session;
     this.session = undefined;
+    this.unusable = false;
     if (session !== undefined) {
       await session.stop();
     }

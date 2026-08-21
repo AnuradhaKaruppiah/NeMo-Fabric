@@ -160,6 +160,27 @@ test("marks a runtime unusable after an invalid adapter result", async () => {
   assert.equal(responses[2].outcome.error.code, "lifecycle_runtime_failed");
 });
 
+test("normalizes an unencodable adapter result and marks the runtime unusable", async () => {
+  let invokeCount = 0;
+  const circular = {};
+  circular.self = circular;
+  const responses = await exchange(
+    () => ({
+      async start() {},
+      async invoke() {
+        invokeCount += 1;
+        return { status: "succeeded", output: circular };
+      },
+      async stop() {},
+    }),
+    [start("runtime-1"), invoke("runtime-1", "one", "one"), invoke("runtime-1", "two", "two"), stop("runtime-1")],
+  );
+
+  assert.equal(invokeCount, 1);
+  assert.equal(responses[1].outcome.error.code, "lifecycle_invalid_response");
+  assert.equal(responses[2].outcome.error.code, "lifecycle_runtime_failed");
+});
+
 test("attempts cleanup when input ends without stop", async () => {
   let stopped = false;
   await exchange(

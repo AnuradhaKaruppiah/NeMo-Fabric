@@ -56,7 +56,32 @@ test("normalizes successful plain-text prompts and reuses one session", async ()
   assert.equal(stopped, true);
 });
 
-test("rejects non-text POC input without invoking Pi", async () => {
+test("does not invoke Pi again after an extension requests shutdown", async () => {
+  let promptCount = 0;
+  const runtime = new PiAdapterRuntime({
+    async create() {
+      return {
+        async prompt() {
+          promptCount += 1;
+          return { accepted: true, stopReason: "aborted", shutdownRequested: true };
+        },
+        async stop() {},
+      };
+    },
+  });
+  await runtime.start(startInput());
+
+  const first = await runtime.invoke({ input: "stop" }, context);
+  assert.equal(first.status, "cancelled");
+  assert.equal(first.error.code, "pi_extension_shutdown");
+  await assert.rejects(
+    runtime.invoke({ input: "again" }, context),
+    (error) => error.code === "pi_runtime_unusable",
+  );
+  assert.equal(promptCount, 1);
+});
+
+test("rejects non-text input without invoking Pi", async () => {
   let prompted = false;
   const runtime = new PiAdapterRuntime({
     async create() {

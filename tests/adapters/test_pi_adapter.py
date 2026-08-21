@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Focused planning tests for the Pi SDK adapter POC."""
+"""Focused planning tests for the Pi SDK adapter."""
 
 from __future__ import annotations
 
@@ -21,9 +21,9 @@ ROOT = Path(__file__).resolve().parents[2]
 DESCRIPTOR = ROOT / "adapters/typescript/pi/pi.fabric-adapter.json"
 
 
-def config(*, api_key_env: str | None = "POC_FAKE_KEY") -> FabricConfig:
+def config(*, api_key_env: str | None = "TEST_API_KEY") -> FabricConfig:
     return FabricConfig(
-        metadata=MetadataConfig(name="pi-poc"),
+        metadata=MetadataConfig(name="pi-adapter-test"),
         harness=HarnessConfig(adapter_id="nvidia.fabric.pi"),
         discovery=DiscoveryConfig(local_paths=[DESCRIPTOR]),
         models={
@@ -36,7 +36,7 @@ def config(*, api_key_env: str | None = "POC_FAKE_KEY") -> FabricConfig:
     )
 
 
-def test_pi_descriptor_declares_the_poc_surface():
+def test_pi_descriptor_declares_the_supported_surface():
     descriptor = json.loads(DESCRIPTOR.read_text(encoding="utf-8"))
 
     assert descriptor["contract_version"] == "fabric.adapter/v1alpha2"
@@ -47,6 +47,7 @@ def test_pi_descriptor_declares_the_poc_surface():
         "models",
         "models.base_url",
         "instructions.system",
+        "tools.definitions",
         "tools.enabled",
         "tools.blocked",
         "skills",
@@ -56,6 +57,44 @@ def test_pi_descriptor_declares_the_poc_surface():
         "cancellation": False,
         "updates": False,
         "service": False,
+    }
+
+    assert descriptor["tool_definition_schema"] == {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+            "kind": {"const": "module"},
+            "ref": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[^#]+(?:#[A-Za-z_$][A-Za-z0-9_$]*)?$",
+            },
+            "settings": {"type": "object"},
+        },
+        "required": ["kind", "ref"],
+        "additionalProperties": False,
+    }
+
+
+def test_pi_descriptor_validates_module_tool_definitions():
+    adapter_config = config()
+    adapter_config.add_tool_definition(
+        "review_context",
+        kind="module",
+        ref="tools/review-context.ts#createTool",
+        settings={"format": "brief"},
+    )
+
+    plan = Fabric().plan(adapter_config, base_dir=ROOT)
+
+    assert plan.agent_config["tools"] == {
+        "definitions": {
+            "review_context": {
+                "kind": "module",
+                "ref": "tools/review-context.ts#createTool",
+                "settings": {"format": "brief"},
+            }
+        }
     }
 
 
@@ -68,7 +107,7 @@ def test_pi_descriptor_plans_and_projects_the_selected_model():
             "default": {
                 "provider": "openai",
                 "model": "gpt-4.1-mini",
-                "api_key_env": "POC_FAKE_KEY",
+                "api_key_env": "TEST_API_KEY",
             }
         }
     }

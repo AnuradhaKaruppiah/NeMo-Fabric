@@ -270,7 +270,5 @@ harnesses and custom agents. Use these references to compare and build them:
   [OOAgents](https://github.com/NVIDIA-NeMo/labs-OO-Agents).
 - **Remote-agent thin-client adapter:** Add a thin-client adapter for invoking
   remotely hosted agents through the NeMo Fabric lifecycle.
-- **Pi coding harness:** Add a bundled adapter for the
-  [Pi coding harness](https://pi.dev/).
 - **Third-party adapter registry:** Extend installed and explicit descriptor
   discovery with a provider-backed registry and catalog experience.
