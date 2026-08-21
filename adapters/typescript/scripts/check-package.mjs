@@ -61,6 +61,20 @@ if (manifest.name === "nemo-fabric-adapters-pi") {
   if (descriptor.runner?.command !== "node" || descriptor.runner?.script !== "dist/cli.js") {
     throw new Error("The Pi descriptor runner must resolve inside the npm package");
   }
+  for (const name of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"]) {
+    if (manifest.dependencies?.[name] !== undefined) {
+      throw new Error(`The Pi harness package ${name} must not be a production dependency`);
+    }
+    if (manifest.peerDependencies?.[name] !== "^0.84.2") {
+      throw new Error(`The Pi harness package ${name} must declare the supported peer range`);
+    }
+    if (manifest.peerDependenciesMeta?.[name]?.optional !== true) {
+      throw new Error(`The Pi harness package ${name} must be an optional peer`);
+    }
+    if (manifest.devDependencies?.[name] !== "0.84.2") {
+      throw new Error(`The Pi harness package ${name} must be exact-pinned for development`);
+    }
+  }
 }
 for (const [name, specifier] of Object.entries(manifest.dependencies ?? {})) {
   if (specifier.startsWith("file:") || specifier.startsWith("workspace:")) {

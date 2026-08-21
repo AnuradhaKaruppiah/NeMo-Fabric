@@ -333,6 +333,10 @@ install-typescript-contract:
 install-typescript-adapters:
     npm ci --prefix adapters/typescript --ignore-scripts
 
+# Install the Pi adapter and its pinned SDK harness for source development.
+install-typescript-pi: install-typescript-contract
+    npm ci --prefix adapters/typescript --workspace nemo-fabric-adapters-pi --include-workspace-root --ignore-scripts
+
 # Install every maintained TypeScript package.
 install-typescript: install-typescript-contract install-typescript-adapters
 

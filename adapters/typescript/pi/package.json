@@ -42,13 +42,25 @@
     "node": ">=22.19.0"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.84.2",
-    "@earendil-works/pi-coding-agent": "0.84.2",
     "jiti": "2.7.0",
     "nemo-fabric-adapter-contract": "0.3.0",
     "nemo-fabric-adapters-common": "0.3.0"
   },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "^0.84.2",
+    "@earendil-works/pi-coding-agent": "^0.84.2"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@earendil-works/pi-ai": "0.84.2",
+    "@earendil-works/pi-coding-agent": "0.84.2",
     "@types/node": "24.12.4",
     "typescript": "5.9.3"
   }

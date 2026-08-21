@@ -11,14 +11,20 @@ SDK in a persistent Node.js process.
 ## Install the Adapter
 
 Pi requires Node.js 22.19.0 or newer. Install the npm adapter in the project
-that owns the NeMo Fabric configuration:
+that owns the NeMo Fabric configuration, then install a compatible Pi SDK
+harness version selected by that project:
 
 ```bash
 npm install nemo-fabric-adapters-pi
+npm install @earendil-works/pi-ai@^0.84.2 @earendil-works/pi-coding-agent@^0.84.2
 ```
 
-The package includes the process entry point and adapter descriptor. Point
-NeMo Fabric discovery at the installed descriptor:
+The Pi packages are optional peers: installing `nemo-fabric-adapters-pi` alone
+does not install the harness. Starting the adapter without compatible Pi
+packages returns `pi_harness_unavailable`.
+
+The adapter package includes the process entry point and descriptor. Point NeMo
+Fabric discovery at the installed descriptor:
 
 ```yaml
 discovery:
@@ -26,12 +32,21 @@ discovery:
     - ./node_modules/nemo-fabric-adapters-pi/pi.fabric-adapter.json
 ```
 
-For source development, build from the repository root and use
-`adapters/typescript/pi/pi.fabric-adapter.json` instead:
+For source dependency setup, install only the Pi adapter workspace and its
+pinned development harness:
+
+```bash
+just install-typescript-pi
+```
+
+The full TypeScript build installs all maintained TypeScript workspaces before
+building them:
 
 ```bash
 just build-typescript
 ```
+
+Use `adapters/typescript/pi/pi.fabric-adapter.json` for source discovery.
 
 ## Configure the Adapter
 

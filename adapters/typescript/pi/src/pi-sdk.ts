@@ -4,16 +4,11 @@
 import { realpath, stat } from "node:fs/promises";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
-import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
-import {
-  createAgentSession,
+import type {
+  AgentSession,
   DefaultResourceLoader,
-  ModelRuntime,
-  SessionManager,
-  SettingsManager,
-  type AgentSession,
-  type ExtensionCommandContextActions,
-  type ToolDefinition,
+  ExtensionCommandContextActions,
+  ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { createJiti } from "jiti/static";
 import type { AgentConfig, AgentModelConfig, AgentToolDefinition, JsonObject } from "nemo-fabric-adapter-contract";
@@ -35,6 +30,68 @@ type PiToolFactory = (context: PiToolFactoryContext) => ToolDefinition | Promise
 
 const PI_BUILTIN_TOOL_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
 const TOOL_MODULE_EXTENSIONS = new Set([".js", ".mjs", ".cjs", ".ts", ".mts", ".cts"]);
+const PI_HARNESS_INSTALL_COMMAND =
+  "npm install @earendil-works/pi-ai@^0.84.2 @earendil-works/pi-coding-agent@^0.84.2";
+
+interface PiSdkModules {
+  InMemoryCredentialStore: typeof import("@earendil-works/pi-ai").InMemoryCredentialStore;
+  createAgentSession: typeof import("@earendil-works/pi-coding-agent").createAgentSession;
+  DefaultResourceLoader: typeof import("@earendil-works/pi-coding-agent").DefaultResourceLoader;
+  ModelRuntime: typeof import("@earendil-works/pi-coding-agent").ModelRuntime;
+  SessionManager: typeof import("@earendil-works/pi-coding-agent").SessionManager;
+  SettingsManager: typeof import("@earendil-works/pi-coding-agent").SettingsManager;
+}
+
+function isMissingModuleError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error.code === "ERR_MODULE_NOT_FOUND" || error.code === "MODULE_NOT_FOUND")
+  );
+}
+
+async function loadPiSdk(): Promise<PiSdkModules> {
+  let ai: typeof import("@earendil-works/pi-ai");
+  let codingAgent: typeof import("@earendil-works/pi-coding-agent");
+  try {
+    [ai, codingAgent] = await Promise.all([
+      import("@earendil-works/pi-ai"),
+      import("@earendil-works/pi-coding-agent"),
+    ]);
+  } catch (error) {
+    if (isMissingModuleError(error)) {
+      throw new LifecycleError(
+        "pi_harness_unavailable",
+        `The Pi SDK harness is not installed. Install a compatible harness with: ${PI_HARNESS_INSTALL_COMMAND}`,
+      );
+    }
+    throw new LifecycleError("pi_harness_load_failed", "The installed Pi SDK harness could not be loaded");
+  }
+
+  if (
+    typeof ai.InMemoryCredentialStore !== "function" ||
+    typeof codingAgent.createAgentSession !== "function" ||
+    typeof codingAgent.DefaultResourceLoader !== "function" ||
+    typeof codingAgent.ModelRuntime !== "function" ||
+    typeof codingAgent.SessionManager !== "function" ||
+    typeof codingAgent.SettingsManager !== "function"
+  ) {
+    throw new LifecycleError(
+      "pi_harness_incompatible",
+      "The installed Pi SDK harness does not expose the APIs required by this adapter",
+    );
+  }
+
+  return {
+    InMemoryCredentialStore: ai.InMemoryCredentialStore,
+    createAgentSession: codingAgent.createAgentSession,
+    DefaultResourceLoader: codingAgent.DefaultResourceLoader,
+    ModelRuntime: codingAgent.ModelRuntime,
+    SessionManager: codingAgent.SessionManager,
+    SettingsManager: codingAgent.SettingsManager,
+  };
+}
 
 function selectModel(config: AgentConfig): AgentModelConfig {
   const entries = Object.entries(config.models ?? {});
@@ -345,6 +402,7 @@ class PiSdkSessionHandle implements PiSessionHandle {
 
 export class PiSdkSessionFactory implements PiSessionFactory {
   async create(input: AdapterStartInput): Promise<PiSessionHandle> {
+    const pi = await loadPiSdk();
     let workspace: string;
     try {
       workspace = await realpath(resolve(input.runtimeContext.environment.workspace ?? input.baseDir));
@@ -364,12 +422,12 @@ export class PiSdkSessionFactory implements PiSessionFactory {
       throw new LifecycleError("pi_credential_missing", `Credential environment variable ${apiKeyEnv} is not set`);
     }
 
-    const settings = SettingsManager.inMemory({}, { projectTrusted: false });
+    const settings = pi.SettingsManager.inMemory({}, { projectTrusted: false });
     const extensionPaths = await resolveExtensionPaths(workspace, harnessSettings(input.config).extensions);
     const skillPaths = await resolveSkillPaths(input.baseDir, input.config.skills?.paths ?? []);
     const customTools = await resolveCustomTools(workspace, input.config.tools?.definitions ?? {});
     const agentDir = join(workspace, ".fabric-pi");
-    const resourceLoader = new DefaultResourceLoader({
+    const resourceLoader = new pi.DefaultResourceLoader({
       cwd: workspace,
       agentDir,
       settingsManager: settings,
@@ -403,8 +461,8 @@ export class PiSdkSessionFactory implements PiSessionFactory {
       });
     }
 
-    const credentials = new InMemoryCredentialStore();
-    const modelRuntime = await ModelRuntime.create({
+    const credentials = new pi.InMemoryCredentialStore();
+    const modelRuntime = await pi.ModelRuntime.create({
       credentials,
       modelsPath: null,
       allowModelNetwork: false,
@@ -419,13 +477,13 @@ export class PiSdkSessionFactory implements PiSessionFactory {
     const enabled = input.config.tools?.enabled;
     const blocked = input.config.tools?.blocked ?? [];
     const state = { shutdownRequested: false };
-    const { session } = await createAgentSession({
+    const { session } = await pi.createAgentSession({
       cwd: workspace,
       agentDir,
       model,
       modelRuntime,
       resourceLoader,
-      sessionManager: SessionManager.inMemory(workspace),
+      sessionManager: pi.SessionManager.inMemory(workspace),
       settingsManager: settings,
       customTools,
       tools: enabled === null ? undefined : enabled,

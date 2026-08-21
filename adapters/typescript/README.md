@@ -21,6 +21,13 @@ just test-typescript-adapters
 The adapter test recipe builds the local TypeScript contract before it compiles
 the adapter packages.
 
+To install only the Pi adapter workspace and its exact-pinned development
+harness, run:
+
+```bash
+just install-typescript-pi
+```
+
 ## Dependency Rationale
 
 The workspace links `nemo-fabric-adapter-contract` from the checked-out source
@@ -29,3 +36,8 @@ the package from the registry would test an older published contract, while
 copying its schemas would create a second authority. This file dependency is
 development-only; the published child manifests declare registry-safe contract
 versions.
+
+Harness SDKs are optional peers of their published adapters so consumers can
+select a compatible harness version. Each adapter exact-pins its tested harness
+under `devDependencies`; source installs and CI therefore remain reproducible
+without making the harness a production dependency.

@@ -58,12 +58,18 @@ extension tools. The following configuration registers a custom tool module:
 }
 ```
 
-Pi 0.84.2 requires Node.js 22.19.0 or newer. Install the adapter into the project
-that owns the NeMo Fabric configuration:
+Pi 0.84.x requires Node.js 22.19.0 or newer. Install the adapter into the project
+that owns the NeMo Fabric configuration, then install a compatible Pi SDK
+harness selected by that project:
 
 ```bash
 npm install nemo-fabric-adapters-pi
+npm install @earendil-works/pi-ai@^0.84.2 @earendil-works/pi-coding-agent@^0.84.2
 ```
+
+The adapter declares the Pi packages as optional peers. Installing the adapter
+alone does not install a harness, and starting it without compatible Pi packages
+returns `pi_harness_unavailable`.
 
 The npm package exports its descriptor as `nemo-fabric-adapters-pi/descriptor`.
 NeMo Fabric descriptor discovery is path-based, so a project-local installation
@@ -75,9 +81,15 @@ discovery:
     - ./node_modules/nemo-fabric-adapters-pi/pi.fabric-adapter.json
 ```
 
-During source development, point `discovery.local_paths` at
-`adapters/typescript/pi/pi.fabric-adapter.json` after building the TypeScript
-adapter workspace.
+During source development, install the Pi adapter and its exact-pinned test
+harness from the repository root:
+
+```bash
+just install-typescript-pi
+```
+
+Point `discovery.local_paths` at `adapters/typescript/pi/pi.fabric-adapter.json`
+after building the TypeScript adapter workspace.
 
 The maintained code-review example exercises the Pi adapter with an explicit
 NeMo Fabric skill and an example-specific tool policy:
@@ -97,7 +109,9 @@ live NVIDIA-backed run command. Relay and MCP are not currently supported.
 skills, extensions, and tools. Using its SDK keeps these integration points in
 process; maintaining a second JSON-RPC translation was rejected for the bundled
 adapter. `@earendil-works/pi-ai` supplies Pi's model catalog and credential
-store, which the coding-agent SDK expects.
+store, which the coding-agent SDK expects. Both packages are optional peer
+dependencies so deployments control the compatible harness version. Exact
+0.84.2 development dependencies keep repository builds and tests reproducible.
 
 `jiti` loads explicitly configured, trusted JavaScript and TypeScript tool
 modules. Native Node.js loading cannot execute TypeScript modules, while a

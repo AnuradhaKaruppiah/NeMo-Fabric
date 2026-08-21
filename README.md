@@ -170,7 +170,9 @@ The [Pi adapter](docs/integrations/harness/pi.mdx) is distributed through npm
 instead of a Python package extra. Install `nemo-fabric` in the Python
 environment that owns the configuration, then install
 `nemo-fabric-adapters-pi` in the project where NeMo Fabric can discover its
-adapter descriptor. The npm package installs the Pi SDK dependencies.
+adapter descriptor. Install a compatible Pi SDK harness separately in that
+project; the adapter declares the Pi packages as optional peers so deployments
+control the harness version.
 
 Capabilities vary by harness. Review the
 [configuration compatibility matrix](adapters/README.md#configuration-compatibility)
