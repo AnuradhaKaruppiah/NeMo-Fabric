@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+// Validate the TypeScript packages from a consumer's perspective. This check
+// packs and installs the contract, common host, and Pi adapter in a temporary
+// project, verifies adapter-only behavior, then installs the consumer-managed
+// Pi harness and exercises the packaged lifecycle. check-package.mjs owns each
+// package's manifest policy and exact tarball contents.
+
 import { execFileSync, spawnSync } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

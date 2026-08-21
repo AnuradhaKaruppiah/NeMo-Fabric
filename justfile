@@ -331,7 +331,7 @@ install-typescript-contract:
 
 # Install the TypeScript adapter workspace dependencies from its lockfile.
 install-typescript-adapters:
-    npm ci --prefix adapters/typescript --ignore-scripts
+    npm ci --prefix adapters/typescript --workspaces --include-workspace-root --ignore-scripts
 
 # Install the Pi adapter and its pinned SDK harness for source development.
 install-typescript-pi: install-typescript-contract

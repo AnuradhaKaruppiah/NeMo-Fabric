@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+// Validate one TypeScript adapter package before publication. This check
+// enforces manifest policy and exact npm tarball contents; it does not install
+// or execute the packed package. check-install.mjs owns consumer-install and
+// runtime verification across the related packages.
+
 import { execFileSync } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

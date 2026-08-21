@@ -27,8 +27,63 @@ The current adapter supports:
 
 Ambient Pi settings, context files, packages, extensions, skills, prompts,
 themes, model files, credentials, and session files are disabled. Explicitly
-configured extensions are trusted code; configuration precedence after
-extension startup remains an open design decision.
+configured extensions are trusted code.
+
+## Install the Adapter
+
+Pi 0.84.x requires Node.js 22.19.0 or newer.
+
+### Install for Consumers
+
+Install the adapter in the project that owns the NeMo Fabric configuration,
+then install the compatible Pi SDK harness version selected by that project:
+
+```bash
+npm install nemo-fabric-adapters-pi
+npm install @earendil-works/pi-ai@^0.84.2 @earendil-works/pi-coding-agent@^0.84.2
+```
+
+The adapter declares the Pi packages as optional peers. Installing the adapter
+alone does not install a harness, and starting it without compatible Pi packages
+returns `pi_harness_unavailable`.
+
+### Install for Source Development
+
+For focused Pi development in the NeMo Fabric source tree, install the Pi
+adapter workspace and its pinned harness from the repository root:
+
+```bash
+just install-typescript-pi
+```
+
+To install and build all maintained TypeScript workspaces instead, run:
+
+```bash
+just build-typescript
+```
+
+The full build installs its own dependencies, so you do not need to run
+`just install-typescript-pi` first.
+
+## Configure the Adapter
+
+The npm package includes its adapter descriptor as `pi.fabric-adapter.json`.
+NeMo Fabric descriptor discovery is path-based. Point discovery at the installed
+descriptor and select the Pi adapter with the Python SDK:
+
+```python
+from nemo_fabric import DiscoveryConfig, HarnessConfig
+
+discovery = DiscoveryConfig(
+    local_paths=[
+        "./node_modules/nemo-fabric-adapters-pi/pi.fabric-adapter.json"
+    ]
+)
+harness = HarnessConfig(adapter_id="nvidia.fabric.pi")
+```
+
+For a source build, set `discovery.local_paths` to
+`adapters/typescript/pi/pi.fabric-adapter.json` instead.
 
 ## Custom Tool Modules
 
@@ -58,44 +113,13 @@ extension tools. The following configuration registers a custom tool module:
 }
 ```
 
-Pi 0.84.x requires Node.js 22.19.0 or newer. Install the adapter into the project
-that owns the NeMo Fabric configuration, then install a compatible Pi SDK
-harness selected by that project:
-
-```bash
-npm install nemo-fabric-adapters-pi
-npm install @earendil-works/pi-ai@^0.84.2 @earendil-works/pi-coding-agent@^0.84.2
-```
-
-The adapter declares the Pi packages as optional peers. Installing the adapter
-alone does not install a harness, and starting it without compatible Pi packages
-returns `pi_harness_unavailable`.
-
-The npm package exports its descriptor as `nemo-fabric-adapters-pi/descriptor`.
-NeMo Fabric descriptor discovery is path-based, so a project-local installation
-can configure:
-
-```yaml
-discovery:
-  local_paths:
-    - ./node_modules/nemo-fabric-adapters-pi/pi.fabric-adapter.json
-```
-
-During source development, install the Pi adapter and its exact-pinned test
-harness from the repository root:
-
-```bash
-just install-typescript-pi
-```
-
-Point `discovery.local_paths` at `adapters/typescript/pi/pi.fabric-adapter.json`
-after building the TypeScript adapter workspace.
+## Run the Code-Review Example
 
 The maintained code-review example exercises the Pi adapter with an explicit
-NeMo Fabric skill and an example-specific tool policy:
+NeMo Fabric skill and an example-specific tool policy. After building the
+TypeScript packages, inspect the plan from the repository root:
 
 ```bash
-just build-typescript
 .venv/bin/python -m examples.code_review_agent --variant pi --plan
 ```
 
