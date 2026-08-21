@@ -83,12 +83,13 @@ The maintained code-review example exercises the Pi adapter with an explicit
 NeMo Fabric skill and an example-specific tool policy:
 
 ```bash
-npm run build --prefix adapters/typescript
+just build-typescript
 .venv/bin/python -m examples.code_review_agent --variant pi --plan
 ```
 
-See the [code-review example](../../../examples/code_review_agent/README.md) for
-the live NVIDIA-backed run command. Relay and MCP are not currently supported.
+Refer to the
+[code-review example](../../../examples/code_review_agent/README.md) for the
+live NVIDIA-backed run command. Relay and MCP are not currently supported.
 
 ## Dependency Rationale
 

@@ -13,16 +13,21 @@ Each variant is an independent Python factory that returns a complete config.
 
 ## Set up
 
-Run commands from the repository root. Build NeMo Fabric, then check out the
-pinned Hermes Agent source and synchronize it into the project environment:
+Run commands from the repository root. Build NeMo Fabric and its maintained
+language packages:
 
 ```bash
 just build-all
+```
+
+The default variant uses Hermes Agent. Check out the pinned Hermes Agent source
+and synchronize it into the project environment:
+
+```bash
 just install-hermes-agent
 ```
 
-The default variant uses Hermes Agent with an NVIDIA-hosted model. Set
-`NVIDIA_API_KEY`, then run it with the project interpreter:
+Set `NVIDIA_API_KEY`, then run the default variant with the project interpreter:
 
 ```bash
 .venv/bin/python -m examples.code_review_agent \
@@ -36,16 +41,15 @@ If Hermes Agent uses a separate environment, set `ADAPTER_PYTHON` to that
 environment's Python interpreter only for Hermes Agent commands.
 
 The Pi variant uses the source-built Pi SDK adapter and requires Node.js
-22.19.0 or newer. Install and build its TypeScript packages from the repository
-root:
+22.19.0 or newer. The preceding `just build-all` command builds it. To rebuild
+only the TypeScript packages, run:
 
 ```bash
-npm ci --prefix adapters/typescript --ignore-scripts
-npm run build --prefix adapters/typescript
+just build-typescript
 ```
 
-The example discovers `adapters/typescript/pi/pi.fabric-adapter.json` directly from the
-source checkout. Set `NVIDIA_API_KEY` before running the Pi variant.
+The example discovers `adapters/typescript/pi/pi.fabric-adapter.json` directly
+from the source checkout. Set `NVIDIA_API_KEY` before running the Pi variant.
 
 ## Inspect the plan
 
@@ -81,9 +85,10 @@ The entrypoint exposes complete harness configs defined in
 | Codex | `--variant codex` | Installed [Codex adapter](../../adapters/codex/README.md) and an existing ChatGPT or API key login |
 | Claude | `--variant claude` | Installed [Claude adapter requirements](../../adapters/claude/README.md) and `ANTHROPIC_API_KEY` |
 | Deep Agents | `--variant deepagents` | Installed [Deep Agents adapter requirements](../../adapters/deepagents/README.md) and `NVIDIA_API_KEY` |
-| Pi SDK | `--variant pi` | Built the [Pi adapter](../../adapters/typescript/pi/README.md) with Node.js 22.19 or newer and set `NVIDIA_API_KEY` |
+| Pi | `--variant pi` | Built the [Pi adapter](../../adapters/typescript/pi/README.md) with Node.js 22.19 or newer and set `NVIDIA_API_KEY` |
 
-Add `--relay` to any variant to enable the Relay ATOF and ATIF configuration:
+Add `--relay` to a supported variant to enable the Relay ATOF and ATIF
+configuration:
 
 Relay requirements depend on the selected adapter. The Codex and Claude
 adapters require a `nemo-relay` CLI in the `>=0.7.2,<0.8` range. NeMo Fabric's

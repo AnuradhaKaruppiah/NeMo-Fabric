@@ -145,8 +145,8 @@ available notebooks.
 
 ## Bundled Harness Adapters
 
-NeMo Fabric provides the following harness integrations. The package
-expressions install the components shown in each column:
+NeMo Fabric provides the following harness integrations. Python-based harness
+integrations use the package expressions shown in each column:
 
 | Agent Harness | Runtime, Adapter, and Harness | Adapter and Harness | Adapter Only |
 | --- | --- | --- | --- |
@@ -165,6 +165,12 @@ then install either `nemo-fabric[hermes-agent]` for the runtime and adapter or
 forms for split environments or environments that already manage the harness.
 For `harness`, `full`, and Relay behavior, refer to the
 [installation guide](docs/getting-started/install.mdx).
+
+The [Pi adapter](docs/integrations/harness/pi.mdx) is distributed through npm
+instead of a Python package extra. Install `nemo-fabric` in the Python
+environment that owns the configuration, then install
+`nemo-fabric-adapters-pi` in the project where NeMo Fabric can discover its
+adapter descriptor. The npm package installs the Pi SDK dependencies.
 
 Capabilities vary by harness. Review the
 [configuration compatibility matrix](adapters/README.md#configuration-compatibility)

@@ -480,7 +480,8 @@ test-typescript-contract: install-typescript-contract
     npm test --prefix adapter-contract/typescript
 
 # Run the TypeScript adapter checks using the locked dependency set.
-test-typescript-adapters: install-typescript-adapters
+test-typescript-adapters: install-typescript
+    npm run build --prefix adapter-contract/typescript
     npm test --prefix adapters/typescript
 
 # Run every maintained TypeScript package check.

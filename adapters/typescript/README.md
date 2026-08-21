@@ -9,6 +9,18 @@ This private npm workspace coordinates the independently published common and
 Pi adapter packages. It provides shared build, test, package-content, and
 consumer-install checks without becoming a published package itself.
 
+## Build and Test
+
+Run the following commands from the repository root:
+
+```bash
+just build-typescript
+just test-typescript-adapters
+```
+
+The adapter test recipe builds the local TypeScript contract before it compiles
+the adapter packages.
+
 ## Dependency Rationale
 
 The workspace links `nemo-fabric-adapter-contract` from the checked-out source

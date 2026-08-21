@@ -30,8 +30,7 @@ For source development, build from the repository root and use
 `adapters/typescript/pi/pi.fabric-adapter.json` instead:
 
 ```bash
-npm ci --prefix adapters/typescript --ignore-scripts
-npm run build --prefix adapters/typescript
+just build-typescript
 ```
 
 ## Configure the Adapter
@@ -68,17 +67,57 @@ config = FabricConfig(
 The provider and model pair must already exist in Pi's catalog. A base URL can
 override a known model endpoint, but it does not define a new provider.
 
+## Add Skills and Extensions
+
+Add normalized skill paths with the Python SDK. NeMo Fabric resolves these
+paths from the `base_dir` passed to `plan()`, `doctor()`, or `run()`:
+
+```python
+config.add_skill_path("./skills/code-review")
+```
+
+Pi extensions are adapter-specific trusted code. Configure extension files
+relative to `environment.workspace`:
+
+```python
+config.harness.settings["extensions"] = ["extensions/review.ts"]
+```
+
+The adapter loads only the skill and extension paths in the configuration. It
+does not load ambient Pi resources from the user profile or workspace.
+
 ## Add a NeMo Fabric Tool Definition
 
 Pi accepts trusted local JavaScript and TypeScript tool factories. The
 normalized definition uses `kind: "module"`; `ref` is relative to the NeMo Fabric
 workspace and may include a named export after `#`.
 
+Create `tools/review-context.js` in the configured workspace:
+
+```javascript
+export function createTool({ name, settings }) {
+  return {
+    name,
+    label: "Review Context",
+    description: "Return configured context for a code review.",
+    parameters: { type: "object", properties: {} },
+    async execute() {
+      return {
+        content: [{ type: "text", text: JSON.stringify(settings) }],
+        details: {},
+      };
+    },
+  };
+}
+```
+
+Register and enable the tool:
+
 ```python
 config.add_tool_definition(
     "review_context",
     kind="module",
-    ref="tools/review-context.ts#createTool",
+    ref="tools/review-context.js#createTool",
     settings={"format": "brief"},
 )
 config.tools.enabled = ["read", "review_context"]
@@ -87,8 +126,10 @@ config.tools.enabled = ["read", "review_context"]
 The factory receives `{ name, settings, workspace }` and returns a Pi
 `ToolDefinition` with the same name. Tool modules and explicit Pi extensions
 run as trusted code in the adapter process. The adapter rejects paths outside
-the workspace and duplicate names across built-ins, NeMo Fabric definitions, and
-extensions.
+the workspace and duplicate names across built-ins, NeMo Fabric definitions,
+and extensions.
+
+## Current Limitations
 
 The current adapter does not expose Relay, MCP, streaming, caller-driven
 cancellation, or remote-service execution.

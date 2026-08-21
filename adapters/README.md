@@ -56,8 +56,8 @@ schemas come from independently registered Adapter Target Descriptors.
 
 Shared TypeScript lifecycle utilities live under
 [`typescript/common`](typescript/common/README.md).
-Workspace build and dependency policy is documented in
-[`typescript/README.md`](typescript/README.md).
+Refer to the [TypeScript adapter workspace guide](typescript/README.md) for
+build commands and dependency policy.
 
 ## Custom-Agent Adapter References
 
