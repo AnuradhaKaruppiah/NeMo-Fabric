@@ -331,6 +331,24 @@ function parseLine(line: string): unknown {
   }
 }
 
+/**
+ * Serve the persistent, newline-delimited lifecycle protocol for one adapter runtime.
+ *
+ * The host reads one JSON request per input line, validates normalized contract
+ * payloads, and writes exactly one normalized response per output line. A valid
+ * start request creates the runtime through `factory`; subsequent invoke and
+ * stop requests must carry the same runtime ID. The host validates adapter
+ * results, converts adapter failures into stable lifecycle errors, and prevents
+ * further invocation after an unexpected adapter or response-encoding failure.
+ *
+ * When the protocol uses process stdout, other stdout writes are redirected to
+ * stderr so logs cannot corrupt the response stream. The active runtime is
+ * cleaned up after a stop request, a failed start, or input termination. Tests
+ * can provide isolated input, output, and diagnostic streams through `options`.
+ *
+ * @param factory Creates the adapter-owned runtime for a valid start request.
+ * @param options Overrides the process streams, primarily for embedding and tests.
+ */
 export async function serve(factory: AdapterRuntimeFactory, options: LifecycleHostOptions = {}): Promise<void> {
   const input = options.input ?? process.stdin;
   const output = options.output ?? process.stdout;
