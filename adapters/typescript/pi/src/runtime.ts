@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+// Pi lifecycle state machine. It maps NeMo Fabric start, invoke, and stop calls
+// to a PiSessionHandle and normalized results while keeping SDK construction
+// behind a factory for focused lifecycle testing.
+
 import type { AgentRunRequest, AgentRunResult, RuntimeContext } from "nemo-fabric-adapter-contract";
 import { LifecycleError, type AdapterRuntime, type AdapterStartInput } from "nemo-fabric-adapters-common";
 

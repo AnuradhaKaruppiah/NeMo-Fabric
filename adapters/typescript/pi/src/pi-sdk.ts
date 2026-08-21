@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+// Pi SDK integration boundary. It translates normalized adapter configuration
+// into a controlled in-memory Pi session, including model credentials, skills,
+// extensions, custom tools, and workspace containment.
+
 import { realpath, stat } from "node:fs/promises";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 

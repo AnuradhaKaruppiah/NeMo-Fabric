@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+// Enforce the package's minimum Node.js version at the process boundary before
+// the runner loads Pi SDK modules. The accepted requirement shape matches the
+// package.json engines.node declaration owned by this adapter.
+
 type Version = Readonly<{
   major: number;
   minor: number;

@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+// Shared process-adapter lifecycle host. It validates newline-delimited
+// lifecycle requests, owns one adapter runtime, dispatches start, invoke, and
+// stop operations, and returns normalized responses while keeping diagnostics
+// off the protocol output stream.
+
 import { createRequire } from "node:module";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
