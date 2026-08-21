@@ -17,6 +17,7 @@ from examples.code_review_agent.config import (
     with_relay,
     with_relay_openinference,
     with_relay_otel,
+    with_skill_paths,
 )
 
 __all__ = [
@@ -33,4 +34,5 @@ __all__ = [
     "with_relay",
     "with_relay_openinference",
     "with_relay_otel",
+    "with_skill_paths",
 ]

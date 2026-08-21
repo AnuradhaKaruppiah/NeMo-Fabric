@@ -10,6 +10,9 @@ complete `FabricConfig` with the public Pydantic models and passes it directly
 to the Python SDK. Variants are independent deep copies of that config.
 
 Each variant is an independent Python factory that returns a complete config.
+The Pi and Deep Agents variants intentionally share the same model, code-review
+instruction, workspace, and default skill. This makes it possible to compare
+the harnesses while keeping the agent intent fixed.
 
 ## Set up
 
@@ -122,6 +125,34 @@ example-specific tool policy supports inspecting files without enabling shell
 or editing capabilities. MCP and Relay are also not enabled; passing `--relay`
 with `--variant pi` is rejected until the adapter supports that integration.
 
+## Vary skills
+
+Pi and Deep Agents load `skills/code-review` by default. Remove the default
+skill without changing the rest of the variant:
+
+```bash
+.venv/bin/python -m examples.code_review_agent \
+  --variant pi \
+  --no-skills \
+  --show-output \
+  --input "Read calculator.py and review it for correctness risks. Cite the file and line you inspected."
+```
+
+Replace the defaults with one or more skill directories by repeating
+`--skill-path`. Relative paths resolve from `examples/code_review_agent`:
+
+```bash
+.venv/bin/python -m examples.code_review_agent \
+  --variant pi \
+  --skill-path ./skills/code-review \
+  --skill-path ../../tests/fixtures/alternate \
+  --plan
+```
+
+The options are intentionally generic rather than Pi-specific, so the same
+skill selection can be used with another variant that supports Fabric skills.
+`--skill-path` and `--no-skills` cannot be combined.
+
 ## Compose configs in Python
 
 The config module also provides environment, MCP, and telemetry functions for
@@ -134,16 +165,18 @@ from examples.code_review_agent import (
     with_github_mcp,
     with_opensandbox,
     with_relay,
+    with_skill_paths,
 )
 
 config = hermes_config()
 relay_config = with_relay(config)
 sandbox_config = with_opensandbox(config)
 github_config = with_github_mcp(config)
+no_skills_config = with_skill_paths(config)
 ```
 
-Each function returns a deep copy. The four configs can therefore be planned or
-run independently with `base_dir=BASE_DIR`. Set `GITHUB_MCP_URL` before running
+Each function returns a deep copy. The configs can therefore be planned or run
+independently with `base_dir=BASE_DIR`. Set `GITHUB_MCP_URL` before running
 `github_config`; it maps the server into the selected harness's native MCP
 configuration. The default smoke does not configure or contact that server.
 
