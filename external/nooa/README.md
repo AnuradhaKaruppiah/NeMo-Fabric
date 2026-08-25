@@ -174,6 +174,10 @@ verification, reward calculation, retries, and job artifacts. The BenchAgent
 adapter owns only model construction, task execution, result normalization,
 Relay telemetry, and runtime cleanup.
 
+See the runnable [BenchAgent Harbor walkthrough](../../examples/harbor/nooa_bench/README.md)
+for task-image preparation, baseline reward verification, and Relay ATOF/ATIF
+validation.
+
 ## CodingAgent Target
 
 `targets/coding-agent.fabric-target.json` registers
