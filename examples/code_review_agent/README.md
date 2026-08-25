@@ -69,6 +69,7 @@ The entrypoint exposes complete harness configs defined in
 | Codex | `--variant codex` | Installed [Codex adapter](../../adapters/codex/README.md) and an existing ChatGPT or API key login |
 | Claude | `--variant claude` | Installed [Claude adapter requirements](../../adapters/claude/README.md) and `ANTHROPIC_API_KEY` |
 | Deep Agents | `--variant deepagents` | Installed [Deep Agents adapter requirements](../../adapters/deepagents/README.md) and `NVIDIA_API_KEY` |
+| OO Agents CodingAgent | `--variant nooa` | Installed OO Agents and `nooa-cli`, exposed `external/nooa/src` on `PYTHONPATH`, and set `NVIDIA_API_KEY` |
 
 Add `--relay` to any variant to enable the Relay ATOF and ATIF configuration:
 
@@ -89,6 +90,18 @@ for the current compatibility requirements.
 Use `--plan` with these options to inspect a variant before running it.
 Use `--show-output` to print the adapter's `output.response` value on the final
 line after the normalized result.
+
+The OO Agents variant selects the registered `nvidia.nooa.coding-agent` target.
+Its factory receives the normalized model, resolved workspace, system
+instruction, and exact Fabric skill path. The shared adapter owns dispatch and
+result normalization; it does not import ACP or branch on `CodingAgent`.
+
+```bash
+export PYTHONPATH="$PWD/external/nooa/src:$PWD/external/labs-OO-Agents/src:$PWD/external/labs-OO-Agents/packages/nooa-cli/src${PYTHONPATH:+:$PYTHONPATH}"
+.venv/bin/python -m examples.code_review_agent \
+  --variant nooa \
+  --input "Review calculator.py"
+```
 
 ## Compose configs in Python
 

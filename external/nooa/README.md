@@ -20,6 +20,11 @@ The adapter deliberately implements only the common interactive-agent boundary:
 - `stop` calls target-owned cleanup, `agent.close()`, or the queue manager's
   fallback shutdown.
 
+The adapter translates normalized models into OO Agents `UnifiedLLM` clients
+and supplies resolved system instructions and exact skill paths through the
+factory build context. The initial descriptor accepts `models`, model endpoint
+and temperature fields, `instructions.system`, and `skills`.
+
 `WAIT` resumes inside the same Fabric invocation when another OO Agents channel
 wakes. `DONE`, `NEED_INPUT`, and the legacy `GET_USER_INPUT` end the invocation.
 The latter two are successful terminal adapter calls with `completed=false` and
@@ -91,6 +96,20 @@ export PYTHONPATH="$PWD/external/nooa/src${PYTHONPATH:+:$PYTHONPATH}"
 During source development, include this directory and the target descriptor's
 directory in `FabricConfig.discovery.local_paths`.
 
+## CodingAgent Target
+
+`targets/coding-agent.fabric-target.json` registers
+`nvidia.nooa.coding-agent`. Its factory constructs the host-neutral
+`nooa_cli.coding.CodingAgent` directly; it does not import ACP. The factory uses
+the selected `default` model, the resolved runtime workspace, the portable
+system instruction, and configured text-skill directories. `CodingAgent.close()`
+owns its shell, skill registry, queue jobs, and model shutdown; the adapter also
+finalizes its model clients idempotently during runtime cleanup.
+
+The maintained code-review example exposes this target as `--variant nooa`.
+See [the example README](../../examples/code_review_agent/README.md) for its
+source bootstrap and live command.
+
 The initial contract tests use Fabric commit `758b6066504a724a6fc1941b8415b76ed31f0ab5`
 and OO Agents commit `97f52dec84ed88ca3b202f91bee0bc0074626246` on
 Python 3.13. OO Agents currently declares Python `>=3.12,<3.14`; broader version
@@ -102,5 +121,5 @@ of its Fabric environment. Consumers must select an environment provider with
 the required operating-system isolation and must not treat the in-process
 adapter boundary as a security boundary.
 
-The next integration milestones are registered CodingAgent and ArcSolverBase
-targets, followed by Relay telemetry verification with correlated ATOF records.
+The next integration milestones are a concrete ArcSolverBase target and Relay
+telemetry verification with correlated ATOF records.

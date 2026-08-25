@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import types
 from pathlib import Path
@@ -158,12 +159,23 @@ def test_descriptor_and_registered_target_declare_the_shared_boundary():
             encoding="utf-8"
         )
     )
+    coding_target = json.loads(
+        (
+            ROOT / "external" / "nooa" / "targets" / "coding-agent.fabric-target.json"
+        ).read_text(encoding="utf-8")
+    )
 
     assert descriptor["adapter_id"] == "nvidia.fabric.nooa"
     assert descriptor["adapter_kind"] == "python"
     assert descriptor["target_types"] == ["workflow"]
     assert descriptor["runner"] == {"module": "nemo_fabric_adapters.nooa.adapter"}
-    assert descriptor["config"]["accepts"] == []
+    assert descriptor["config"]["accepts"] == [
+        "models",
+        "models.base_url",
+        "models.temperature",
+        "instructions.system",
+        "skills",
+    ]
     assert descriptor["capabilities"] == {
         "cancellation": False,
         "service": False,
@@ -175,6 +187,12 @@ def test_descriptor_and_registered_target_declare_the_shared_boundary():
         "kind": "interactive_agent_factory",
         "ref": "fabric_nooa_test_target:create_agent",
     }
+    assert coding_target["adapter_id"] == descriptor["adapter_id"]
+    assert coding_target["spec"]["entrypoint"] == {
+        "kind": "interactive_agent_factory",
+        "ref": "nemo_fabric_adapters.nooa.targets.coding_agent:create_agent",
+    }
+    assert coding_target["spec"]["settings_schema"]["additionalProperties"] is False
 
 
 def test_registered_target_projects_the_factory_and_settings(tmp_path: Path):
@@ -272,6 +290,10 @@ async def test_runtime_builds_once_and_preserves_agent_state(
     assert build_context.workspace == tmp_path / "workspace"
     assert build_context.artifact_root == tmp_path / "artifacts"
     assert build_context.config.workflow.settings == {"prefix": "test"}
+    assert dict(build_context.models) == {}
+    assert build_context.system_instruction is None
+    assert dict(build_context.settings) == {"prefix": "test"}
+    assert build_context.skill_paths == ()
     assert first.status is AgentRunStatus.SUCCEEDED
     assert first.output["response"] == "reply-1"
     assert first.output["messages"] == [{"content": "reply-1"}]
@@ -509,3 +531,104 @@ async def test_factory_failure_is_redacted(
     assert error.value.code == "nooa_target_start_failed"
     assert "super-secret" not in str(error.value)
     await runtime.stop()
+
+
+async def test_coding_agent_target_runs_with_normalized_model_and_skills(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    agent, _channels, handlers = _agent_double()
+
+    async def handle(_notification: dict[str, list[Any]]):
+        handlers[-1](SimpleNamespace(content="No correctness issues found."))
+        return SimpleNamespace(kind="DONE", explanation="review complete")
+
+    agent.handle.side_effect = handle
+    mock_coding_agent = MagicMock(name="CodingAgent", return_value=agent)
+    mock_context = MagicMock(name="Context", side_effect=lambda value, **_kwargs: value)
+    mock_text_skill_instance = MagicMock(name="text_skill")
+    mock_text_skill_instance.id = "code-review"
+    mock_text_skill = MagicMock(name="TextSkill", return_value=mock_text_skill_instance)
+    mock_llm = MagicMock(name="llm")
+    mock_llm.aclose = AsyncMock()
+    mock_get_llm_client = MagicMock(name="get_llm_client", return_value=mock_llm)
+
+    modules: dict[str, types.ModuleType] = {}
+    for name in (
+        "nooa",
+        "nooa.skill",
+        "nooa.unifiedllm",
+        "nooa_cli",
+        "nooa_cli.coding",
+    ):
+        module = types.ModuleType(name)
+        if name in {"nooa", "nooa_cli"}:
+            module.__path__ = []  # type: ignore[attr-defined]
+        modules[name] = module
+        monkeypatch.setitem(sys.modules, name, module)
+    modules["nooa"].Context = mock_context
+    modules["nooa.skill"].TextSkill = mock_text_skill
+    modules["nooa.unifiedllm"].get_llm_client = mock_get_llm_client
+    modules["nooa_cli.coding"].CodingAgent = mock_coding_agent
+
+    skill_path = tmp_path / "skills" / "code-review"
+    skill_path.mkdir(parents=True)
+    (skill_path / "SKILL.md").write_text(
+        "---\nname: code-review\n---\n", encoding="utf-8"
+    )
+    os.environ["NVIDIA_API_KEY"] = "test-key"
+    config = AgentConfig.from_mapping(
+        {
+            "models": {
+                "default": {
+                    "provider": "nvidia",
+                    "model": "nvidia/test-model",
+                    "api_key_env": "NVIDIA_API_KEY",
+                    "base_url": "https://integrate.api.nvidia.com/v1",
+                    "temperature": 0.0,
+                }
+            },
+            "instructions": {
+                "system": {"content": "Review the code carefully."},
+            },
+            "skills": {"paths": [str(skill_path)]},
+            "workflow": {
+                "entrypoint": {
+                    "kind": "interactive_agent_factory",
+                    "ref": "nemo_fabric_adapters.nooa.targets.coding_agent:create_agent",
+                },
+                "settings": {},
+            },
+        }
+    )
+    payload = _start_payload(tmp_path)
+    payload["config"] = config
+    runtime = adapter.NooaRuntime()
+
+    await runtime.start(payload)
+    try:
+        result = await runtime.invoke(*_invocation("Review calculator.py"))
+    finally:
+        await runtime.stop()
+
+    mock_get_llm_client.assert_called_once_with(
+        "nvidia_nim/nvidia/test-model",
+        client_type=None,
+        api_key="test-key",
+        api_base="https://integrate.api.nvidia.com/v1",
+        temperature=0.0,
+    )
+    mock_coding_agent.assert_called_once_with(
+        llm=mock_llm,
+        cwd=tmp_path / "workspace",
+        libs_dir=tmp_path / "artifacts" / "nooa-libs",
+    )
+    mock_context.assert_called_once_with("Review the code carefully.", prefix=True)
+    agent.skills.register.assert_called_once_with(
+        "cmd.code-review", mock_text_skill_instance
+    )
+    agent.skills.activate.assert_called_once_with(["cmd.code-review"])
+    assert result.status is AgentRunStatus.SUCCEEDED
+    assert result.output["response"] == "No correctness issues found."
+    agent.close.assert_awaited_once_with()
+    mock_llm.aclose.assert_awaited_once_with()

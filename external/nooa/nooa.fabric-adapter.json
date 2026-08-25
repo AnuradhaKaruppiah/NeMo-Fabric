@@ -6,6 +6,29 @@
   "runner": {
     "module": "nemo_fabric_adapters.nooa.adapter"
   },
+  "model_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "provider": {"type": "string", "minLength": 1},
+      "model": {"type": "string", "minLength": 1},
+      "temperature": {"type": "number"},
+      "api_key_env": {"type": "string", "minLength": 1},
+      "base_url": {"type": "string", "minLength": 1},
+      "settings": {
+        "type": "object",
+        "properties": {
+          "client_type": {
+            "type": "string",
+            "enum": ["completion", "responses"]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "required": ["provider", "model"],
+    "additionalProperties": false
+  },
   "settings_schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
@@ -14,7 +37,13 @@
   },
   "requirements": {},
   "config": {
-    "accepts": []
+    "accepts": [
+      "models",
+      "models.base_url",
+      "models.temperature",
+      "instructions.system",
+      "skills"
+    ]
   },
   "capabilities": {
     "cancellation": false,

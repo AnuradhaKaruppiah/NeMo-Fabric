@@ -8,6 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from nemo_fabric import DiscoveryConfig
 from nemo_fabric import EnvironmentConfig
 from nemo_fabric import FabricConfig
 from nemo_fabric import HarnessConfig
@@ -24,8 +25,10 @@ from nemo_fabric import RelayOpenTelemetryEndpointConfig
 from nemo_fabric import RuntimeConfig
 from nemo_fabric import TelemetryConfig
 from nemo_fabric import ToolsConfig
+from nemo_fabric import WorkflowConfig
 
 BASE_DIR = Path(__file__).resolve().parent
+NOOA_ADAPTER_DIR = BASE_DIR.parents[1] / "external" / "nooa"
 WORKSPACE = "./repos/my-service"
 SKILL_PATH = "./skills/code-review"
 
@@ -196,6 +199,40 @@ def claude_config() -> FabricConfig:
         artifacts="./artifacts/claude",
     )
     config.remove_skill_path(SKILL_PATH)
+    return config
+
+
+def nooa_config() -> FabricConfig:
+    """Return the complete OO Agents CodingAgent variant."""
+
+    config = base_config().model_copy(deep=True)
+    config.discovery = DiscoveryConfig(local_paths=[NOOA_ADAPTER_DIR])
+    config.workflow = WorkflowConfig(
+        target_id="nvidia.nooa.coding-agent",
+        settings={},
+    )
+    config.harness = None
+    model = config.models["default"]
+    assert isinstance(model, ModelConfig)
+    model.base_url = "https://integrate.api.nvidia.com/v1"
+    config.instructions = InstructionsConfig(
+        system=InstructionConfig(
+            content=(
+                "Review the requested workspace changes. Prioritize correctness, "
+                "security, and missing tests, and cite relevant files."
+            )
+        )
+    )
+    config.runtime = RuntimeConfig(
+        input_schema="text",
+        output_schema="message",
+        artifacts="./artifacts/nooa",
+    )
+    config.environment = EnvironmentConfig(
+        provider="local",
+        workspace=WORKSPACE,
+        artifacts="./artifacts/nooa",
+    )
     return config
 
 

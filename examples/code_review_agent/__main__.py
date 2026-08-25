@@ -18,6 +18,7 @@ from examples.code_review_agent.config import (
     codex_config,
     deepagents_config,
     hermes_config,
+    nooa_config,
     with_relay,
 )
 
@@ -26,6 +27,7 @@ CONFIG_BUILDERS: dict[str, Callable[[], FabricConfig]] = {
     "claude": claude_config,
     "codex": codex_config,
     "deepagents": deepagents_config,
+    "nooa": nooa_config,
 }
 
 

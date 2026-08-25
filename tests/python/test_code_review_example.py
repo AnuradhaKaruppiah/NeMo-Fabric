@@ -18,6 +18,7 @@ from examples.code_review_agent import claude_config
 from examples.code_review_agent import codex_config
 from examples.code_review_agent import deepagents_config
 from examples.code_review_agent import hermes_config
+from examples.code_review_agent import nooa_config
 from examples.code_review_agent import with_github_mcp
 from examples.code_review_agent import with_native_otel
 from examples.code_review_agent import with_opensandbox
@@ -35,8 +36,9 @@ def test_variant_builders_return_independent_complete_configs():
     codex = codex_config()
     claude = claude_config()
     deepagents = deepagents_config()
+    nooa = nooa_config()
 
-    for config in (base, hermes, codex, claude, deepagents):
+    for config in (base, hermes, codex, claude, deepagents, nooa):
         assert isinstance(config, FabricConfig)
         assert config.metadata.name == "code-review-agent"
         assert config.environment is not None
@@ -60,6 +62,10 @@ def test_variant_builders_return_independent_complete_configs():
     assert deepagents.harness.adapter_id == "nvidia.fabric.langchain.deepagents"
     assert deepagents.mcp is None
     assert deepagents.skills is None
+    assert nooa.harness is None
+    assert nooa.workflow is not None
+    assert nooa.workflow.target_id == "nvidia.nooa.coding-agent"
+    assert nooa.skills is not None
     assert base.mcp is None
     assert base.skills is not None
     skill_path = BASE_DIR / base.skills.paths[0]
@@ -176,6 +182,12 @@ def test_variants_plan_from_complete_configs():
         assert "github" in github_plan["capability_plan"]["native"]["mcp_servers"]
         assert "mcp_servers" not in github_plan["capability_plan"]["unsupported"]
 
+    nooa_plan = client.plan(nooa_config(), base_dir=BASE_DIR)
+    assert nooa_plan.base_dir == BASE_DIR
+    assert nooa_plan.agent_name == "code-review-agent"
+    assert nooa_plan.adapter.adapter_id == "nvidia.fabric.nooa"
+    assert nooa_plan.config.workflow.target_id == "nvidia.nooa.coding-agent"
+
 
 def test_example_entrypoint_plans_without_starting_a_runtime():
     variants = (
@@ -183,6 +195,7 @@ def test_example_entrypoint_plans_without_starting_a_runtime():
         ("codex", "nvidia.fabric.codex"),
         ("claude", "nvidia.fabric.claude"),
         ("deepagents", "nvidia.fabric.langchain.deepagents"),
+        ("nooa", "nvidia.fabric.nooa"),
     )
     cases = tuple(
         (
@@ -191,7 +204,7 @@ def test_example_entrypoint_plans_without_starting_a_runtime():
             relay_enabled,
         )
         for variant, adapter_id in variants
-        for relay_enabled in (False, True)
+        for relay_enabled in ((False,) if variant == "nooa" else (False, True))
     )
 
     for options, adapter_id, relay_enabled in cases:

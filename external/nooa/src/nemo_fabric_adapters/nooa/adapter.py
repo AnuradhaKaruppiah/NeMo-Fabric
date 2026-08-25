@@ -10,10 +10,13 @@ import asyncio
 import importlib
 import inspect
 import logging
+import os
 from collections.abc import Awaitable
 from collections.abc import Callable
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from nemo_fabric_adapter_contract.models import AgentConfig
@@ -39,6 +42,10 @@ class InteractiveAgentBuildContext:
     """Fabric-owned values supplied to one registered target factory."""
 
     config: AgentConfig
+    models: Mapping[str, Any]
+    system_instruction: str | None
+    settings: Mapping[str, Any]
+    skill_paths: tuple[Path, ...]
     runtime_id: str
     base_dir: Path
     workspace: Path
@@ -136,8 +143,102 @@ def _path(value: Any, *, default: Path | None = None) -> Path | None:
     return Path(value)
 
 
+def _credential_env(provider: str, configured: str | None) -> str:
+    if configured is not None:
+        return configured
+    defaults = {
+        "anthropic": "ANTHROPIC_API_KEY",
+        "nvidia": "NVIDIA_API_KEY",
+        "openai": "OPENAI_API_KEY",
+    }
+    try:
+        return defaults[provider]
+    except KeyError as error:
+        raise _config_error(
+            "nooa_model_credential_required",
+            f"OO Agents model provider {provider!r} requires api_key_env",
+            field="models",
+        ) from error
+
+
+def _native_model_name(provider: str, model: str) -> str:
+    if provider == "nvidia":
+        if model.startswith("nvidia_nim/"):
+            return model
+        return f"nvidia_nim/{model}"
+    if model.startswith(f"{provider}/"):
+        return model
+    return f"{provider}/{model}"
+
+
+async def _close_models(models: Mapping[str, Any]) -> None:
+    closed: set[int] = set()
+    for model in models.values():
+        if id(model) in closed:
+            continue
+        closed.add(id(model))
+        close = getattr(model, "aclose", None)
+        if callable(close):
+            await _await_if_needed(close())
+            continue
+        close = getattr(model, "close", None)
+        if callable(close):
+            await _await_if_needed(close())
+
+
+async def _build_models(config: AgentConfig) -> dict[str, Any]:
+    if not config.models:
+        return {}
+    try:
+        from nooa.unifiedllm import get_llm_client
+    except Exception as error:
+        raise _config_error(
+            "nooa_dependency_missing",
+            "OO Agents model support is not available in the adapter environment",
+        ) from error
+
+    result: dict[str, Any] = {}
+    try:
+        for role, model in config.models.items():
+            credential_env = _credential_env(model.provider, model.api_key_env)
+            api_key = os.environ.get(credential_env)
+            if not api_key:
+                raise _config_error(
+                    "nooa_model_credential_missing",
+                    f"OO Agents model credential environment variable {credential_env!r} is not set",
+                    field=f"models.{role}.api_key_env",
+                )
+            settings = dict(model.settings)
+            client_type = settings.pop("client_type", None)
+            overrides: dict[str, Any] = {"api_key": api_key, **settings}
+            if model.base_url is not None:
+                overrides["api_base"] = model.base_url
+            if model.temperature is not None:
+                overrides["temperature"] = model.temperature
+            result[role] = get_llm_client(
+                _native_model_name(model.provider, model.model),
+                client_type=client_type,
+                **overrides,
+            )
+    except BaseException:
+        await _close_models(result)
+        raise
+    return result
+
+
+def _resolved_skill_paths(config: AgentConfig, base_dir: Path) -> tuple[Path, ...]:
+    values = config.skills.paths if config.skills is not None else []
+    paths = []
+    for value in values:
+        path = Path(value)
+        paths.append(path if path.is_absolute() else base_dir / path)
+    return tuple(paths)
+
+
 def _build_context(
-    payload: dict[str, Any], config: AgentConfig
+    payload: dict[str, Any],
+    config: AgentConfig,
+    models: Mapping[str, Any],
 ) -> InteractiveAgentBuildContext:
     try:
         runtime_id = common_utils.runtime_id(payload)
@@ -152,8 +253,19 @@ def _build_context(
     workspace = _path(environment.get("workspace"), default=base_dir)
     artifact_root = _path(environment.get("artifacts"))
     assert workspace is not None
+    workflow = config.workflow
+    assert workflow is not None
+    system_instruction = (
+        config.instructions.system.content
+        if config.instructions is not None and config.instructions.system is not None
+        else None
+    )
     return InteractiveAgentBuildContext(
         config=config,
+        models=MappingProxyType(dict(models)),
+        system_instruction=system_instruction,
+        settings=MappingProxyType(dict(workflow.settings)),
+        skill_paths=_resolved_skill_paths(config, base_dir),
         runtime_id=runtime_id,
         base_dir=base_dir,
         workspace=workspace,
@@ -207,16 +319,29 @@ async def _close_target(target: InteractiveAgentTarget) -> None:
         await _await_if_needed(shutdown())
 
 
-async def _close_after_failed_start(target: InteractiveAgentTarget) -> None:
+async def _close_resources(
+    target: InteractiveAgentTarget | None,
+    models: Mapping[str, Any],
+) -> None:
+    primary: BaseException | None = None
+    if target is not None:
+        try:
+            await _close_target(target)
+        except BaseException as error:
+            primary = error
     try:
-        await _close_target(target)
-    except asyncio.CancelledError:
-        raise
-    except Exception as error:
-        LOGGER.error(
-            "OO Agents cleanup failed after start error (error_type=%s)",
-            type(error).__name__,
-        )
+        await _close_models(models)
+    except BaseException as error:
+        if primary is None:
+            primary = error
+        else:
+            LOGGER.error(
+                "OO Agents model cleanup failed while preserving target cleanup failure "
+                "(error_type=%s)",
+                type(error).__name__,
+            )
+    if primary is not None:
+        raise primary
 
 
 def _reason(result: Any) -> tuple[str, str]:
@@ -292,6 +417,7 @@ class NooaRuntime:
     def __init__(self) -> None:
         self._runtime_id: str | None = None
         self._target: InteractiveAgentTarget | None = None
+        self._models: dict[str, Any] = {}
 
     async def start(self, payload: dict[str, Any]) -> None:
         if self._target is not None:
@@ -301,23 +427,34 @@ class NooaRuntime:
             )
 
         config = _agent_config(payload)
-        context = _build_context(payload, config)
         factory = _load_factory(_factory_ref(config))
+        models: dict[str, Any] = {}
         target: InteractiveAgentTarget | None = None
         try:
+            models = await _build_models(config)
+            context = _build_context(payload, config, models)
             target = _unwrap_target(await _await_if_needed(factory(context)))
             _validate_agent(target.agent)
         except asyncio.CancelledError:
-            if target is not None:
-                await _close_after_failed_start(target)
+            await _close_resources(target, models)
             raise
         except lifecycle.LifecycleError:
-            if target is not None:
-                await _close_after_failed_start(target)
+            try:
+                await _close_resources(target, models)
+            except Exception as error:
+                LOGGER.error(
+                    "OO Agents cleanup failed after start error (error_type=%s)",
+                    type(error).__name__,
+                )
             raise
         except Exception as error:
-            if target is not None:
-                await _close_after_failed_start(target)
+            try:
+                await _close_resources(target, models)
+            except Exception as cleanup_error:
+                LOGGER.error(
+                    "OO Agents cleanup failed after start error (error_type=%s)",
+                    type(cleanup_error).__name__,
+                )
             raise lifecycle.LifecycleError(
                 "nooa_target_start_failed",
                 "The registered OO Agents target failed to start",
@@ -325,6 +462,7 @@ class NooaRuntime:
 
         self._runtime_id = context.runtime_id
         self._target = target
+        self._models = models
 
     async def invoke(
         self,
@@ -389,12 +527,14 @@ class NooaRuntime:
 
     async def stop(self) -> None:
         target = self._target
+        models = self._models
         self._runtime_id = None
         self._target = None
-        if target is None:
+        self._models = {}
+        if target is None and not models:
             return
         try:
-            await _close_target(target)
+            await _close_resources(target, models)
         except asyncio.CancelledError:
             raise
         except Exception as error:
