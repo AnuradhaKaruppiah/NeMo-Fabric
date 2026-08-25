@@ -1,0 +1,106 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# OO Agents Reference Adapter for NVIDIA NeMo Fabric
+
+This source-only shared adapter runs registered OO Agents `InteractiveAgent`
+targets behind the NVIDIA NeMo Fabric lifecycle contract. It is hosted in NeMo
+Fabric for initial development and is intended to move to the OO Agents
+repository after the integration and dependency boundaries stabilize.
+
+The adapter deliberately implements only the common interactive-agent boundary:
+
+- a target descriptor selects a Python factory;
+- `start` calls that factory once and retains its agent;
+- `invoke` submits one string to `user_messages` and runs the standard OO Agents
+  `race` / drain / `handle` dispatcher loop;
+- `AgentMessage` events become the normalized response and message list;
+- `stop` calls target-owned cleanup, `agent.close()`, or the queue manager's
+  fallback shutdown.
+
+`WAIT` resumes inside the same Fabric invocation when another OO Agents channel
+wakes. `DONE`, `NEED_INPUT`, and the legacy `GET_USER_INPUT` end the invocation.
+The latter two are successful terminal adapter calls with `completed=false` and
+their native reason retained in the output. `messages` contains ordered
+`{"content": "..."}` records, and `response` is the final content or `null`.
+
+This first slice does not claim native OpenAI streaming. Relay-backed ATOF
+streaming uses the ordinary `invoke` operation and does not require the adapter
+descriptor's `capabilities.streaming` flag.
+
+## Register a Target
+
+A separately installed target publishes a `*.fabric-target.json` record:
+
+```json
+{
+  "contract_version": "fabric.adapter/v1alpha2",
+  "type": "workflow",
+  "id": "com.example.nooa.my-agent",
+  "adapter_id": "nvidia.fabric.nooa",
+  "spec": {
+    "entrypoint": {
+      "kind": "interactive_agent_factory",
+      "ref": "my_package.fabric_target:create_agent"
+    },
+    "settings_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  }
+}
+```
+
+The reference uses `package.module:factory` syntax. The factory receives one
+`InteractiveAgentBuildContext` and may return an `InteractiveAgent` directly or
+an `InteractiveAgentTarget` with explicit cleanup:
+
+```python
+from nemo_fabric_adapters.nooa import InteractiveAgentBuildContext
+from nemo_fabric_adapters.nooa import InteractiveAgentTarget
+
+
+async def create_agent(
+    context: InteractiveAgentBuildContext,
+) -> InteractiveAgentTarget:
+    agent = MyInteractiveAgent(
+        cwd=context.workspace,
+        **context.config.workflow.settings,
+    )
+    return InteractiveAgentTarget(agent=agent, close=agent.close)
+```
+
+The factory owns target-specific construction, including model creation and
+validation of dependencies that cannot be checked during Fabric planning. The
+adapter validates the returned object's public interactive-agent surface; it
+does not import target-specific agent classes.
+
+## Development Bootstrap
+
+This directory intentionally has no package metadata. Use one Python
+environment containing NeMo Fabric, the common adapter host, OO Agents, and the
+registered target package, then expose the source adapter:
+
+```bash
+export PYTHONPATH="$PWD/external/nooa/src${PYTHONPATH:+:$PYTHONPATH}"
+```
+
+During source development, include this directory and the target descriptor's
+directory in `FabricConfig.discovery.local_paths`.
+
+The initial contract tests use Fabric commit `758b6066504a724a6fc1941b8415b76ed31f0ab5`
+and OO Agents commit `97f52dec84ed88ca3b202f91bee0bc0074626246` on
+Python 3.13. OO Agents currently declares Python `>=3.12,<3.14`; broader version
+support is not claimed by this source reference.
+
+The adapter is an execution bridge, not a sandbox. A CodeAct target such as
+`CodingAgent` can run generated Python and shell commands with the permissions
+of its Fabric environment. Consumers must select an environment provider with
+the required operating-system isolation and must not treat the in-process
+adapter boundary as a security boundary.
+
+The next integration milestones are registered CodingAgent and ArcSolverBase
+targets, followed by Relay telemetry verification with correlated ATOF records.
