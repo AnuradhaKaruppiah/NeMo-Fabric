@@ -5,10 +5,16 @@ SPDX-License-Identifier: Apache-2.0
 
 # OO Agents Adapter for NVIDIA NeMo Fabric
 
-This shared adapter runs registered OO Agents `InteractiveAgent` targets behind
-the NVIDIA NeMo Fabric lifecycle contract.
+This directory provides two OO Agents integrations for the NVIDIA NeMo Fabric
+lifecycle contract:
 
-The adapter deliberately implements only the common interactive-agent boundary:
+- `nvidia.fabric.nooa` is the shared adapter for registered `InteractiveAgent`
+  targets.
+- `nvidia.fabric.nooa.bench-agent` is a dedicated harness adapter for
+  `nooa_bench.BenchAgent` and Harbor tasks.
+
+The shared adapter deliberately implements only the common interactive-agent
+boundary:
 
 - a target descriptor selects a Python factory;
 - `start` calls that factory once and retains its agent;
@@ -27,7 +33,8 @@ temperature fields, `instructions.system`, and `skills`.
 wakes. `DONE`, `NEED_INPUT`, and the legacy `GET_USER_INPUT` end the invocation.
 The latter two are successful terminal adapter calls with `completed=false` and
 their native reason retained in the output. `messages` contains ordered
-`{"content": "..."}` records, and `response` is the final content or `null`.
+`{"content": "..."}` records. `response` is the final message content, or the
+terminal `RespondResult.explanation` when the agent emits no `AgentMessage`.
 
 The adapter does not claim native OpenAI streaming. Relay-backed ATOF streaming
 uses the ordinary `invoke` operation and does not require the adapter
@@ -44,13 +51,15 @@ plugin document.
 
 Each Relay invocation installs OO Agents' public `install_nemo_relay()`
 middleware, opens one Agent scope carrying the Fabric request, invocation, and
-runtime IDs, runs the ordinary dispatcher exactly once, then uninstalls the
-middleware and finalizes current-turn artifacts. The middleware records nested
-agent-method, LLM, and `execute_python` scopes. A telemetry setup failure before
-dispatch returns a safe failed result without executing the target. A teardown,
-flush, or artifact failure after dispatch preserves the functional result and
-marks telemetry degraded. A leaked scope quarantines telemetry on later turns
-instead of nesting them below stale state.
+runtime IDs, runs the selected agent operation exactly once, then uninstalls
+the middleware and finalizes current-turn artifacts. Interactive targets use
+the `nooa-interactive-agent-request` scope and BenchAgent uses
+`nooa-bench-agent-request`. The middleware records nested agent-method, LLM,
+and `execute_python` scopes. A telemetry setup failure before execution returns
+a safe failed result without executing the agent. A teardown, flush, or
+artifact failure after execution preserves the functional result and marks
+telemetry degraded. A leaked scope quarantines telemetry on later turns instead
+of nesting them below stale state.
 
 `Runtime.invoke_stream()` is provided by Fabric. With Relay enabled and the
 runtime started using `streaming=True`, it consumes matching raw ATOF records
@@ -128,6 +137,42 @@ export PYTHONPATH="$PWD/external/nooa/src${PYTHONPATH:+:$PYTHONPATH}"
 
 During source development, include this directory and the target descriptor's
 directory in `FabricConfig.discovery.local_paths`.
+
+## BenchAgent Harness Adapter
+
+`nooa-bench.fabric-adapter.json` exposes `nooa_bench.BenchAgent` directly as a
+harness adapter. It is intentionally separate from the shared
+`InteractiveAgent` dispatcher: BenchAgent derives from OO Agents' base `Agent`
+and implements the benchmark-specific `_run_evaluation(task_input)` contract.
+
+One Fabric invocation maps to one BenchAgent task:
+
+- the Fabric string input becomes `task_input.user_message`;
+- the Fabric workspace becomes `task_input.working_dir`;
+- `instructions.system` becomes `task_input.instructions`;
+- the native `response`, `success`, and structured `result` fields become the
+  normalized Fabric result;
+- OO Agents' task token accumulator becomes normalized Fabric usage.
+
+The adapter accepts exactly one model, closes the shell replaced by
+`_run_evaluation()` before each task, and closes the active shell and model at
+runtime shutdown. Native errors are not copied into the public result because
+they can contain model, tool, or environment details.
+
+Harbor selects this adapter through `FabricAgent` using
+`fabric_adapter_id=nvidia.fabric.nooa.bench-agent`. The task environment must
+contain NeMo Fabric, this adapter source, OO Agents core, and `nooa-bench`; its
+Fabric configuration bundle must expose the adapter descriptor beneath the
+bundle's `adapters/` directory. The resulting path is:
+
+```text
+Harbor task -> FabricAgent -> Fabric runner -> BenchAgent adapter -> BenchAgent
+```
+
+Harbor retains ownership of task materialization, the `/testbed` workspace,
+verification, reward calculation, retries, and job artifacts. The BenchAgent
+adapter owns only model construction, task execution, result normalization,
+Relay telemetry, and runtime cleanup.
 
 ## CodingAgent Target
 

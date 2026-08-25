@@ -10,7 +10,6 @@ import asyncio
 import importlib
 import inspect
 import logging
-import os
 from collections.abc import Awaitable
 from collections.abc import Callable
 from collections.abc import Mapping
@@ -27,6 +26,8 @@ from nemo_fabric_adapter_contract.models import AgentRunStatus
 from nemo_fabric_adapter_contract.models import RuntimeContext
 from nemo_fabric_adapters.common import lifecycle
 import nemo_fabric_adapters.common.utils as common_utils
+from nemo_fabric_adapters.nooa.model_support import build_models
+from nemo_fabric_adapters.nooa.model_support import close_models
 from nemo_fabric_adapters.nooa.telemetry import RelayReport
 from nemo_fabric_adapters.nooa.telemetry import RelayTelemetry
 
@@ -144,89 +145,6 @@ def _path(value: Any, *, default: Path | None = None) -> Path | None:
             "OO Agents received an invalid runtime filesystem path",
         )
     return Path(value)
-
-
-def _credential_env(provider: str, configured: str | None) -> str:
-    if configured is not None:
-        return configured
-    defaults = {
-        "anthropic": "ANTHROPIC_API_KEY",
-        "nvidia": "NVIDIA_API_KEY",
-        "openai": "OPENAI_API_KEY",
-    }
-    try:
-        return defaults[provider]
-    except KeyError as error:
-        raise _config_error(
-            "nooa_model_credential_required",
-            f"OO Agents model provider {provider!r} requires api_key_env",
-            field="models",
-        ) from error
-
-
-def _native_model_name(provider: str, model: str) -> str:
-    if provider == "nvidia":
-        if model.startswith("nvidia_nim/"):
-            return model
-        return f"nvidia_nim/{model}"
-    if model.startswith(f"{provider}/"):
-        return model
-    return f"{provider}/{model}"
-
-
-async def _close_models(models: Mapping[str, Any]) -> None:
-    closed: set[int] = set()
-    for model in models.values():
-        if id(model) in closed:
-            continue
-        closed.add(id(model))
-        close = getattr(model, "aclose", None)
-        if callable(close):
-            await _await_if_needed(close())
-            continue
-        close = getattr(model, "close", None)
-        if callable(close):
-            await _await_if_needed(close())
-
-
-async def _build_models(config: AgentConfig) -> dict[str, Any]:
-    if not config.models:
-        return {}
-    try:
-        from nooa.unifiedllm import get_llm_client
-    except Exception as error:
-        raise _config_error(
-            "nooa_dependency_missing",
-            "OO Agents model support is not available in the adapter environment",
-        ) from error
-
-    result: dict[str, Any] = {}
-    try:
-        for role, model in config.models.items():
-            credential_env = _credential_env(model.provider, model.api_key_env)
-            api_key = os.environ.get(credential_env)
-            if not api_key:
-                raise _config_error(
-                    "nooa_model_credential_missing",
-                    f"OO Agents model credential environment variable {credential_env!r} is not set",
-                    field=f"models.{role}.api_key_env",
-                )
-            settings = dict(model.settings)
-            client_type = settings.pop("client_type", None)
-            overrides: dict[str, Any] = {"api_key": api_key, **settings}
-            if model.base_url is not None:
-                overrides["api_base"] = model.base_url
-            if model.temperature is not None:
-                overrides["temperature"] = model.temperature
-            result[role] = get_llm_client(
-                _native_model_name(model.provider, model.model),
-                client_type=client_type,
-                **overrides,
-            )
-    except BaseException:
-        await _close_models(result)
-        raise
-    return result
 
 
 def _resolved_skill_paths(config: AgentConfig, base_dir: Path) -> tuple[Path, ...]:
@@ -347,7 +265,7 @@ async def _close_resources(
         except BaseException as error:
             primary = error
     try:
-        await _close_models(models)
+        await close_models(models)
     except BaseException as error:
         if primary is None:
             primary = error
@@ -482,7 +400,7 @@ class NooaRuntime:
         target: InteractiveAgentTarget | None = None
         telemetry: RelayTelemetry | None = None
         try:
-            models = await _build_models(config)
+            models = await build_models(config)
             context = _build_context(payload, config, models)
             telemetry = RelayTelemetry(
                 agent_name=common_utils.agent_name(payload),

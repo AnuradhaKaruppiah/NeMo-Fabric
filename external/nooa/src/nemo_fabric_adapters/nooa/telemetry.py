@@ -166,10 +166,12 @@ class RelayTelemetry:
         agent_name: str,
         base_dir: Path,
         config: AgentConfig,
+        scope_name: str = "nooa-interactive-agent-request",
     ) -> None:
         self._agent_name = agent_name
         self._base_dir = base_dir
         self._config = config
+        self._scope_name = scope_name
         self._quarantine: str | None = None
         self._quarantine_cause: str | None = None
 
@@ -257,7 +259,7 @@ class RelayTelemetry:
                     }
                     try:
                         with scope.scope(
-                            "nooa-interactive-agent-request",
+                            self._scope_name,
                             ScopeType.Agent,
                             metadata=metadata,
                         ):
