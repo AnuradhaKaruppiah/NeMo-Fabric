@@ -164,6 +164,11 @@ def test_descriptor_and_registered_target_declare_the_shared_boundary():
             ROOT / "external" / "nooa" / "targets" / "coding-agent.fabric-target.json"
         ).read_text(encoding="utf-8")
     )
+    arc_target = json.loads(
+        (
+            ROOT / "external" / "nooa" / "targets" / "arc-solver.fabric-target.json"
+        ).read_text(encoding="utf-8")
+    )
 
     assert descriptor["adapter_id"] == "nvidia.fabric.nooa"
     assert descriptor["adapter_kind"] == "python"
@@ -193,6 +198,55 @@ def test_descriptor_and_registered_target_declare_the_shared_boundary():
         "ref": "nemo_fabric_adapters.nooa.targets.coding_agent:create_agent",
     }
     assert coding_target["spec"]["settings_schema"]["additionalProperties"] is False
+    assert arc_target["adapter_id"] == descriptor["adapter_id"]
+    assert arc_target["spec"]["entrypoint"] == {
+        "kind": "interactive_agent_factory",
+        "ref": "nemo_fabric_adapters.nooa.targets.arc_solver:create_agent",
+    }
+    assert arc_target["spec"]["settings_schema"]["additionalProperties"] is False
+
+
+def test_registered_arc_target_projects_closed_settings(tmp_path: Path):
+    config = FabricConfig(
+        metadata=MetadataConfig(name="nooa-arc-test"),
+        discovery=DiscoveryConfig(local_paths=[ROOT / "external" / "nooa"]),
+        workflow=WorkflowConfig(
+            target_id="nvidia.nooa.arc-solver",
+            settings={
+                "alias": "game-opaque",
+                "visual": "off",
+                "max_actions_per_turn": 3,
+            },
+        ),
+    )
+
+    plan = Fabric().plan(config, base_dir=tmp_path)
+
+    assert plan.to_mapping()["agent_config"]["workflow"] == {
+        "entrypoint": {
+            "kind": "interactive_agent_factory",
+            "ref": "nemo_fabric_adapters.nooa.targets.arc_solver:create_agent",
+        },
+        "settings": {
+            "alias": "game-opaque",
+            "visual": "off",
+            "max_actions_per_turn": 3,
+        },
+    }
+
+
+def test_registered_arc_target_rejects_consumer_run_directory(tmp_path: Path):
+    config = FabricConfig(
+        metadata=MetadataConfig(name="nooa-arc-test"),
+        discovery=DiscoveryConfig(local_paths=[ROOT / "external" / "nooa"]),
+        workflow=WorkflowConfig(
+            target_id="nvidia.nooa.arc-solver",
+            settings={"run_dir": "/tmp/unmanaged"},
+        ),
+    )
+
+    with pytest.raises(FabricConfigError, match="workflow.settings"):
+        Fabric().plan(config, base_dir=tmp_path)
 
 
 def test_registered_target_projects_the_factory_and_settings(tmp_path: Path):
@@ -431,6 +485,68 @@ async def test_custom_target_cleanup_takes_precedence(
     agent.close.assert_not_awaited()
 
 
+async def test_target_continuation_predicate_reuses_generic_queue_dispatch(
+    tmp_path: Path,
+    install_target,
+):
+    agent, channels, handlers = _agent_double(
+        channel_names=("user_messages", "game_states")
+    )
+    current_state: dict[str, Any] | None = None
+    notifications: list[dict[str, list[Any]]] = []
+
+    async def handle(notification: dict[str, list[Any]]):
+        nonlocal current_state
+        notifications.append(notification)
+        if len(notifications) == 1:
+            current_state = {"state": "NOT_FINISHED", "turn": 0}
+            channels["game_states"].put("state-0")
+            return SimpleNamespace(kind="WAIT", explanation="waiting for state")
+        if len(notifications) == 2:
+            handlers[-1](SimpleNamespace(content="submitted UP"))
+            channels["game_states"].put("state-1")
+            return SimpleNamespace(kind="DONE", explanation="turn complete")
+        current_state = {"state": "WIN", "turn": 1}
+        handlers[-1](SimpleNamespace(content="game solved"))
+        return SimpleNamespace(kind="DONE", explanation="game solved")
+
+    def continue_after(_agent: Any, reason: str, _explanation: str) -> bool:
+        return (
+            reason == "DONE"
+            and current_state is not None
+            and (current_state["state"] != "WIN")
+        )
+
+    agent.handle.side_effect = handle
+    install_target(
+        MagicMock(
+            return_value=adapter.InteractiveAgentTarget(
+                agent=agent,
+                continue_after=continue_after,
+            )
+        )
+    )
+    runtime = adapter.NooaRuntime()
+
+    await runtime.start(_start_payload(tmp_path))
+    try:
+        result = await runtime.invoke(*_invocation("solve the game"))
+    finally:
+        await runtime.stop()
+
+    assert notifications == [
+        {"user_messages": ["solve the game"]},
+        {"game_states": ["state-0"]},
+        {"game_states": ["state-1"]},
+    ]
+    assert result.output["messages"] == [
+        {"content": "submitted UP"},
+        {"content": "game solved"},
+    ]
+    assert result.output["response"] == "game solved"
+    assert result.output["reason"] == "DONE"
+
+
 async def test_partial_start_failure_closes_the_factory_result(
     tmp_path: Path,
     install_target,
@@ -630,5 +746,120 @@ async def test_coding_agent_target_runs_with_normalized_model_and_skills(
     agent.skills.activate.assert_called_once_with(["cmd.code-review"])
     assert result.status is AgentRunStatus.SUCCEEDED
     assert result.output["response"] == "No correctness issues found."
+    agent.close.assert_awaited_once_with()
+    mock_llm.aclose.assert_awaited_once_with()
+
+
+async def test_arc_solver_target_runs_custom_queue_to_harness_completion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    agent, channels, handlers = _agent_double(
+        channel_names=("user_messages", "game_states")
+    )
+    current_state: dict[str, Any] | None = None
+
+    def latest_state() -> dict[str, Any] | None:
+        return current_state
+
+    agent.latest_state.side_effect = latest_state
+
+    async def handle(notification: dict[str, list[Any]]):
+        nonlocal current_state
+        if "user_messages" in notification:
+            current_state = {"state": "NOT_FINISHED", "turn": 0}
+            channels["game_states"].put("initial-state")
+            return SimpleNamespace(kind="WAIT", explanation="waiting for the harness")
+        if notification == {"game_states": ["initial-state"]}:
+            handlers[-1](SimpleNamespace(content="submitted action UP"))
+            channels["game_states"].put("winning-state")
+            return SimpleNamespace(kind="DONE", explanation="agent turn ended")
+        current_state = {"state": "WIN", "turn": 1}
+        handlers[-1](SimpleNamespace(content="solved the game"))
+        return SimpleNamespace(kind="DONE", explanation="game solved")
+
+    agent.handle.side_effect = handle
+    mock_solver = MagicMock(name="MdArcSolverAgent", return_value=agent)
+    mock_context = MagicMock(name="Context", side_effect=lambda value, **_kwargs: value)
+    mock_llm = MagicMock(name="llm")
+    mock_llm.aclose = AsyncMock()
+    mock_get_llm_client = MagicMock(name="get_llm_client", return_value=mock_llm)
+
+    modules: dict[str, types.ModuleType] = {}
+    for name in (
+        "solver_agent",
+        "nooa",
+        "nooa.unifiedllm",
+    ):
+        module = types.ModuleType(name)
+        if name == "nooa":
+            module.__path__ = []  # type: ignore[attr-defined]
+        modules[name] = module
+        monkeypatch.setitem(sys.modules, name, module)
+    modules["solver_agent"].MdArcSolverAgent = mock_solver
+    modules["nooa"].Context = mock_context
+    modules["nooa.unifiedllm"].get_llm_client = mock_get_llm_client
+
+    skill_path = tmp_path / "skills" / "grid-game-solver"
+    skill_path.mkdir(parents=True)
+    skill_file = skill_path / "SKILL.md"
+    skill_file.write_text("---\nname: grid-game-solver\n---\n", encoding="utf-8")
+    monkeypatch.setenv("NVIDIA_API_KEY", "test-key")
+    config = AgentConfig.from_mapping(
+        {
+            "models": {
+                "default": {
+                    "provider": "nvidia",
+                    "model": "nvidia/test-model",
+                }
+            },
+            "instructions": {
+                "system": {"content": "Solve only the anonymous game."},
+            },
+            "skills": {"paths": [str(skill_path)]},
+            "workflow": {
+                "entrypoint": {
+                    "kind": "interactive_agent_factory",
+                    "ref": "nemo_fabric_adapters.nooa.targets.arc_solver:create_agent",
+                },
+                "settings": {
+                    "alias": "game-opaque",
+                    "reflect_every": 4,
+                    "visual": "off",
+                    "png_scale": 6,
+                    "max_actions_per_turn": 3,
+                },
+            },
+        }
+    )
+    payload = _start_payload(tmp_path)
+    payload["config"] = config
+    runtime = adapter.NooaRuntime()
+
+    await runtime.start(payload)
+    try:
+        result = await runtime.invoke(*_invocation("start solving"))
+    finally:
+        await runtime.stop()
+
+    mock_solver.assert_called_once_with(
+        llm=mock_llm,
+        run_dir=tmp_path / "artifacts" / "nooa-arc",
+        game_id="game-opaque",
+        alias="game-opaque",
+        reflect_every=4,
+        visual="off",
+        png_scale=6,
+        max_actions_per_turn=3,
+        skill_path=skill_file,
+    )
+    mock_context.assert_called_once_with("Solve only the anonymous game.", prefix=True)
+    assert result.status is AgentRunStatus.SUCCEEDED
+    assert result.output["messages"] == [
+        {"content": "submitted action UP"},
+        {"content": "solved the game"},
+    ]
+    assert result.output["response"] == "solved the game"
+    assert agent.handle.await_count == 3
     agent.close.assert_awaited_once_with()
     mock_llm.aclose.assert_awaited_once_with()

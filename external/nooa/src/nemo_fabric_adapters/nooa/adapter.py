@@ -54,10 +54,11 @@ class InteractiveAgentBuildContext:
 
 @dataclass(slots=True)
 class InteractiveAgentTarget:
-    """An interactive agent with an optional target-owned cleanup callback."""
+    """An interactive agent with optional target-owned lifecycle policy."""
 
     agent: Any
     close: Callable[[], Awaitable[None] | None] | None = None
+    continue_after: Callable[[Any, str, str], Awaitable[bool] | bool] | None = None
 
 
 class _InvalidRespondResult(Exception):
@@ -303,6 +304,20 @@ def _validate_agent(agent: Any) -> None:
         )
 
 
+def _validate_target(target: InteractiveAgentTarget) -> None:
+    _validate_agent(target.agent)
+    if target.close is not None and not callable(target.close):
+        raise _config_error(
+            "nooa_invalid_interactive_agent",
+            "The registered target cleanup callback is not callable",
+        )
+    if target.continue_after is not None and not callable(target.continue_after):
+        raise _config_error(
+            "nooa_invalid_interactive_agent",
+            "The registered target continuation predicate is not callable",
+        )
+
+
 async def _close_target(target: InteractiveAgentTarget) -> None:
     if target.close is not None:
         await _await_if_needed(target.close())
@@ -355,9 +370,10 @@ def _reason(result: Any) -> tuple[str, str]:
     return value, explanation
 
 
-async def dispatch(agent: Any, text: str) -> tuple[str, str]:
+async def dispatch(target: InteractiveAgentTarget, text: str) -> tuple[str, str]:
     """Submit one user message and run the standard InteractiveAgent wake loop."""
 
+    agent = target.agent
     queue_manager = agent.queue_manager
     queue_manager.get_channel("user_messages").put(text)
     while True:
@@ -372,7 +388,14 @@ async def dispatch(agent: Any, text: str) -> tuple[str, str]:
 
         result = await agent.handle(notification)
         reason, explanation = _reason(result)
-        if reason != "WAIT":
+        continue_after = False
+        if reason != "WAIT" and target.continue_after is not None:
+            continue_after = bool(
+                await _await_if_needed(
+                    target.continue_after(agent, reason, explanation)
+                )
+            )
+        if reason != "WAIT" and not continue_after:
             return reason, explanation
 
 
@@ -434,7 +457,7 @@ class NooaRuntime:
             models = await _build_models(config)
             context = _build_context(payload, config, models)
             target = _unwrap_target(await _await_if_needed(factory(context)))
-            _validate_agent(target.agent)
+            _validate_target(target)
         except asyncio.CancelledError:
             await _close_resources(target, models)
             raise
@@ -496,7 +519,7 @@ class NooaRuntime:
         unsubscribe: Callable[[], None] | None = None
         try:
             unsubscribe = agent.event_manager.on("AgentMessage", capture_message)
-            reason, explanation = await dispatch(agent, request.input)
+            reason, explanation = await dispatch(self._target, request.input)
         except asyncio.CancelledError:
             raise
         except _InvalidRespondResult:

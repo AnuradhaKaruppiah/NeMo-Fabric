@@ -61,7 +61,9 @@ A separately installed target publishes a `*.fabric-target.json` record:
 
 The reference uses `package.module:factory` syntax. The factory receives one
 `InteractiveAgentBuildContext` and may return an `InteractiveAgent` directly or
-an `InteractiveAgentTarget` with explicit cleanup:
+an `InteractiveAgentTarget` with explicit cleanup. A target whose external
+environment, rather than one agent turn, defines completion may also provide a
+`continue_after(agent, reason, explanation)` predicate:
 
 ```python
 from nemo_fabric_adapters.nooa import InteractiveAgentBuildContext
@@ -77,6 +79,11 @@ async def create_agent(
     )
     return InteractiveAgentTarget(agent=agent, close=agent.close)
 ```
+
+The predicate only decides whether another queue wake-up is required after a
+non-`WAIT` result. Queue dispatch, terminal-result validation, message capture,
+and Fabric result normalization remain shared adapter behavior. Most targets
+should return the bare agent and use the default prompt-turn policy.
 
 The factory owns target-specific construction, including model creation and
 validation of dependencies that cannot be checked during Fabric planning. The
@@ -110,6 +117,43 @@ The maintained code-review example exposes this target as `--variant nooa`.
 See [the example README](../../examples/code_review_agent/README.md) for its
 source bootstrap and live command.
 
+## ARC Solver Target
+
+`targets/arc-solver.fabric-target.json` registers
+`nvidia.nooa.arc-solver`. The factory constructs the concrete markdown-backed
+`MdArcSolverAgent`, which derives from `ArcSolverBase`, directly from the OO
+Agents ARC example. It deliberately does not add the memory-backed variant
+until memory-store ownership and cleanup have a stable host contract.
+
+The target derives its run directory as `<artifact-root>/nooa-arc` (or
+`<workspace>/nooa-arc` when no artifact root is supplied). Consumers cannot
+inject a run directory. An external ARC harness must use that same directory
+for its `states.jsonl` and `actions.jsonl` IPC. The `alias` setting must be an
+opaque per-run handle rather than the real game ID; the factory passes it as
+both `game_id` and `alias` to preserve the ARC launcher's identity-redaction
+boundary. The closed target settings are `alias`, `reflect_every`, `visual`,
+`png_scale`, and `max_actions_per_turn`. At most one configured skill directory
+is accepted, and it must contain `SKILL.md`.
+
+The ARC headless launcher treats an agent `DONE` as an end-of-turn signal while
+the harness decides when the game session is finished. The target therefore
+continues after `DONE` until its latest state is `WIN` or `GAME_OVER`, or the
+harness publishes a `harness stopped:` note. This is target-supplied completion
+policy over the shared queue dispatcher; the adapter contains no ARC class or
+channel-name branch.
+
+For source incubation, expose both repositories before starting Fabric:
+
+```bash
+export PYTHONPATH="$PWD/external/nooa/src:$PWD/../labs-OO-Agents/examples/arc_agi_3${PYTHONPATH:+:$PYTHONPATH}"
+```
+
+The deterministic Fabric test uses a finite fake harness with the same
+`user_messages` / `game_states` / `WAIT` / action / terminal sequence. A manual
+full-game smoke uses the OO Agents ARC harness against the derived run
+directory and requires its `arc` optional dependencies and external game
+service configuration.
+
 The initial contract tests use Fabric commit `758b6066504a724a6fc1941b8415b76ed31f0ab5`
 and OO Agents commit `97f52dec84ed88ca3b202f91bee0bc0074626246` on
 Python 3.13. OO Agents currently declares Python `>=3.12,<3.14`; broader version
@@ -121,5 +165,5 @@ of its Fabric environment. Consumers must select an environment provider with
 the required operating-system isolation and must not treat the in-process
 adapter boundary as a security boundary.
 
-The next integration milestones are a concrete ArcSolverBase target and Relay
-telemetry verification with correlated ATOF records.
+The next integration milestone is Relay telemetry verification with correlated
+ATOF records for both target families.
