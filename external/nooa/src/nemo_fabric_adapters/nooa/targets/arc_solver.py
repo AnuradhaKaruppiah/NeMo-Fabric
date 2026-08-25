@@ -72,7 +72,7 @@ def create_agent(context: InteractiveAgentBuildContext) -> InteractiveAgentTarge
         ) from error
 
     settings = context.settings
-    alias = str(settings.get("alias", "the game"))
+    alias = "the game"
     agent = solver_class(
         llm=_selected_model(context.models),
         run_dir=_run_dir(context),

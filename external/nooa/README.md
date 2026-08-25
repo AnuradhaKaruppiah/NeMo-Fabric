@@ -160,12 +160,13 @@ until memory-store ownership and cleanup have a stable host contract.
 The target derives its run directory as `<artifact-root>/nooa-arc` (or
 `<workspace>/nooa-arc` when no artifact root is supplied). Consumers cannot
 inject a run directory. An external ARC harness must use that same directory
-for its `states.jsonl` and `actions.jsonl` IPC. The `alias` setting must be an
-opaque per-run handle rather than the real game ID; the factory passes it as
-both `game_id` and `alias` to preserve the ARC launcher's identity-redaction
-boundary. The closed target settings are `alias`, `reflect_every`, `visual`,
-`png_scale`, and `max_actions_per_turn`. At most one configured skill directory
-is accepted, and it must contain `SKILL.md`.
+for its `states.jsonl` and `actions.jsonl` IPC. The factory fixes the
+agent-visible identity to the neutral `the game` value and passes it as both
+`game_id` and `alias`; consumers cannot accidentally configure a real game ID
+and defeat the ARC launcher's identity-redaction boundary. The closed target
+settings are `reflect_every`, `visual`, `png_scale`, and
+`max_actions_per_turn`. At most one configured skill directory is accepted,
+and it must contain `SKILL.md`.
 
 The ARC headless launcher treats an agent `DONE` as an end-of-turn signal while
 the harness decides when the game session is finished. The target therefore
@@ -199,3 +200,5 @@ adapter boundary as a security boundary.
 
 The remaining work before upstream handoff is packaging and compatibility
 documentation, including the OO Agents Relay-extra metadata update.
+See [the upstream handoff](./UPSTREAM.md) for the compatibility record, review
+findings, migration checklist, and deliberately deferred work.

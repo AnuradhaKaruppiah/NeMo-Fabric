@@ -249,7 +249,6 @@ def test_registered_arc_target_projects_closed_settings(tmp_path: Path):
         workflow=WorkflowConfig(
             target_id="nvidia.nooa.arc-solver",
             settings={
-                "alias": "game-opaque",
                 "visual": "off",
                 "max_actions_per_turn": 3,
             },
@@ -264,20 +263,29 @@ def test_registered_arc_target_projects_closed_settings(tmp_path: Path):
             "ref": "nemo_fabric_adapters.nooa.targets.arc_solver:create_agent",
         },
         "settings": {
-            "alias": "game-opaque",
             "visual": "off",
             "max_actions_per_turn": 3,
         },
     }
 
 
-def test_registered_arc_target_rejects_consumer_run_directory(tmp_path: Path):
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"run_dir": "/tmp/unmanaged"},
+        {"alias": "real-game-id"},
+    ],
+)
+def test_registered_arc_target_rejects_consumer_identity_and_paths(
+    tmp_path: Path,
+    settings: dict[str, Any],
+):
     config = FabricConfig(
         metadata=MetadataConfig(name="nooa-arc-test"),
         discovery=DiscoveryConfig(local_paths=[ROOT / "external" / "nooa"]),
         workflow=WorkflowConfig(
             target_id="nvidia.nooa.arc-solver",
-            settings={"run_dir": "/tmp/unmanaged"},
+            settings=settings,
         ),
     )
 
@@ -957,7 +965,6 @@ async def test_arc_solver_target_runs_custom_queue_to_harness_completion(
                     "ref": "nemo_fabric_adapters.nooa.targets.arc_solver:create_agent",
                 },
                 "settings": {
-                    "alias": "game-opaque",
                     "reflect_every": 4,
                     "visual": "off",
                     "png_scale": 6,
@@ -979,8 +986,8 @@ async def test_arc_solver_target_runs_custom_queue_to_harness_completion(
     mock_solver.assert_called_once_with(
         llm=mock_llm,
         run_dir=tmp_path / "artifacts" / "nooa-arc",
-        game_id="game-opaque",
-        alias="game-opaque",
+        game_id="the game",
+        alias="the game",
         reflect_every=4,
         visual="off",
         png_scale=6,

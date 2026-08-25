@@ -12,7 +12,6 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "alias": {"type": "string", "minLength": 1},
         "reflect_every": {"type": "integer", "minimum": 1},
         "visual": {"type": "string", "enum": ["off", "only", "additive"]},
         "png_scale": {"type": "integer", "minimum": 1},
