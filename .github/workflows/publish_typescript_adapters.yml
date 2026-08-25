@@ -117,7 +117,7 @@ jobs:
       - name: Test adapter packages
         run: just test-typescript-adapters
 
-      - name: Publish adapter package
+      - name: Preflight and publish adapter package
         env:
           NPM_CONFIG_REGISTRY: https://registry.npmjs.org
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
