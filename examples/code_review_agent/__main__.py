@@ -36,6 +36,11 @@ async def main() -> None:
     parser.add_argument("--variant", choices=CONFIG_BUILDERS, default="hermes")
     parser.add_argument("--relay", action="store_true")
     parser.add_argument(
+        "--stream",
+        action="store_true",
+        help="Stream Relay ATOF records and then print the separate terminal result.",
+    )
+    parser.add_argument(
         "--plan",
         action="store_true",
         help="Print the resolved run plan without starting a runtime.",
@@ -47,24 +52,45 @@ async def main() -> None:
     )
     parser.add_argument("--input", default="Review the workspace changes.")
     args = parser.parse_args()
+    if args.stream and not args.relay:
+        parser.error("--stream requires --relay")
+    if args.stream and args.plan:
+        parser.error("--stream cannot be combined with --plan")
 
     config = CONFIG_BUILDERS[args.variant]()
     if args.relay:
         config = with_relay(config)
 
     fabric = Fabric()
+    result = None
     if args.plan:
         output = fabric.plan(config, base_dir=BASE_DIR)
+    elif args.stream:
+        async with await fabric.start_runtime(
+            config,
+            base_dir=BASE_DIR,
+            streaming=True,
+        ) as runtime:
+            stream = runtime.invoke_stream(input=args.input)
+            records = [record async for record in stream]
+            result = await stream.result()
+        output = {
+            "atof_records": records,
+            "result": result.to_mapping(),
+        }
     else:
-        output = await fabric.run(config, base_dir=BASE_DIR, input=args.input)
-    print(json.dumps(output.to_mapping(), indent=2))
+        result = await fabric.run(config, base_dir=BASE_DIR, input=args.input)
+        output = result
+    mapped_output = output.to_mapping() if hasattr(output, "to_mapping") else output
+    print(json.dumps(mapped_output, indent=2))
 
     if args.show_output and not args.plan:
-        response = getattr(output.output, "response", None)
+        assert result is not None
+        response = getattr(result.output, "response", None)
         if response is not None:
             print(f"\n{response}")
-        elif output.error is not None:
-            print(f"\n{output.error.message}")
+        elif result.error is not None:
+            print(f"\n{result.error.message}")
         else:
             print("\n(run succeeded but output has no 'response' field)")
 

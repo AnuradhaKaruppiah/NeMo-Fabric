@@ -35,6 +35,38 @@ This first slice does not claim native OpenAI streaming. Relay-backed ATOF
 streaming uses the ordinary `invoke` operation and does not require the adapter
 descriptor's `capabilities.streaming` flag.
 
+## Relay Telemetry and ATOF Streaming
+
+The adapter declares Relay outputs for ATIF, OpenTelemetry, and OpenInference
+and requires `nemo-relay>=0.7.2,<0.8` whenever Relay is enabled. Fabric's
+invocation environment supplies the generated `FABRIC_RELAY_CONFIG_PATH`; the
+adapter verifies that it matches `RuntimeContext.telemetry.config_path`, rejects
+ambient user/project plugin configuration, and activates only the generated
+plugin document.
+
+Each Relay invocation installs OO Agents' public `install_nemo_relay()`
+middleware, opens one Agent scope carrying the Fabric request, invocation, and
+runtime IDs, runs the ordinary dispatcher exactly once, then uninstalls the
+middleware and finalizes current-turn artifacts. The middleware records nested
+agent-method, LLM, and `execute_python` scopes. A telemetry setup failure before
+dispatch returns a safe failed result without executing the target. A teardown,
+flush, or artifact failure after dispatch preserves the functional result and
+marks telemetry degraded. A leaked scope quarantines telemetry on later turns
+instead of nesting them below stale state.
+
+`Runtime.invoke_stream()` is provided by Fabric. With Relay enabled and the
+runtime started using `streaming=True`, it consumes matching raw ATOF records
+while this adapter performs its single ordinary `invoke`; `stream.result()` is
+the independent terminal result. The adapter does not implement
+`invoke_openai_stream()` and keeps native streaming capability disabled.
+
+OO Agents currently pins its optional Relay extra to `<0.7`. During source
+incubation, install OO Agents core/CLI without that extra and install Fabric's
+Relay 0.7.x dependency. The middleware implementation was exercised against
+0.7.2; upstreaming still requires changing the OO Agents optional dependency
+bound and updating its sanitizer callbacks and async subscriber-flush tests for
+the 0.7 API.
+
 ## Register a Target
 
 A separately installed target publishes a `*.fabric-target.json` record:
@@ -165,5 +197,5 @@ of its Fabric environment. Consumers must select an environment provider with
 the required operating-system isolation and must not treat the in-process
 adapter boundary as a security boundary.
 
-The next integration milestone is Relay telemetry verification with correlated
-ATOF records for both target families.
+The remaining work before upstream handoff is packaging and compatibility
+documentation, including the OO Agents Relay-extra metadata update.

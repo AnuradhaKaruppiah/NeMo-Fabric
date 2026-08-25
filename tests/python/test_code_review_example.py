@@ -204,7 +204,7 @@ def test_example_entrypoint_plans_without_starting_a_runtime():
             relay_enabled,
         )
         for variant, adapter_id in variants
-        for relay_enabled in ((False,) if variant == "nooa" else (False, True))
+        for relay_enabled in (False, True)
     )
 
     for options, adapter_id, relay_enabled in cases:
@@ -258,3 +258,78 @@ async def test_example_entrypoint_shows_response_after_normalized_output(
     assert json.loads("\n".join(lines[:-1])) == {
         "output": {"response": "visible response"}
     }
+
+
+async def test_example_entrypoint_streams_relay_records_and_terminal_result(
+    monkeypatch,
+    capsys,
+):
+    result = MagicMock()
+    result.output = RunOutput.from_mapping({"response": "streamed response"})
+    result.error = None
+    result.to_mapping.return_value = {
+        "status": "succeeded",
+        "output": result.output.to_mapping(),
+    }
+
+    class FakeStream:
+        def __init__(self):
+            self._records = iter(
+                [
+                    {"type": "scope_start", "request_id": "request-1"},
+                    {"type": "scope_end", "request_id": "request-1"},
+                ]
+            )
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._records)
+            except StopIteration as error:
+                raise StopAsyncIteration from error
+
+        async def result(self):
+            return result
+
+    runtime = MagicMock()
+    runtime.invoke_stream.return_value = FakeStream()
+
+    class RuntimeContext:
+        async def __aenter__(self):
+            return runtime
+
+        async def __aexit__(self, *_args):
+            return None
+
+    mock_fabric = MagicMock()
+    mock_fabric.start_runtime = AsyncMock(return_value=RuntimeContext())
+    monkeypatch.setattr(main_module, "Fabric", lambda: mock_fabric)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "code_review_agent",
+            "--variant",
+            "nooa",
+            "--relay",
+            "--stream",
+            "--show-output",
+            "--input",
+            "review this",
+        ],
+    )
+
+    await main_module.main()
+
+    captured = capsys.readouterr()
+    lines = captured.out.splitlines()
+    assert captured.err == ""
+    assert lines[-1] == "streamed response"
+    payload = json.loads("\n".join(lines[:-1]))
+    assert len(payload["atof_records"]) == 2
+    assert payload["result"]["status"] == "succeeded"
+    mock_fabric.start_runtime.assert_awaited_once()
+    assert mock_fabric.start_runtime.call_args.kwargs["streaming"] is True
+    runtime.invoke_stream.assert_called_once_with(input="review this")

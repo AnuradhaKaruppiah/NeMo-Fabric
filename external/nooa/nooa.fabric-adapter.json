@@ -45,6 +45,13 @@
       "skills"
     ]
   },
+  "telemetry": {
+    "providers": {
+      "relay": {
+        "outputs": ["atif", "otel", "openinference"]
+      }
+    }
+  },
   "capabilities": {
     "cancellation": false,
     "service": false,

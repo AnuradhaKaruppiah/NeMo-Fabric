@@ -27,6 +27,8 @@ from nemo_fabric_adapter_contract.models import AgentRunStatus
 from nemo_fabric_adapter_contract.models import RuntimeContext
 from nemo_fabric_adapters.common import lifecycle
 import nemo_fabric_adapters.common.utils as common_utils
+from nemo_fabric_adapters.nooa.telemetry import RelayReport
+from nemo_fabric_adapters.nooa.telemetry import RelayTelemetry
 
 ADAPTER = "python"
 HARNESS = "nooa"
@@ -434,6 +436,29 @@ def _success_output(
     )
 
 
+def _with_telemetry(
+    result: AgentRunResult,
+    report: RelayReport | None,
+) -> AgentRunResult:
+    if report is None:
+        return result
+    output = dict(result.output)
+    telemetry: dict[str, Any] = {
+        "enabled": report.enabled,
+        "provider": "relay",
+        "emitter": "nooa.nemo_relay_middleware",
+    }
+    if report.error is not None:
+        telemetry["degraded"] = True
+        telemetry["error"] = report.error
+    if report.quarantine_cause is not None:
+        telemetry["quarantine_cause"] = report.quarantine_cause
+    output["telemetry"] = telemetry
+    output["relay_artifacts"] = list(report.artifacts)
+    result.output = output
+    return result
+
+
 class NooaRuntime:
     """One registered OO Agents target owned by one Fabric runtime."""
 
@@ -441,6 +466,7 @@ class NooaRuntime:
         self._runtime_id: str | None = None
         self._target: InteractiveAgentTarget | None = None
         self._models: dict[str, Any] = {}
+        self._telemetry: RelayTelemetry | None = None
 
     async def start(self, payload: dict[str, Any]) -> None:
         if self._target is not None:
@@ -453,13 +479,21 @@ class NooaRuntime:
         factory = _load_factory(_factory_ref(config))
         models: dict[str, Any] = {}
         target: InteractiveAgentTarget | None = None
+        telemetry: RelayTelemetry | None = None
         try:
             models = await _build_models(config)
             context = _build_context(payload, config, models)
+            telemetry = RelayTelemetry(
+                agent_name=common_utils.agent_name(payload),
+                base_dir=context.base_dir,
+                config=config,
+            )
             target = _unwrap_target(await _await_if_needed(factory(context)))
             _validate_target(target)
         except asyncio.CancelledError:
             await _close_resources(target, models)
+            if telemetry is not None:
+                await telemetry.close()
             raise
         except lifecycle.LifecycleError:
             try:
@@ -469,6 +503,8 @@ class NooaRuntime:
                     "OO Agents cleanup failed after start error (error_type=%s)",
                     type(error).__name__,
                 )
+            if telemetry is not None:
+                await telemetry.close()
             raise
         except Exception as error:
             try:
@@ -478,6 +514,8 @@ class NooaRuntime:
                     "OO Agents cleanup failed after start error (error_type=%s)",
                     type(cleanup_error).__name__,
                 )
+            if telemetry is not None:
+                await telemetry.close()
             raise lifecycle.LifecycleError(
                 "nooa_target_start_failed",
                 "The registered OO Agents target failed to start",
@@ -486,6 +524,7 @@ class NooaRuntime:
         self._runtime_id = context.runtime_id
         self._target = target
         self._models = models
+        self._telemetry = telemetry
 
     async def invoke(
         self,
@@ -508,54 +547,82 @@ class NooaRuntime:
                 "OO Agents InteractiveAgent input must be a string",
             )
 
-        messages: list[dict[str, str]] = []
-
-        def capture_message(event: Any) -> None:
-            content = getattr(event, "content", None)
-            if isinstance(content, str):
-                messages.append({"content": content})
-
         agent = self._target.agent
-        unsubscribe: Callable[[], None] | None = None
-        try:
-            unsubscribe = agent.event_manager.on("AgentMessage", capture_message)
-            reason, explanation = await dispatch(self._target, request.input)
-        except asyncio.CancelledError:
-            raise
-        except _InvalidRespondResult:
-            return _failure_output(
-                "nooa_invalid_respond_result",
-                "OO Agents InteractiveAgent returned an invalid RespondResult",
-            )
-        except Exception as error:
-            LOGGER.error(
-                "OO Agents invocation failed (error_type=%s)",
-                type(error).__name__,
-            )
-            return _failure_output(
-                "nooa_target_invoke_failed",
-                "OO Agents target invocation failed; inspect adapter stderr for details",
-            )
-        finally:
-            if unsubscribe is not None:
-                try:
-                    unsubscribe()
-                except Exception as error:
-                    LOGGER.error(
-                        "OO Agents event unsubscribe failed (error_type=%s)",
-                        type(error).__name__,
-                    )
+        telemetry = self._telemetry
+        assert telemetry is not None
 
-        return _success_output(messages, reason, explanation)
+        async def invoke_target() -> AgentRunResult:
+            messages: list[dict[str, str]] = []
+
+            def capture_message(event: Any) -> None:
+                content = getattr(event, "content", None)
+                if isinstance(content, str):
+                    messages.append({"content": content})
+
+            unsubscribe: Callable[[], None] | None = None
+            try:
+                unsubscribe = agent.event_manager.on("AgentMessage", capture_message)
+                reason, explanation = await dispatch(self._target, request.input)
+            except asyncio.CancelledError:
+                raise
+            except _InvalidRespondResult:
+                return _failure_output(
+                    "nooa_invalid_respond_result",
+                    "OO Agents InteractiveAgent returned an invalid RespondResult",
+                )
+            except Exception as error:
+                LOGGER.error(
+                    "OO Agents invocation failed (error_type=%s)",
+                    type(error).__name__,
+                )
+                return _failure_output(
+                    "nooa_target_invoke_failed",
+                    "OO Agents target invocation failed; inspect adapter stderr for details",
+                )
+            finally:
+                if unsubscribe is not None:
+                    try:
+                        unsubscribe()
+                    except Exception as error:
+                        LOGGER.error(
+                            "OO Agents event unsubscribe failed (error_type=%s)",
+                            type(error).__name__,
+                        )
+
+            return _success_output(messages, reason, explanation)
+
+        relay_invocation = await telemetry.invoke(
+            agent=agent,
+            runtime_context=runtime_context,
+            call=invoke_target,
+        )
+        if relay_invocation.result is None:
+            result = _failure_output(
+                "nooa_telemetry_setup_failed",
+                "OO Agents Relay telemetry setup failed before target execution",
+            )
+        else:
+            result = relay_invocation.result
+        return _with_telemetry(result, relay_invocation.report)
 
     async def stop(self) -> None:
         target = self._target
         models = self._models
+        telemetry = self._telemetry
         self._runtime_id = None
         self._target = None
         self._models = {}
-        if target is None and not models:
+        self._telemetry = None
+        if target is None and not models and telemetry is None:
             return
+        telemetry_error: Exception | None = None
+        if telemetry is not None:
+            try:
+                await telemetry.close()
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                telemetry_error = error
         try:
             await _close_resources(target, models)
         except asyncio.CancelledError:
@@ -565,6 +632,11 @@ class NooaRuntime:
                 "nooa_runtime_stop_failed",
                 "OO Agents runtime failed to stop cleanly",
             ) from error
+        if telemetry_error is not None:
+            raise lifecycle.LifecycleError(
+                "nooa_runtime_stop_failed",
+                "OO Agents runtime failed to stop cleanly",
+            ) from telemetry_error
 
 
 if __name__ == "__main__":

@@ -76,7 +76,10 @@ Add `--relay` to any variant to enable the Relay ATOF and ATIF configuration:
 Relay requirements depend on the selected adapter. The Codex and Claude
 adapters require a `nemo-relay` CLI in the `>=0.7.2,<0.8` range. NeMo Fabric's
 `relay` extra does not install the CLI. Hermes Agent and Deep Agents require the
-Relay Python package in their selected adapter environment. Refer to the
+Relay Python package in their selected adapter environment. The OO Agents
+adapter also requires the Relay Python package in the `>=0.7.2,<0.8` range;
+install OO Agents without its currently older `nemo-relay` extra while the
+upstream dependency bound is being updated. Refer to the
 [installation guide](../../docs/getting-started/install.mdx#install-nemo-relay)
 for the current compatibility requirements.
 
@@ -102,6 +105,22 @@ export PYTHONPATH="$PWD/external/nooa/src:$PWD/external/labs-OO-Agents/src:$PWD/
   --variant nooa \
   --input "Review calculator.py"
 ```
+
+Enable Relay telemetry for the same target with `--relay`. Add `--stream` to
+start the runtime with Relay streaming enabled, consume the correlated raw ATOF
+records, and then print the separate normalized terminal result:
+
+```bash
+.venv/bin/python -m examples.code_review_agent \
+  --variant nooa \
+  --relay \
+  --stream \
+  --input "Review calculator.py"
+```
+
+`--stream` is Relay-backed observability streaming, not native OpenAI chat
+chunk streaming. It still executes one ordinary adapter `invoke`; the
+descriptor therefore keeps `capabilities.streaming` set to `false`.
 
 ## Compose configs in Python
 
