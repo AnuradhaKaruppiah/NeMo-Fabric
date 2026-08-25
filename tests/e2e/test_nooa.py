@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Relay-backed subprocess E2E for the source-only OO Agents adapter."""
+"""Relay-backed subprocess E2E for the OO Agents adapter."""
 
 from __future__ import annotations
 

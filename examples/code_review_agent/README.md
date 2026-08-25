@@ -78,8 +78,8 @@ adapters require a `nemo-relay` CLI in the `>=0.7.2,<0.8` range. NeMo Fabric's
 `relay` extra does not install the CLI. Hermes Agent and Deep Agents require the
 Relay Python package in their selected adapter environment. The OO Agents
 adapter also requires the Relay Python package in the `>=0.7.2,<0.8` range;
-install OO Agents without its currently older `nemo-relay` extra while the
-upstream dependency bound is being updated. Refer to the
+install OO Agents core and CLI without their optional Relay extra, then install
+that Relay version directly. Refer to the
 [installation guide](../../docs/getting-started/install.mdx#install-nemo-relay)
 for the current compatibility requirements.
 
