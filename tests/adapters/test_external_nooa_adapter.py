@@ -441,6 +441,29 @@ async def test_wait_resumes_on_a_background_channel(
     assert result.output["reason"] == "DONE"
 
 
+async def test_terminal_explanation_is_response_without_agent_message(
+    tmp_path: Path,
+    install_target,
+):
+    agent, _channels, _handlers = _agent_double()
+    agent.handle.return_value = SimpleNamespace(
+        kind=SimpleNamespace(value="DONE"),
+        explanation="Review complete with no correctness issues.",
+    )
+    install_target(MagicMock(return_value=agent))
+    runtime = adapter.NooaRuntime()
+
+    await runtime.start(_start_payload(tmp_path))
+    try:
+        result = await runtime.invoke(*_invocation())
+    finally:
+        await runtime.stop()
+
+    assert result.status is AgentRunStatus.SUCCEEDED
+    assert result.output["response"] == "Review complete with no correctness issues."
+    assert result.output["messages"] == []
+
+
 @pytest.mark.parametrize("reason", ["NEED_INPUT", "GET_USER_INPUT"])
 async def test_human_input_reasons_complete_without_marking_work_done(
     tmp_path: Path,

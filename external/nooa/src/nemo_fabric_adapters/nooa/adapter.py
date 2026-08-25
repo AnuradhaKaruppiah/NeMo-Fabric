@@ -421,13 +421,14 @@ def _success_output(
     reason: str,
     explanation: str,
 ) -> AgentRunResult:
+    response = messages[-1]["content"] if messages else explanation
     return AgentRunResult(
         status=AgentRunStatus.SUCCEEDED,
         output={
             "harness": HARNESS,
             "adapter": ADAPTER,
             "mode": MODE,
-            "response": messages[-1]["content"] if messages else None,
+            "response": response,
             "messages": messages,
             "reason": reason,
             "explanation": explanation,
