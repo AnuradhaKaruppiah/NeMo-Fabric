@@ -8,8 +8,12 @@ SPDX-License-Identifier: Apache-2.0
 This walkthrough evaluates OO Agents `BenchAgent` through NVIDIA NeMo Fabric's
 complete Harbor path:
 
-```text
-Harbor task -> FabricAgent -> Fabric runner -> BenchAgent adapter -> BenchAgent
+```mermaid
+flowchart LR
+    HarborTask["Harbor task"] --> FabricAgent
+    FabricAgent --> FabricRunner["Fabric runner"]
+    FabricRunner --> BenchAgentAdapter["BenchAgent adapter"]
+    BenchAgentAdapter --> BenchAgent
 ```
 
 Harbor owns the task container, verification, reward, retries, and job layout.
