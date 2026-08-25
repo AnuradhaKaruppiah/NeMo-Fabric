@@ -3,13 +3,13 @@ SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Pi SDK Adapter
+# NVIDIA NeMo Fabric Pi Adapter
 
-This package provides a Pi SDK harness adapter for NVIDIA NeMo Fabric. It
-embeds the Pi SDK in the adapter's Node process and maps one NeMo Fabric runtime
-to one in-memory Pi session.
+This package provides a Pi harness adapter for NVIDIA NeMo Fabric. It embeds the
+Pi SDK in the Node process of the adapter and maps one NeMo Fabric runtime to one
+in-memory Pi session.
 
-The current adapter supports:
+The adapter supports:
 
 - One explicit Pi-known model selected from the `default` role or the sole
   configured role
@@ -130,7 +130,7 @@ live NVIDIA-backed run command. Relay and MCP are not currently supported.
 ## Dependency Rationale
 
 `@earendil-works/pi-coding-agent` provides the native Pi session, resources,
-skills, extensions, and tools. Using its SDK keeps these integration points in
+skills, extensions, and tools. Using the SDK keeps these integration points in
 process; maintaining a second JSON-RPC translation was rejected for the bundled
 adapter. `@earendil-works/pi-ai` supplies Pi's model catalog and credential
 store, which the coding-agent SDK expects. Both packages are optional peer
