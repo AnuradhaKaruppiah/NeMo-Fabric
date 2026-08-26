@@ -8,6 +8,8 @@ on:
     tags:
       - 'npm/nemo-fabric-adapters-common/v*'
       - 'npm/nemo-fabric-adapters-pi/v*'
+      - '!npm/nemo-fabric-adapters-common/v*-alpha*'
+      - '!npm/nemo-fabric-adapters-pi/v*-alpha*'
 
 concurrency:
   group: publish-typescript-adapter-${{ github.ref }}
@@ -30,6 +32,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Verify release tag
@@ -100,12 +103,23 @@ jobs:
             exit 1
           fi
           case "$version" in
-            *-alpha*) dist_tag="alpha" ;;
             *-beta*|*-rc*) dist_tag="next" ;;
             *-*) echo "Unsupported npm prerelease: $version" >&2; exit 1 ;;
             *) dist_tag="latest" ;;
           esac
-          python3 scripts/ci/set_typescript_adapter_version.py "$package_name" "$version"
+
+          canonical_tag="v${version}"
+          if ! canonical_commit="$(git rev-parse --verify "refs/tags/${canonical_tag}^{commit}")"; then
+            echo "Canonical Fabric tag ${canonical_tag} does not exist" >&2
+            exit 1
+          fi
+          head_commit="$(git rev-parse HEAD)"
+          if [[ "$canonical_commit" != "$head_commit" ]]; then
+            echo "Adapter tag must point to the same commit as ${canonical_tag}" >&2
+            exit 1
+          fi
+
+          python3 scripts/ci/set_typescript_project_version.py "$version"
           package_directory="adapters/typescript/${package_name##nemo-fabric-adapters-}"
           {
             echo "package_name=$package_name"
@@ -116,6 +130,18 @@ jobs:
 
       - name: Test adapter packages
         run: just test-typescript-adapters
+
+      - name: Verify published dependencies
+        env:
+          NPM_CONFIG_REGISTRY: https://registry.npmjs.org
+          PACKAGE_NAME: ${{ steps.release.outputs.package_name }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          npm view "nemo-fabric-adapter-contract@${RELEASE_VERSION}" version
+          if [[ "$PACKAGE_NAME" == "nemo-fabric-adapters-pi" ]]; then
+            npm view "nemo-fabric-adapters-common@${RELEASE_VERSION}" version
+          fi
 
       - name: Preflight and publish adapter package
         env:

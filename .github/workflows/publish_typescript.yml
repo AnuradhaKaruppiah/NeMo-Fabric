@@ -4,12 +4,6 @@
 name: Publish TypeScript package
 
 on:
-  workflow_call:
-    inputs:
-      ref:
-        description: 'The Git tag ref to publish'
-        required: true
-        type: string
   push:
     tags:
       - 'v*'
@@ -40,12 +34,11 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
-          ref: ${{ inputs.ref || github.ref }}
 
       - name: Verify release tag
         id: source
         env:
-          RELEASE_REF: ${{ inputs.ref || github.ref }}
+          RELEASE_REF: ${{ github.ref }}
         run: |
           set -euo pipefail
 
@@ -110,7 +103,6 @@ jobs:
           fi
 
           case "$version" in
-            *-alpha*) dist_tag="alpha" ;;
             *-beta*|*-rc*) dist_tag="next" ;;
             *-*)
               echo "Unsupported npm prerelease: $version" >&2
