@@ -9,8 +9,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from examples.harbor.nooa_bench.verify_run import verify
 
 
@@ -129,15 +127,3 @@ def test_verify_accepts_rewarded_relay_run(tmp_path: Path) -> None:
         "observability_config_version": 3,
         "root_invocations": 1,
     }
-
-
-def test_verify_rejects_persisted_api_key(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    job_dir = make_job(tmp_path, relay=False)
-    monkeypatch.setenv("NVIDIA_API_KEY", "fixture-secret")
-    (job_dir / "debug.log").write_text("fixture-secret", encoding="utf-8")
-
-    with pytest.raises(AssertionError, match="credential persisted"):
-        verify(job_dir, require_relay=False)

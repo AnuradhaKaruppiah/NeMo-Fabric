@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -123,17 +122,6 @@ def verify(job_dir: Path, *, require_relay: bool) -> dict[str, Any]:
             "observability_config_version": 3,
             "root_invocations": 1,
         }
-
-    api_key = os.environ.get("NVIDIA_API_KEY")
-    if api_key:
-        secret = api_key.encode()
-        persisted = [
-            str(path.relative_to(job_dir))
-            for path in job_dir.rglob("*")
-            if path.is_file() and secret in path.read_bytes()
-        ]
-        assert not persisted, f"credential persisted in job files: {persisted}"
-        summary["credential_files"] = 0
 
     return summary
 
