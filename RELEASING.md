@@ -53,7 +53,7 @@ NeMo Fabric versions are anchored on the workspace SemVer in the repository root
   `0.0.0`.
 - The TypeScript contract, Common adapter support package, Pi adapter, private
   adapter workspace, exact internal dependency pins, and their lockfiles all
-  use the canonical Fabric release version. The package version is independent
+  use the canonical NeMo Fabric release version. The package version is independent
   of the `fabric.adapter/v1alpha2` wire contract version.
 - The `nemo-fabric-runtime` Python package version is derived at packaging time.
   `sdk/python/nemo-fabric-runtime/pyproject.toml` stays
@@ -254,8 +254,8 @@ Before the first supported TypeScript package release:
    | Package | Workflow filename |
    |---|---|
    | `nemo-fabric-adapter-contract` | `publish_typescript.yml` |
-   | `nemo-fabric-adapters-common` | `publish_typescript_adapters.yml` |
-   | `nemo-fabric-adapters-pi` | `publish_typescript_adapters.yml` |
+   | `nemo-fabric-adapters-common` | `publish_typescript.yml` |
+   | `nemo-fabric-adapters-pi` | `publish_typescript.yml` |
 
 4. Cut the canonical release tag first. After the contract version is visible
    on npm, create the Common adapter tag at the same commit. After Common is
@@ -410,7 +410,7 @@ test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "${RELEASE_SHA}"
 git push upstream "refs/tags/${RELEASE_TAG}"
 ```
 
-## Publish The TypeScript Adapter Packages
+## Publish the TypeScript Adapter Packages
 
 After the canonical beta, RC, or stable tag publishes the contract package,
 publish the bundled adapter packages in dependency order. Every package tag
@@ -440,7 +440,7 @@ Do not create npm package tags for alpha versions. The nightly workflow runs
 the TypeScript tests against the alpha tag without publishing to npm.
 
 
-## What CI Does On A Tag Push
+## What CI Does on a Tag Push
 
 Pushing a valid canonical or npm package tag triggers:
 
@@ -449,8 +449,7 @@ Pushing a valid canonical or npm package tag triggers:
 | [`.github/workflows/ci_python.yml`](.github/workflows/ci_python.yml) | For all tags including alpha |
 | [`.github/workflows/publish_rust.yml`](.github/workflows/publish_rust.yml) | For RC, beta and release tags |
 | [`.github/workflows/ci_typescript.yml`](.github/workflows/ci_typescript.yml) | For nightly alpha tags and normal pull request/main validation |
-| [`.github/workflows/publish_typescript.yml`](.github/workflows/publish_typescript.yml) | For canonical beta, RC, and stable tags |
-| [`.github/workflows/publish_typescript_adapters.yml`](.github/workflows/publish_typescript_adapters.yml) | For Common and Pi package beta, RC, and stable tags |
+| [`.github/workflows/publish_typescript.yml`](.github/workflows/publish_typescript.yml) | For contract, Common, and Pi beta, RC, and stable tags |
 | [`.github/workflows/fern-docs.yml`](.github/workflows/fern-docs.yml) | For RC, beta and release tags |
 
 The release pipeline then:
@@ -479,11 +478,9 @@ The workflow boundary is split intentionally:
 - [`.github/workflows/publish_rust.yml`](.github/workflows/publish_rust.yml)
   owns crates.io publication decisions and credentials.
 - [`.github/workflows/publish_typescript.yml`](.github/workflows/publish_typescript.yml)
-  owns contract npm publication decisions.
-- [`.github/workflows/publish_typescript_adapters.yml`](.github/workflows/publish_typescript_adapters.yml)
-  owns Common and Pi npm publication decisions. Both publishing workflows
-  request a short-lived credential through GitHub OIDC and do not receive an
-  npm write token.
+  owns contract, Common, and Pi npm publication decisions. It requests a
+  short-lived credential through GitHub OIDC and does not receive an npm write
+  token.
 
 
 ## Publish The GitHub Release Entry
