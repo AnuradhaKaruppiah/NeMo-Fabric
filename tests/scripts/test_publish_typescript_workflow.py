@@ -54,7 +54,7 @@ def test_contract_publisher_only_triggers_for_public_release_channels():
     assert '*) dist_tag="latest"' in release_metadata
 
 
-def test_adapter_publisher_enforces_release_graph_and_public_channels():
+def test_adapter_publisher_uses_public_channels_and_dependency_order():
     workflow = _load_workflow(ADAPTER_PUBLISH_WORKFLOW)
     tag_patterns = workflow["on"]["push"]["tags"]
     for package in ("nemo-fabric-adapters-common", "nemo-fabric-adapters-pi"):
@@ -68,10 +68,8 @@ def test_adapter_publisher_enforces_release_graph_and_public_channels():
         step["name"]: step
         for step in workflow["jobs"]["publish-typescript-adapter"]["steps"]
     }
-    assert steps["Checkout"]["with"]["fetch-depth"] == 0
     release = steps["Resolve package release"]["run"]
-    assert 'canonical_tag="v${version}"' in release
-    assert 'refs/tags/${canonical_tag}^{commit}' in release
+    assert "canonical_tag" not in release
     assert "set_typescript_project_version.py" in release
     assert "set_typescript_adapter_version.py" not in release
     assert '*-alpha*) dist_tag="alpha"' not in release

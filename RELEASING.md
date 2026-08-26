@@ -259,9 +259,9 @@ Before the first supported TypeScript package release:
 
 4. Cut the canonical release tag first. After the contract version is visible
    on npm, create the Common adapter tag at the same commit. After Common is
-   visible, create the Pi adapter tag at that commit. The adapter workflow
-   rejects a package tag if the matching canonical tag does not exist at the
-   same commit.
+   visible, create the Pi adapter tag at that commit. Release coordination is
+   responsible for keeping these tags aligned; the publishing workflow does not
+   compare adapter tags with the canonical tag.
 5. Approve the `npmjs` environment when prompted. The workflows test, pack, and
    publish through OIDC; do not manually pre-publish a supported version. On a
    retry, a workflow exits without republishing only when its repack has

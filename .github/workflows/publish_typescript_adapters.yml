@@ -32,7 +32,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
-          fetch-depth: 0
           persist-credentials: false
 
       - name: Verify release tag
@@ -107,17 +106,6 @@ jobs:
             *-*) echo "Unsupported npm prerelease: $version" >&2; exit 1 ;;
             *) dist_tag="latest" ;;
           esac
-
-          canonical_tag="v${version}"
-          if ! canonical_commit="$(git rev-parse --verify "refs/tags/${canonical_tag}^{commit}")"; then
-            echo "Canonical Fabric tag ${canonical_tag} does not exist" >&2
-            exit 1
-          fi
-          head_commit="$(git rev-parse HEAD)"
-          if [[ "$canonical_commit" != "$head_commit" ]]; then
-            echo "Adapter tag must point to the same commit as ${canonical_tag}" >&2
-            exit 1
-          fi
 
           python3 scripts/ci/set_typescript_project_version.py "$version"
           package_directory="adapters/typescript/${package_name##nemo-fabric-adapters-}"
