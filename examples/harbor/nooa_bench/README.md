@@ -3,9 +3,9 @@ SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Run OO Agents BenchAgent with Harbor
+# Run NVIDIA-labs Object Oriented Agents (NOOA) BenchAgent with Harbor
 
-This walkthrough evaluates OO Agents `BenchAgent` through NVIDIA NeMo Fabric's
+This walkthrough evaluates NOOA `BenchAgent` through NVIDIA NeMo Fabric's
 complete Harbor path:
 
 ```mermaid
@@ -31,14 +31,14 @@ test -d ../labs-OO-Agents/.git
 ```
 
 Build source-consistent Fabric wheels, including a manylinux runtime wheel, and
-stage committed Fabric and OO Agents source into the ignored Docker build
+stage committed Fabric and NOOA source into the ignored Docker build
 context:
 
 ```bash
 ./examples/harbor/nooa_bench/prepare.sh ../labs-OO-Agents
 ```
 
-The task image installs `nemo-relay>=0.7.2,<0.8`, OO Agents core, `nooa-cli`,
+The task image installs `nemo-relay>=0.7.2,<0.8`, NOOA core, `nooa-cli`,
 `nooa-bench`, and the BenchAgent adapter. `prepare.sh` builds every Fabric wheel
 in a fresh temporary directory and uses Maturin with Zig for manylinux 2.17
 compatibility, so the Python 3.12 Debian task image does not depend on the

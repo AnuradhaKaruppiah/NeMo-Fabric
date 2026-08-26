@@ -3,9 +3,9 @@ SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# OO Agents Adapter for NVIDIA NeMo Fabric
+# NVIDIA-labs Object Oriented Agents (NOOA) Adapter for NVIDIA NeMo Fabric
 
-This directory provides two OO Agents integrations for the NVIDIA NeMo Fabric
+This directory provides two NOOA integrations for the NVIDIA NeMo Fabric
 lifecycle contract:
 
 - `nvidia.fabric.nooa` is the shared adapter for registered `InteractiveAgent`
@@ -18,18 +18,18 @@ boundary:
 
 - a target descriptor selects a Python factory;
 - `start` calls that factory once and retains its agent;
-- `invoke` submits one string to `user_messages` and runs the standard OO Agents
+- `invoke` submits one string to `user_messages` and runs the standard NOOA
   `race` / drain / `handle` dispatcher loop;
 - `AgentMessage` events become the normalized response and message list;
 - `stop` calls target-owned cleanup, `agent.close()`, or the queue manager's
   fallback shutdown.
 
-The adapter translates normalized models into OO Agents `UnifiedLLM` clients
+The adapter translates normalized models into NOOA `UnifiedLLM` clients
 and supplies resolved system instructions and exact skill paths through the
 factory build context. The descriptor accepts `models`, model endpoint and
 temperature fields, `instructions.system`, and `skills`.
 
-`WAIT` resumes inside the same Fabric invocation when another OO Agents channel
+`WAIT` resumes inside the same Fabric invocation when another NOOA channel
 wakes. `DONE`, `NEED_INPUT`, and the legacy `GET_USER_INPUT` end the invocation.
 The latter two are successful terminal adapter calls with `completed=false` and
 their native reason retained in the output. `messages` contains ordered
@@ -49,7 +49,7 @@ adapter verifies that it matches `RuntimeContext.telemetry.config_path`, rejects
 ambient user/project plugin configuration, and activates only the generated
 plugin document.
 
-Each Relay invocation installs OO Agents' public `install_nemo_relay()`
+Each Relay invocation installs NOOA's public `install_nemo_relay()`
 middleware, opens one Agent scope carrying the Fabric request, invocation, and
 runtime IDs, runs the selected agent operation exactly once, then uninstalls
 the middleware and finalizes current-turn artifacts. Interactive targets use
@@ -67,7 +67,7 @@ while this adapter performs its single ordinary `invoke`; `stream.result()` is
 the independent terminal result. The adapter does not implement
 `invoke_openai_stream()` and keeps native streaming capability disabled.
 
-Install OO Agents core and CLI without their optional Relay extra, then install
+Install NOOA core and CLI without their optional Relay extra, then install
 `nemo-relay>=0.7.2,<0.8` in the adapter environment.
 
 ## Register a Target
@@ -128,7 +128,7 @@ does not import target-specific agent classes.
 ## Run from Source
 
 This directory intentionally has no package metadata. Use one Python
-environment containing NeMo Fabric, the common adapter host, OO Agents, and the
+environment containing NeMo Fabric, the common adapter host, NOOA, and the
 registered target package, then expose the source adapter:
 
 ```bash
@@ -142,7 +142,7 @@ directory in `FabricConfig.discovery.local_paths`.
 
 `nooa-bench.fabric-adapter.json` exposes `nooa_bench.BenchAgent` directly as a
 harness adapter. It is intentionally separate from the shared
-`InteractiveAgent` dispatcher: BenchAgent derives from OO Agents' base `Agent`
+`InteractiveAgent` dispatcher: BenchAgent derives from NOOA's base `Agent`
 and implements the benchmark-specific `_run_evaluation(task_input)` contract.
 
 One Fabric invocation maps to one BenchAgent task:
@@ -152,7 +152,7 @@ One Fabric invocation maps to one BenchAgent task:
 - `instructions.system` becomes `task_input.instructions`;
 - the native `response`, `success`, and structured `result` fields become the
   normalized Fabric result;
-- OO Agents' task token accumulator becomes normalized Fabric usage.
+- NOOA's task token accumulator becomes normalized Fabric usage.
 
 The adapter accepts exactly one model, closes the shell replaced by
 `_run_evaluation()` before each task, and closes the active shell and model at
@@ -161,7 +161,7 @@ they can contain model, tool, or environment details.
 
 Harbor selects this adapter through `FabricAgent` using
 `fabric_adapter_id=nvidia.fabric.nooa.bench-agent`. The task environment must
-contain NeMo Fabric, this adapter source, OO Agents core, and `nooa-bench`; its
+contain NeMo Fabric, this adapter source, NOOA core, and `nooa-bench`; its
 Fabric configuration bundle must expose the adapter descriptor beneath the
 bundle's `adapters/` directory. The resulting path is:
 
@@ -227,11 +227,11 @@ export PYTHONPATH="$PWD/external/nooa/src:$PWD/../labs-OO-Agents/examples/arc_ag
 
 The deterministic Fabric test uses a finite fake harness with the same
 `user_messages` / `game_states` / `WAIT` / action / terminal sequence. A manual
-full-game smoke uses the OO Agents ARC harness against the derived run
+full-game smoke uses the NOOA ARC harness against the derived run
 directory and requires its `arc` optional dependencies and external game
 service configuration.
 
-OO Agents declares Python `>=3.12,<3.14`; the adapter does not claim a broader
+NOOA declares Python `>=3.12,<3.14`; the adapter does not claim a broader
 version range.
 
 The adapter is an execution bridge, not a sandbox. A CodeAct target such as

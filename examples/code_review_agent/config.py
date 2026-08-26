@@ -31,6 +31,22 @@ BASE_DIR = Path(__file__).resolve().parent
 NOOA_ADAPTER_DIR = BASE_DIR.parents[1] / "external" / "nooa"
 WORKSPACE = "./repos/my-service"
 SKILL_PATH = "./skills/code-review"
+PI_DESCRIPTOR = "../../adapters/typescript/pi/pi.fabric-adapter.json"
+CODE_REVIEW_INSTRUCTION = (
+    "You are a concise code reviewer. Read the relevant workspace files before "
+    "reporting correctness risks."
+)
+
+
+def _nvidia_code_review_model() -> ModelConfig:
+    """Return the shared NVIDIA model for the Pi and Deep Agents variants."""
+
+    return ModelConfig(
+        provider="nvidia",
+        model="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+        api_key_env="NVIDIA_API_KEY",
+        base_url="https://integrate.api.nvidia.com/v1",
+    )
 
 
 def base_config() -> FabricConfig:
@@ -103,6 +119,34 @@ def hermes_config() -> FabricConfig:
     return config
 
 
+def pi_config() -> FabricConfig:
+    """Return the complete Pi SDK adapter variant."""
+
+    config = base_config().model_copy(deep=True)
+    config.discovery = DiscoveryConfig(local_paths=[PI_DESCRIPTOR])
+    config.harness = HarnessConfig(
+        adapter_id="nvidia.fabric.pi",
+        resolution="preinstalled",
+        settings={},
+    )
+    config.models = {"default": _nvidia_code_review_model()}
+    config.instructions = InstructionsConfig(
+        system=InstructionConfig(content=CODE_REVIEW_INSTRUCTION)
+    )
+    config.tools = ToolsConfig(enabled=["read"])
+    config.runtime = RuntimeConfig(
+        input_schema="text",
+        output_schema="message",
+        artifacts="./artifacts/pi",
+    )
+    config.environment = EnvironmentConfig(
+        provider="local",
+        workspace=WORKSPACE,
+        artifacts="./artifacts/pi",
+    )
+    return config
+
+
 def codex_config() -> FabricConfig:
     """Return the complete Codex SDK variant without inherited capabilities."""
 
@@ -134,14 +178,14 @@ def deepagents_config() -> FabricConfig:
     """Return the complete LangChain Deep Agents variant."""
 
     config = base_config().model_copy(deep=True)
-    config.models["default"].base_url = "https://integrate.api.nvidia.com/v1"
+    config.models = {"default": _nvidia_code_review_model()}
     config.harness = HarnessConfig(
         adapter_id="nvidia.fabric.langchain.deepagents",
         resolution="preinstalled",
         settings={},
     )
     config.instructions = InstructionsConfig(
-        system=InstructionConfig(content="You are a concise smoke test assistant.")
+        system=InstructionConfig(content=CODE_REVIEW_INSTRUCTION)
     )
     config.runtime = RuntimeConfig(
         input_schema="chat",
@@ -153,7 +197,6 @@ def deepagents_config() -> FabricConfig:
         workspace=WORKSPACE,
         artifacts="./artifacts/deepagents",
     )
-    config.remove_skill_path(SKILL_PATH)
     return config
 
 
@@ -263,6 +306,17 @@ def with_github_mcp(base: FabricConfig) -> FabricConfig:
         url="${GITHUB_MCP_URL}",
         exposure="harness_native",
     )
+    return config
+
+
+def with_skill_paths(base: FabricConfig, *paths: str | Path) -> FabricConfig:
+    """Return a copy whose skill paths replace the variant defaults."""
+
+    config = base.model_copy(deep=True)
+    for path in list(config.skills.paths if config.skills else []):
+        config.remove_skill_path(path)
+    for path in paths:
+        config.add_skill_path(path)
     return config
 
 

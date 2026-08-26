@@ -11,12 +11,14 @@ from examples.code_review_agent.config import (
     deepagents_config,
     hermes_config,
     nooa_config,
+    pi_config,
     with_github_mcp,
     with_native_otel,
     with_opensandbox,
     with_relay,
     with_relay_openinference,
     with_relay_otel,
+    with_skill_paths,
 )
 
 __all__ = [
@@ -27,10 +29,12 @@ __all__ = [
     "deepagents_config",
     "hermes_config",
     "nooa_config",
+    "pi_config",
     "with_github_mcp",
     "with_native_otel",
     "with_opensandbox",
     "with_relay",
     "with_relay_openinference",
     "with_relay_otel",
+    "with_skill_paths",
 ]

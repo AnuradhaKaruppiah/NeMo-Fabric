@@ -19,7 +19,9 @@ from examples.code_review_agent.config import (
     deepagents_config,
     hermes_config,
     nooa_config,
+    pi_config,
     with_relay,
+    with_skill_paths,
 )
 
 CONFIG_BUILDERS: dict[str, Callable[[], FabricConfig]] = {
@@ -28,6 +30,7 @@ CONFIG_BUILDERS: dict[str, Callable[[], FabricConfig]] = {
     "codex": codex_config,
     "deepagents": deepagents_config,
     "nooa": nooa_config,
+    "pi": pi_config,
 }
 
 
@@ -35,6 +38,22 @@ async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--variant", choices=CONFIG_BUILDERS, default="hermes")
     parser.add_argument("--relay", action="store_true")
+    skill_group = parser.add_mutually_exclusive_group()
+    skill_group.add_argument(
+        "--skill-path",
+        action="append",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Replace the variant's default skills with this path; repeat to "
+            "configure multiple skills. Paths resolve from the example directory."
+        ),
+    )
+    skill_group.add_argument(
+        "--no-skills",
+        action="store_true",
+        help="Remove the variant's default skills.",
+    )
     parser.add_argument(
         "--stream",
         action="store_true",
@@ -57,7 +76,14 @@ async def main() -> None:
     if args.stream and args.plan:
         parser.error("--stream cannot be combined with --plan")
 
+    if args.variant == "pi" and args.relay:
+        parser.error("the Pi adapter does not support Relay yet")
+
     config = CONFIG_BUILDERS[args.variant]()
+    if args.skill_path is not None:
+        config = with_skill_paths(config, *args.skill_path)
+    elif args.no_skills:
+        config = with_skill_paths(config)
     if args.relay:
         config = with_relay(config)
 
