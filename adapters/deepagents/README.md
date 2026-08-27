@@ -22,7 +22,7 @@ The following table shows which components each installation provides:
 | `pip install "nemo-fabric-adapters-deepagents[relay]"` | No | Yes | No | Yes |
 | `pip install nemo-fabric-adapters-deepagents` | No | Yes | No | No |
 
-For an environment-managed stack, use `deepagents>=0.6.12,<0.7.0`,
+For an environment-managed stack, use `deepagents>=0.6.12,<0.8.0`,
 `langchain>=1.3,<2.0`, and `langgraph>=1.2,<2.0`. For split runtime and adapter
 environments, configure `ADAPTER_PYTHON` and use matching NeMo Fabric release
 versions. Refer to the
