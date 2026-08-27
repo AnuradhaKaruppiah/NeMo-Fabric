@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
+from unittest.mock import call
 
 import pytest
 from nemo_fabric import DiscoveryConfig
@@ -211,6 +212,7 @@ def test_descriptor_and_registered_target_declare_the_shared_boundary():
         "models.temperature",
         "instructions.system",
         "skills",
+        "mcp",
     ]
     assert descriptor["capabilities"] == {
         "cancellation": False,
@@ -324,6 +326,67 @@ def test_registered_target_projects_the_factory_and_settings(tmp_path: Path):
         },
         "settings": {"prefix": "test"},
     }
+
+
+def test_registered_target_projects_whole_mcp_servers(tmp_path: Path):
+    config = FabricConfig(
+        metadata=MetadataConfig(name="nooa-mcp-test"),
+        discovery=DiscoveryConfig(
+            local_paths=[
+                ROOT / "external" / "nooa",
+                ROOT / "tests" / "fixtures" / "nooa",
+            ]
+        ),
+        workflow=WorkflowConfig(
+            target_id="nvidia.tests.nooa.echo",
+            settings={},
+        ),
+    )
+    config.add_mcp_server(
+        "calculator",
+        transport="stdio",
+        url=sys.executable,
+        args=["calculator_server.py"],
+        env={"MODE": "test"},
+    )
+
+    plan = Fabric().plan(config, base_dir=tmp_path)
+
+    assert plan.to_mapping()["agent_config"]["mcp"] == {
+        "servers": {
+            "calculator": {
+                "transport": "stdio",
+                "url": sys.executable,
+                "args": ["calculator_server.py"],
+                "env": {"MODE": "test"},
+            }
+        }
+    }
+
+
+def test_registered_target_rejects_mcp_tool_filters(tmp_path: Path):
+    config = FabricConfig(
+        metadata=MetadataConfig(name="nooa-filtered-mcp-test"),
+        discovery=DiscoveryConfig(
+            local_paths=[
+                ROOT / "external" / "nooa",
+                ROOT / "tests" / "fixtures" / "nooa",
+            ]
+        ),
+        workflow=WorkflowConfig(
+            target_id="nvidia.tests.nooa.echo",
+            settings={},
+        ),
+    )
+    config.add_mcp_server(
+        "calculator",
+        transport="stdio",
+        url=sys.executable,
+        allowed_tools=["add"],
+    )
+
+    with pytest.raises(FabricConfigError, match="allowed_tools"):
+        Fabric().plan(config, base_dir=tmp_path)
 
 
 def test_registered_target_rejects_unknown_settings(tmp_path: Path):
@@ -807,6 +870,157 @@ async def test_factory_failure_is_redacted(
     await runtime.stop()
 
 
+async def test_runtime_registers_and_activates_whole_mcp_servers(
+    tmp_path: Path,
+    install_target,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    agent, _channels, _handlers = _agent_double()
+    install_target(MagicMock(return_value=agent))
+    stdio_tool = MagicMock(name="stdio_tool")
+    http_tool = MagicMock(name="http_tool")
+    manager = MagicMock(name="MCPManager")
+    manager.create_stdio_server = AsyncMock(return_value=stdio_tool)
+    manager.create_url_server = AsyncMock(return_value=http_tool)
+    nooa_module = types.ModuleType("nooa")
+    nooa_module.__path__ = []  # type: ignore[attr-defined]
+    mcp_module = types.ModuleType("nooa.mcp")
+    mcp_module.MCPManager = manager
+    monkeypatch.setitem(sys.modules, "nooa", nooa_module)
+    monkeypatch.setitem(sys.modules, "nooa.mcp", mcp_module)
+    monkeypatch.setenv("NOOA_TEST_MCP_COMMAND", sys.executable)
+
+    config = AgentConfig.from_mapping(
+        {
+            "mcp": {
+                "servers": {
+                    "calculator": {
+                        "transport": "stdio",
+                        "url": "$NOOA_TEST_MCP_COMMAND",
+                        "args": ["calculator_server.py"],
+                        "env": {"MODE": "test"},
+                    },
+                    "repository": {
+                        "transport": "streamable-http",
+                        "url": "https://mcp.example.test/api",
+                        "custom_headers": {"X-Test": "value"},
+                    },
+                }
+            },
+            "workflow": _workflow(),
+        }
+    )
+    payload = _start_payload(tmp_path)
+    payload["config"] = config
+    runtime = adapter.NooaRuntime()
+
+    await runtime.start(payload)
+    await runtime.stop()
+
+    manager.create_stdio_server.assert_awaited_once_with(
+        "calculator",
+        command=sys.executable,
+        args=["calculator_server.py"],
+        env={"MODE": "test"},
+    )
+    manager.create_url_server.assert_awaited_once_with(
+        "repository",
+        "https://mcp.example.test/api",
+        headers={"X-Test": "value"},
+        transport="streamable-http",
+    )
+    assert agent.skills.register.call_args_list == [
+        call("mcp.calculator", stdio_tool),
+        call("mcp.repository", http_tool),
+    ]
+    agent.skills.activate.assert_called_once_with(
+        ["mcp.calculator", "mcp.repository"]
+    )
+    agent.close.assert_awaited_once_with()
+
+
+async def test_runtime_rejects_mcp_for_target_without_skill_registry(
+    tmp_path: Path,
+    install_target,
+):
+    agent, _channels, _handlers = _agent_double()
+    agent.skills = None
+    install_target(MagicMock(return_value=agent))
+    config = AgentConfig.from_mapping(
+        {
+            "mcp": {
+                "servers": {
+                    "calculator": {
+                        "transport": "stdio",
+                        "url": sys.executable,
+                    }
+                }
+            },
+            "workflow": _workflow(),
+        }
+    )
+    payload = _start_payload(tmp_path)
+    payload["config"] = config
+    runtime = adapter.NooaRuntime()
+
+    with pytest.raises(adapter.lifecycle.LifecycleError) as error:
+        await runtime.start(payload)
+
+    assert error.value.code == "nooa_mcp_unsupported_target"
+    agent.close.assert_awaited_once_with()
+
+
+@pytest.mark.parametrize(
+    ("policy", "expected_code"),
+    [
+        ({"allowed_tools": []}, "nooa_mcp_tool_filters_unsupported"),
+        ({"blocked_tools": ["subtract"]}, "nooa_mcp_tool_filters_unsupported"),
+        (
+            {
+                "authentication": {
+                    "type": "service_account",
+                    "client_id": "client",
+                    "client_secret_env": "CLIENT_SECRET",
+                    "token_url": "https://identity.example.test/token",
+                }
+            },
+            "nooa_mcp_authentication_unsupported",
+        ),
+    ],
+)
+async def test_runtime_rejects_unsupported_mcp_policy(
+    tmp_path: Path,
+    install_target,
+    policy: dict[str, Any],
+    expected_code: str,
+):
+    agent, _channels, _handlers = _agent_double()
+    install_target(MagicMock(return_value=agent))
+    config = AgentConfig.from_mapping(
+        {
+            "mcp": {
+                "servers": {
+                    "calculator": {
+                        "transport": "stdio",
+                        "url": sys.executable,
+                        **policy,
+                    }
+                }
+            },
+            "workflow": _workflow(),
+        }
+    )
+    payload = _start_payload(tmp_path)
+    payload["config"] = config
+    runtime = adapter.NooaRuntime()
+
+    with pytest.raises(adapter.lifecycle.LifecycleError) as error:
+        await runtime.start(payload)
+
+    assert error.value.code == expected_code
+    agent.close.assert_awaited_once_with()
+
+
 async def test_coding_agent_target_runs_with_normalized_model_and_skills(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -821,9 +1035,14 @@ async def test_coding_agent_target_runs_with_normalized_model_and_skills(
     agent.handle.side_effect = handle
     mock_coding_agent = MagicMock(name="CodingAgent", return_value=agent)
     mock_context = MagicMock(name="Context", side_effect=lambda value, **_kwargs: value)
-    mock_text_skill_instance = MagicMock(name="text_skill")
-    mock_text_skill_instance.id = "code-review"
-    mock_text_skill = MagicMock(name="TextSkill", return_value=mock_text_skill_instance)
+    code_review_skill = MagicMock(name="code_review_skill")
+    code_review_skill.id = "code-review"
+    security_skill = MagicMock(name="security_skill")
+    security_skill.id = "security-review"
+    mock_text_skill = MagicMock(
+        name="TextSkill",
+        side_effect=[code_review_skill, security_skill],
+    )
     mock_llm = MagicMock(name="llm")
     mock_llm.aclose = AsyncMock()
     mock_get_llm_client = MagicMock(name="get_llm_client", return_value=mock_llm)
@@ -851,6 +1070,11 @@ async def test_coding_agent_target_runs_with_normalized_model_and_skills(
     (skill_path / "SKILL.md").write_text(
         "---\nname: code-review\n---\n", encoding="utf-8"
     )
+    security_skill_path = tmp_path / "skills" / "security-review"
+    security_skill_path.mkdir(parents=True)
+    (security_skill_path / "SKILL.md").write_text(
+        "---\nname: security-review\n---\n", encoding="utf-8"
+    )
     os.environ["NVIDIA_API_KEY"] = "test-key"
     config = AgentConfig.from_mapping(
         {
@@ -866,7 +1090,13 @@ async def test_coding_agent_target_runs_with_normalized_model_and_skills(
             "instructions": {
                 "system": {"content": "Review the code carefully."},
             },
-            "skills": {"paths": [str(skill_path)]},
+            "skills": {
+                "paths": [
+                    str(skill_path),
+                    str(skill_path),
+                    str(security_skill_path),
+                ]
+            },
             "workflow": {
                 "entrypoint": {
                     "kind": "interactive_agent_factory",
@@ -899,10 +1129,17 @@ async def test_coding_agent_target_runs_with_normalized_model_and_skills(
         libs_dir=tmp_path / "artifacts" / "nooa-libs",
     )
     mock_context.assert_called_once_with("Review the code carefully.", prefix=True)
-    agent.skills.register.assert_called_once_with(
-        "cmd.code-review", mock_text_skill_instance
+    assert mock_text_skill.call_args_list == [
+        call(path=skill_path),
+        call(path=security_skill_path),
+    ]
+    assert agent.skills.register.call_args_list == [
+        call("cmd.code-review", code_review_skill),
+        call("cmd.security-review", security_skill),
+    ]
+    agent.skills.activate.assert_called_once_with(
+        ["cmd.code-review", "cmd.security-review"]
     )
-    agent.skills.activate.assert_called_once_with(["cmd.code-review"])
     assert result.status is AgentRunStatus.SUCCEEDED
     assert result.output["response"] == "No correctness issues found."
     assert relay_invocations == [agent]

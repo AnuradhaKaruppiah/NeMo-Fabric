@@ -42,7 +42,8 @@
       "models.base_url",
       "models.temperature",
       "instructions.system",
-      "skills"
+      "skills",
+      "mcp"
     ]
   },
   "telemetry": {

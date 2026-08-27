@@ -10,6 +10,7 @@ import asyncio
 import importlib
 import inspect
 import logging
+import os
 from collections.abc import Awaitable
 from collections.abc import Callable
 from collections.abc import Mapping
@@ -149,11 +150,135 @@ def _path(value: Any, *, default: Path | None = None) -> Path | None:
 
 def _resolved_skill_paths(config: AgentConfig, base_dir: Path) -> tuple[Path, ...]:
     values = config.skills.paths if config.skills is not None else []
-    paths = []
+    paths: list[Path] = []
+    seen: set[Path] = set()
     for value in values:
         path = Path(value)
-        paths.append(path if path.is_absolute() else base_dir / path)
+        resolved = path if path.is_absolute() else base_dir / path
+        if resolved not in seen:
+            paths.append(resolved)
+            seen.add(resolved)
     return tuple(paths)
+
+
+def _mcp_registry(agent: Any) -> Any:
+    registry = getattr(agent, "skills", None)
+    required = {
+        "agent.skills.register": getattr(registry, "register", None),
+        "agent.skills.activate": getattr(registry, "activate", None),
+    }
+    missing = [name for name, value in required.items() if not callable(value)]
+    if missing:
+        raise _config_error(
+            "nooa_mcp_unsupported_target",
+            "The selected OO Agents target cannot register MCP servers",
+            missing=missing,
+        )
+    return registry
+
+
+def _mcp_target(name: str, value: str) -> str:
+    target = os.path.expandvars(value).strip()
+    if not target:
+        raise _config_error(
+            "nooa_invalid_mcp_server",
+            f"OO Agents MCP server {name!r} requires a non-empty url",
+            server=name,
+        )
+    return target
+
+
+def _validate_mcp_server(name: str, server: Any) -> str:
+    if server.allowed_tools is not None or server.blocked_tools:
+        raise _config_error(
+            "nooa_mcp_tool_filters_unsupported",
+            "OO Agents does not support per-server MCP tool filters",
+            server=name,
+        )
+    if server.authentication is not None:
+        raise _config_error(
+            "nooa_mcp_authentication_unsupported",
+            "OO Agents does not support normalized MCP authentication",
+            server=name,
+        )
+
+    transport = server.transport.strip().lower().replace("_", "-")
+    if transport not in {"stdio", "sse", "streamable-http"}:
+        raise _config_error(
+            "nooa_unsupported_mcp_transport",
+            f"OO Agents MCP server {name!r} has unsupported transport {transport!r}",
+            server=name,
+            transport=transport,
+        )
+    if transport == "stdio" and server.custom_headers:
+        raise _config_error(
+            "nooa_invalid_mcp_server",
+            "OO Agents stdio MCP servers do not accept custom headers",
+            server=name,
+        )
+    if transport != "stdio" and server.args:
+        raise _config_error(
+            "nooa_invalid_mcp_server",
+            "OO Agents network MCP servers do not accept command arguments",
+            server=name,
+        )
+    return transport
+
+
+async def _register_mcp_servers(agent: Any, config: AgentConfig) -> None:
+    servers = config.mcp.servers if config.mcp is not None else {}
+    if not servers:
+        return
+
+    validated = {
+        name: (_validate_mcp_server(name, server), server)
+        for name, server in sorted(servers.items())
+    }
+    registry = _mcp_registry(agent)
+    try:
+        from nooa.mcp import MCPManager
+    except ImportError as error:
+        raise _config_error(
+            "nooa_mcp_dependency_missing",
+            "OO Agents MCP support is not installed",
+        ) from error
+
+    registered: list[str] = []
+    for name, (transport, server) in validated.items():
+        target = _mcp_target(name, server.url)
+        if transport == "stdio":
+            tool = await MCPManager.create_stdio_server(
+                name,
+                command=target,
+                args=list(server.args),
+                env=dict(server.env),
+            )
+        else:
+            tool = await MCPManager.create_url_server(
+                name,
+                target,
+                headers=dict(server.custom_headers),
+                transport=transport,
+            )
+
+        registry_name = f"mcp.{name}"
+        try:
+            registry.register(registry_name, tool)
+        except ValueError as error:
+            raise _config_error(
+                "nooa_mcp_registration_failed",
+                f"OO Agents could not register MCP server {name!r}",
+                server=name,
+            ) from error
+        registered.append(registry_name)
+
+    try:
+        registry.activate(registered)
+    except ValueError as error:
+        raise _config_error(
+            "nooa_mcp_activation_failed",
+            "OO Agents could not activate the configured MCP servers",
+        ) from error
 
 
 def _build_context(
@@ -409,6 +534,7 @@ class NooaRuntime:
             )
             target = _unwrap_target(await _await_if_needed(factory(context)))
             _validate_target(target)
+            await _register_mcp_servers(target.agent, config)
         except asyncio.CancelledError:
             await _close_resources(target, models)
             if telemetry is not None:
