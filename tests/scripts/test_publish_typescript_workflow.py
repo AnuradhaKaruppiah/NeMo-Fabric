@@ -34,6 +34,11 @@ def _tag_triggers_workflow(tag: str, patterns: list[str]) -> bool:
 def test_publisher_only_triggers_for_public_release_channels():
     workflow = _load_workflow(PUBLISH_WORKFLOW)
     assert "workflow_call" not in workflow["on"]
+    assert workflow["concurrency"] == {
+        "group": "publish-typescript",
+        "queue": "max",
+        "cancel-in-progress": False,
+    }
 
     tag_patterns = workflow["on"]["push"]["tags"]
     for tag in ("v0.3.0", "v0.3.0-beta.1", "v0.3.0-rc.1"):
