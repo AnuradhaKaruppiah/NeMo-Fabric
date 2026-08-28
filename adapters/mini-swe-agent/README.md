@@ -158,7 +158,7 @@ request and invocation IDs as Relay metadata:
 | `invocation_id` | `nemo_fabric_invocation_id` | Identifies one concrete invocation attempt. NeMo Fabric assigns a new value to each invocation. |
 
 Nested step, LLM, and `bash` tool events are correlated through the Relay scope
-hierarchy; they do not repeat these metadata fields. The runtime's `runtime_id`
+hierarchy; they do not repeat these metadata fields. The `runtime_id`
 identifies the longer-lived retained runtime that can process multiple
 invocations, but the mini-SWE-agent adapter does not currently add it to Relay
 scope metadata.
