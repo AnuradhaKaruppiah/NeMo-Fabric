@@ -25,15 +25,24 @@ def one(root: Path, pattern: str) -> Path:
     return matches[0]
 
 
-def verify(job_dir: Path, *, require_relay: bool) -> dict[str, Any]:
+def verify(
+    job_dir: Path,
+    *,
+    require_relay: bool,
+    allow_zero_reward: bool = False,
+) -> dict[str, Any]:
     job = load_json(job_dir / "result.json")
     stats = job["stats"]
     assert stats["n_completed_trials"] == 1
     assert stats["n_errored_trials"] == 0
 
-    trial_dir = one(job_dir, "task__*")
-    reward = float((trial_dir / "verifier" / "reward.txt").read_text().strip())
-    assert reward == 1.0
+    reward_path = one(job_dir, "*/verifier/reward.txt")
+    trial_dir = reward_path.parents[1]
+    reward = float(reward_path.read_text().strip())
+    if allow_zero_reward:
+        assert 0.0 <= reward <= 1.0
+    else:
+        assert reward == 1.0
 
     result = load_json(one(trial_dir, "agent/fabric-result-*.json"))
     assert result["status"] == "succeeded"
@@ -84,6 +93,14 @@ def verify(job_dir: Path, *, require_relay: bool) -> dict[str, Any]:
             "start": len(records) // 2,
             "end": len(records) // 2,
         }
+        starts = Counter(
+            record["uuid"] for record in records if record["scope_category"] == "start"
+        )
+        ends = Counter(
+            record["uuid"] for record in records if record["scope_category"] == "end"
+        )
+        assert starts == ends
+        assert set(starts.values()) == {1}
         assert (
             sum(
                 record["name"] == "nooa-bench-agent-request"
@@ -130,8 +147,22 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("job_dir", type=Path)
     parser.add_argument("--require-relay", action="store_true")
+    parser.add_argument(
+        "--allow-zero-reward",
+        action="store_true",
+        help="accept a completed run whose verifier reward is 0.0",
+    )
     args = parser.parse_args()
-    print(json.dumps(verify(args.job_dir, require_relay=args.require_relay), indent=2))
+    print(
+        json.dumps(
+            verify(
+                args.job_dir,
+                require_relay=args.require_relay,
+                allow_zero_reward=args.allow_zero_reward,
+            ),
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

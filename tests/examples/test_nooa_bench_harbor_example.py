@@ -17,16 +17,22 @@ def write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value), encoding="utf-8")
 
 
-def make_job(tmp_path: Path, *, relay: bool) -> Path:
+def make_job(
+    tmp_path: Path,
+    *,
+    relay: bool,
+    reward: float = 1.0,
+    trial_name: str = "task__fixture",
+) -> Path:
     job_dir = tmp_path / "job"
-    trial_dir = job_dir / "task__fixture"
+    trial_dir = job_dir / trial_name
     write_json(
         job_dir / "result.json",
         {"stats": {"n_completed_trials": 1, "n_errored_trials": 0}},
     )
     reward_path = trial_dir / "verifier" / "reward.txt"
     reward_path.parent.mkdir(parents=True)
-    reward_path.write_text("1\n", encoding="utf-8")
+    reward_path.write_text(f"{reward}\n", encoding="utf-8")
     write_json(
         trial_dir / "agent" / "fabric-result-fixture.json",
         {
@@ -87,8 +93,9 @@ def make_job(tmp_path: Path, *, relay: bool) -> Path:
             "name": name,
             "category": category,
             "scope_category": boundary,
+            "uuid": f"scope-{index}",
         }
-        for name, category in scopes
+        for index, (name, category) in enumerate(scopes)
         for boundary in ("start", "end")
     ]
     artifact_dir = trial_dir / "agent" / "fabric-artifacts" / "relay"
@@ -127,3 +134,20 @@ def test_verify_accepts_rewarded_relay_run(tmp_path: Path):
         "observability_config_version": 3,
         "root_invocations": 1,
     }
+
+
+def test_verify_accepts_zero_reward_swebench_run(tmp_path: Path):
+    job_dir = make_job(
+        tmp_path,
+        relay=True,
+        reward=0.0,
+        trial_name="prepared-django__django-13741__fixture",
+    )
+
+    summary = verify(
+        job_dir,
+        require_relay=True,
+        allow_zero_reward=True,
+    )
+
+    assert summary["reward"] == 0.0
