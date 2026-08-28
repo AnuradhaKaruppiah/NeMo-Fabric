@@ -10,12 +10,14 @@ NVIDIA NeMo Fabric.
 
 ## Install
 
-| Installation | Runtime | Adapter | Harness |
-| --- | --- | --- | --- |
-| `pip install "nemo-fabric[mini-swe-agent]"` | Yes | Yes | Yes |
-| `pip install "nemo-fabric-adapters-mini-swe-agent[harness]"` | No | Yes | Yes |
-| `pip install "nemo-fabric-adapters-mini-swe-agent[full]"` | No | Yes | Yes |
-| `pip install nemo-fabric-adapters-mini-swe-agent` | No | Yes | No |
+| Installation | Runtime | Adapter | Harness | Relay Python |
+| --- | --- | --- | --- | --- |
+| `pip install "nemo-fabric[mini-swe-agent]"` | Yes | Yes | Yes | No |
+| `pip install "nemo-fabric[mini-swe-agent,relay]"` | Yes | Yes | Yes | Yes |
+| `pip install "nemo-fabric-adapters-mini-swe-agent[harness]"` | No | Yes | Yes | No |
+| `pip install "nemo-fabric-adapters-mini-swe-agent[relay]"` | No | Yes | No | Yes |
+| `pip install "nemo-fabric-adapters-mini-swe-agent[full]"` | No | Yes | Yes | Yes |
+| `pip install nemo-fabric-adapters-mini-swe-agent` | No | Yes | No | No |
 
 The `harness` and `full` extras install the latest compatible mini-SWE-agent
 2.x release.
@@ -30,7 +32,7 @@ default is `30` seconds.
 
 Set `models.<role>.api_key_env` to the environment variable containing the
 model-provider credential. This adapter does not support MCP, skills, tool
-policy, streaming, or telemetry output.
+policy, or native OpenAI streaming.
 
 ```python
 import asyncio
@@ -71,3 +73,26 @@ result = asyncio.run(main())
 ```
 
 The result includes the submitted final text and API-call usage.
+
+## Relay Telemetry
+
+When Relay is enabled, the adapter uses a Relay-specific mini-SWE-agent subclass
+to emit an Agent scope for each invocation, Function scopes for agent steps,
+and LLM and tool events for model queries and bash actions. Relay is imported
+and the subclass is selected only for Relay-enabled runtimes; otherwise the
+adapter uses the existing retaining agent without Relay instrumentation.
+
+Install both the harness and Relay, then enable Relay on the configuration:
+
+```bash
+pip install "nemo-fabric[mini-swe-agent,relay]"
+```
+
+```python
+config.enable_relay()
+```
+
+Relay-enabled runs support configured ATOF and ATIF outputs and live ATOF
+records through `Runtime.invoke_stream()`. Live telemetry uses ordinary
+adapter `invoke()` and is independent of native OpenAI streaming, so the
+adapter's `capabilities.streaming` value remains `false`.

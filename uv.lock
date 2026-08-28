@@ -2552,6 +2552,9 @@ dependencies = [
 harness = [
     { name = "mini-swe-agent" },
 ]
+relay = [
+    { name = "nemo-relay" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -2559,8 +2562,10 @@ requires-dist = [
     { name = "mini-swe-agent", marker = "extra == 'harness'", specifier = ">=2.0,<3" },
     { name = "nemo-fabric-adapter-contract", editable = "adapter-contract/python" },
     { name = "nemo-fabric-adapters-common", editable = "adapters/common" },
+    { name = "nemo-relay", marker = "extra == 'full'", specifier = ">=0.7.2,<0.8" },
+    { name = "nemo-relay", marker = "extra == 'relay'", specifier = ">=0.7.2,<0.8" },
 ]
-provides-extras = ["harness", "full"]
+provides-extras = ["harness", "relay", "full"]
 
 [[package]]
 name = "nemo-fabric-development"
@@ -2610,7 +2615,7 @@ adapters = [
     { name = "nemo-fabric-adapters-common" },
     { name = "nemo-fabric-adapters-deepagents", extra = ["relay"] },
     { name = "nemo-fabric-adapters-hermes", marker = "python_full_version < '3.14'" },
-    { name = "nemo-fabric-adapters-mini-swe-agent" },
+    { name = "nemo-fabric-adapters-mini-swe-agent", extra = ["relay"] },
 ]
 dev = [
     { name = "ipython" },
@@ -2681,7 +2686,7 @@ adapters = [
     { name = "nemo-fabric-adapters-common", editable = "adapters/common" },
     { name = "nemo-fabric-adapters-deepagents", extras = ["relay"], editable = "adapters/deepagents" },
     { name = "nemo-fabric-adapters-hermes", marker = "python_full_version < '3.14'", editable = "adapters/hermes" },
-    { name = "nemo-fabric-adapters-mini-swe-agent", editable = "adapters/mini-swe-agent" },
+    { name = "nemo-fabric-adapters-mini-swe-agent", extras = ["relay"], editable = "adapters/mini-swe-agent" },
 ]
 dev = [
     { name = "ipython", specifier = "~=8.20" },
