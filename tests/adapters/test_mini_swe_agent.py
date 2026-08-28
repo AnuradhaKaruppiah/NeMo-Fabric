@@ -21,6 +21,7 @@ from nemo_fabric_adapter_contract.models import RuntimeContext
 from nemo_fabric_adapters.mini_swe_agent import adapter
 from nemo_fabric_adapters.mini_swe_agent.agents import RelayRetainingDefaultAgent
 from nemo_fabric_adapters.mini_swe_agent.agents import RetainingDefaultAgent
+from nemo_fabric_adapters.mini_swe_agent.agents import _submitted_output
 from minisweagent.exceptions import Submitted
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -418,17 +419,27 @@ async def test_relay_event_failure_degrades_telemetry_without_failing_agent(
     assert result.output["output"] == "done"
     assert result.output["telemetry"]["degraded"] is True
     assert "RuntimeError: relay llm end failed" in result.output["telemetry"]["error"]
-    assert (
-        "telemetry unreliable for the rest of this runtime"
-        in result.output["telemetry"]["error"]
-    )
+    assert "telemetry unreliable" not in result.output["telemetry"]["error"]
+    assert result.output["relay_artifacts"] == mock_relay["artifacts"]
 
     second = await runtime.invoke(*invocation(mini_payload))
 
     assert second.status == "succeeded"
     assert second.output["telemetry"]["degraded"] is True
-    assert "relay_artifacts" not in second.output
-    assert len(mock_relay["request_scopes"]) == 1
+    assert second.output["relay_artifacts"] == mock_relay["artifacts"]
+    assert len(mock_relay["request_scopes"]) == 2
+
+
+@pytest.mark.parametrize(
+    "error",
+    [Submitted(), Submitted({"role": "exit"})],
+)
+def test_submitted_output_handles_missing_content(error):
+    assert _submitted_output(error) == {
+        "output": "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\n",
+        "returncode": 0,
+        "exception_info": "",
+    }
 
 
 async def test_stop_resets_relay_quarantine():
@@ -450,8 +461,12 @@ async def test_relay_enabled_requires_optional_dependency(
     runtime = adapter.MiniSweAgentRuntime()
     start = {**mini_payload, "config": AgentConfig.from_mapping(mini_payload["config"])}
 
-    with pytest.raises(RuntimeError, match=r"mini-swe-agent\[relay\]"):
+    with pytest.raises(
+        adapter.lifecycle.LifecycleError,
+        match=r"mini-swe-agent\[relay\]",
+    ) as exc_info:
         await runtime.start(start)
+    assert exc_info.value.code == "mini_swe_agent_relay_missing"
 
 
 def test_mini_swe_agent_module_entrypoint_exits_cleanly():

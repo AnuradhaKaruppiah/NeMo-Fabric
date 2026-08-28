@@ -18,10 +18,9 @@ def _error_text(error: BaseException) -> str:
 
 
 def _submitted_output(error: Submitted) -> dict[str, Any]:
+    content = error.messages[0].get("content", "") if error.messages else ""
     return {
-        "output": (
-            f"COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\n{error.messages[0]['content']}"
-        ),
+        "output": f"COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\n{content}",
         "returncode": 0,
         "exception_info": "",
     }

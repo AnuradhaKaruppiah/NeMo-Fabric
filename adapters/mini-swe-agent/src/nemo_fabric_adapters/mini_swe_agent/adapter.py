@@ -65,10 +65,11 @@ class MiniSweAgentRuntime:
         agent_type = RetainingDefaultAgent
         if self._relay_enabled:
             if importlib.util.find_spec("nemo_relay") is None:
-                raise RuntimeError(
+                raise lifecycle.LifecycleError(
+                    "mini_swe_agent_relay_missing",
                     "telemetry is enabled but a compatible 'nemo-relay' package is "
                     "not installed; install the Relay extra (pip install "
-                    "'nemo-fabric-adapters-mini-swe-agent[relay]')."
+                    "'nemo-fabric-adapters-mini-swe-agent[relay]').",
                 )
             common_utils.reject_ambient_relay_plugin_config()
             relay_payload = {**payload, "config": config.to_mapping()}
@@ -247,9 +248,9 @@ def _current_scope_handle() -> Any:
 
 
 def _scope_top_unchanged(baseline: Any) -> bool:
-    if baseline is None:
-        return False
     current = _current_scope_handle()
+    if baseline is None:
+        return current is None
     if current is None:
         return False
     baseline_uuid = getattr(baseline, "uuid", _UNREADABLE)

@@ -10,6 +10,9 @@ NVIDIA NeMo Fabric.
 
 ## Install
 
+Choose an installation option based on the components required in the target
+environment:
+
 | Installation | Runtime | Adapter | Harness | Relay Python |
 | --- | --- | --- | --- | --- |
 | `pip install "nemo-fabric[mini-swe-agent]"` | Yes | Yes | Yes | No |
@@ -82,11 +85,13 @@ and LLM and tool events for model queries and bash actions. Relay is imported
 and the subclass is selected only for Relay-enabled runtimes; otherwise the
 adapter uses the existing retaining agent without Relay instrumentation.
 
-Install both the harness and Relay, then enable Relay on the configuration:
+Install both the harness and Relay:
 
 ```bash
 pip install "nemo-fabric[mini-swe-agent,relay]"
 ```
+
+Enable Relay on the configuration:
 
 ```python
 config.enable_relay()
