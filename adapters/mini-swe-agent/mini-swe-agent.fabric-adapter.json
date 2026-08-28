@@ -51,5 +51,12 @@
     "streaming": false,
     "updates": false,
     "cancellation": false
+  },
+  "telemetry": {
+    "providers": {
+      "relay": {
+        "outputs": ["atif", "otel", "openinference"]
+      }
+    }
   }
 }

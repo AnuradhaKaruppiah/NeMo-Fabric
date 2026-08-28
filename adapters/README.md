@@ -133,11 +133,11 @@ and additive extension maps because their support does not vary by adapter:
 | `skills.paths` | Yes | Yes | Yes | Yes | No | Yes |
 | `mcp.servers.<name>.transport`, `.url` with `harness_native` exposure | Yes | Yes | Yes | Yes | No | No |
 | `mcp.servers.<name>.exposure = "fabric_managed"` | No; not implemented | No; not implemented | No; not implemented | No; not implemented | No | No |
-| `telemetry.providers.relay` | Yes | Yes | Yes | Yes | No | No |
+| `telemetry.providers.relay` | Yes | Yes | Yes | Yes | Yes | No |
 | `telemetry.providers.native` | No | Yes; OpenTelemetry | Yes; OpenTelemetry and OpenInference | No | No | No |
-| `telemetry.providers.<provider>.config` | Declared-provider pass-through | Declared-provider pass-through | Declared-provider pass-through | Declared-provider pass-through | No | No |
-| `relay.project`, `.output_dir`, `.observability` | Yes | Yes | Yes | Yes | No | No |
-| `relay.components`, `.policy` | Yes | Yes | Yes | Yes | No | No |
+| `telemetry.providers.<provider>.config` | Declared-provider pass-through | Declared-provider pass-through | Declared-provider pass-through | Declared-provider pass-through | Declared-provider pass-through | No |
+| `relay.project`, `.output_dir`, `.observability` | Yes | Yes | Yes | Yes | Yes | No |
+| `relay.components`, `.policy` | Yes | Yes | Yes | Yes | Yes | No |
 | Additive `extensions` on typed config objects | Preserved; no portable adapter semantics | Preserved; no portable adapter semantics | Preserved; no portable adapter semantics | Preserved; no portable adapter semantics | Preserved; no portable adapter semantics | Not accepted unless declared by the Pi descriptor |
 
 The selected model role is `default`, or the sole configured role when no
@@ -166,14 +166,13 @@ and produces normalized trajectories in Agent Trajectory Interchange Format
 | [Codex](codex/README.md) | `AsyncCodex` app-server client and SDK thread | Runtime-owned Relay CLI gateway and Codex SDK hooks | Reuses the SDK thread and persists its thread ID | Closes the SDK client and app server, then stops the gateway | Not implemented |
 | [LangChain Deep Agents](deepagents/README.md) | Compiled LangGraph agent, checkpointer, and thread ID | NeMo Relay Python SDK integration added when the agent is compiled | Creates a fresh Relay request scope and callback for each invocation | Closes the checkpointer; no gateway process | Not implemented |
 | [Hermes Agent](hermes/README.md) | `AIAgent`, `SessionDB`, and conversation history | Hermes Agent NeMo Relay plugin context | Finalizes and flushes Relay after each invocation | Closes the agent and database, then exits the plugin context | Not implemented |
-| [mini-SWE-agent](mini-swe-agent/README.md) | Conversation history | Not supported | Not applicable | Not applicable | Not implemented |
+| [mini-SWE-agent](mini-swe-agent/README.md) | Conversation history | Adapter-owned subclass with NeMo Relay Python SDK scopes | Creates a fresh Relay plugin and request scope, emits step, model, and bash-action telemetry, and collects artifacts | Clears the agent and Relay state | Not implemented |
 | [Pi](typescript/pi/README.md) | In-memory Pi `AgentSession` | Not supported | Reuses the session and calls `prompt()` for ordered text input | Aborts work, emits extension shutdown, and disposes the session | Not implemented |
 
-Telemetry output names use the descriptor contract values. Claude, Codex, and
-Hermes Agent can emit NeMo Relay ATIF, OpenTelemetry, and OpenInference output. Deep
-Agents supports the same Relay outputs plus native OpenTelemetry and
-OpenInference; Codex also supports native OpenTelemetry. mini-SWE-agent does
-not support telemetry output.
+Telemetry output names use the descriptor contract values. Claude, Codex,
+Hermes Agent, and mini-SWE-agent can emit NeMo Relay ATIF, OpenTelemetry, and
+OpenInference output. Deep Agents supports the same Relay outputs plus native
+OpenTelemetry and OpenInference; Codex also supports native OpenTelemetry.
 
 Shared lifecycle, Relay gateway, hook, and payload helpers are documented in
 the [adapter utilities guide](common/README.md).
