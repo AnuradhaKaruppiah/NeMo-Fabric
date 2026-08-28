@@ -147,6 +147,22 @@ subclass explicitly emits nested step, LLM, and `bash` tool events using Relay
 handles. This produces a correlated Agent, Function, LLM, and tool scope
 hierarchy without requiring upstream changes.
 
+### Correlation IDs
+
+The top-level `mini-swe-agent.request` Agent scope stores the NeMo Fabric
+request and invocation IDs as Relay metadata:
+
+| NeMo Fabric ID | Relay metadata key | Meaning |
+| --- | --- | --- |
+| `request_id` | `nemo_fabric_request_id` | Correlates the caller's logical request. A caller can provide the same value when it wants to correlate retries or related processing. |
+| `invocation_id` | `nemo_fabric_invocation_id` | Identifies one concrete invocation attempt. NeMo Fabric assigns a new value to each invocation. |
+
+Nested step, LLM, and `bash` tool events are correlated through the Relay scope
+hierarchy; they do not repeat these metadata fields. The runtime's `runtime_id`
+identifies the longer-lived retained runtime that can process multiple
+invocations, but the mini-SWE-agent adapter does not currently add it to Relay
+scope metadata.
+
 Install both the harness and Relay:
 
 ```bash
@@ -159,7 +175,7 @@ Enable Relay on the configuration:
 config.enable_relay()
 ```
 
-Relay-enabled runs support configured ATOF and ATIF outputs and live ATOF
-records through `Runtime.invoke_stream()`. Live telemetry uses ordinary
-adapter `invoke()` and is independent of native OpenAI streaming, so the
-adapter's `capabilities.streaming` value remains `false`.
+Relay-enabled runs support configured ATIF, OpenTelemetry, and OpenInference
+outputs. `Runtime.invoke_stream()` also provides live ATOF records. Live
+telemetry uses ordinary adapter `invoke()` and is independent of native OpenAI
+streaming, so the adapter's `capabilities.streaming` value remains `false`.
