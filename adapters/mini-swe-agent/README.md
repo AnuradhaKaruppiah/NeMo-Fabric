@@ -141,6 +141,12 @@ and LLM and tool events for model queries and bash actions. Relay is imported
 and the subclass is selected only for Relay-enabled runtimes; otherwise the
 adapter uses the existing retaining agent without Relay instrumentation.
 
+The adapter wraps each invocation with `nemo_relay.scope.scope(...)`. Because
+mini-SWE-agent does not provide native observability hooks, the adapter-owned
+subclass explicitly emits nested step, LLM, and `bash` tool events using Relay
+handles. This produces a correlated Agent, Function, LLM, and tool scope
+hierarchy without requiring upstream changes.
+
 Install both the harness and Relay:
 
 ```bash
