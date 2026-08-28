@@ -137,7 +137,7 @@ history, so repeated invocations can increase model context usage.
 
 When Relay is enabled, the adapter uses a Relay-specific mini-SWE-agent subclass
 to emit an Agent scope for each invocation, Function scopes for agent steps,
-and LLM and tool events for model queries and bash actions. Relay is imported
+and LLM and tool events for model queries and `bash` actions. Relay is imported
 and the subclass is selected only for Relay-enabled runtimes; otherwise the
 adapter uses the existing retaining agent without Relay instrumentation.
 
