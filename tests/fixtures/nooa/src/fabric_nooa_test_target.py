@@ -66,17 +66,41 @@ class _EventManager:
             handler(event)
 
 
+class _SkillRegistry:
+    def __init__(self, agent: Any) -> None:
+        self._agent = agent
+        self._registered: dict[str, Any] = {}
+
+    def register(self, name: str, skill: Any) -> None:
+        self._registered[name] = skill
+        setattr(self._agent, name.rsplit(".", maxsplit=1)[-1], skill)
+
+    def activate(self, names: list[str]) -> None:
+        missing = [name for name in names if name not in self._registered]
+        if missing:
+            raise ValueError(f"unregistered fixture skills: {missing}")
+
+
 class EchoInteractiveAgent:
     def __init__(self) -> None:
         self.queue_manager = _QueueManager()
         self.event_manager = _EventManager()
+        self.skills = _SkillRegistry(self)
         self._invocations = 0
 
     async def handle(self, notification: dict[str, list[Any]]) -> Any:
-        import nemo_relay
-
         self._invocations += 1
         message = notification["user_messages"][-1]
+        calculator = getattr(self, "calculator", None)
+        if calculator is not None:
+            response = await calculator.echo(message=str(message))
+            self.event_manager.emit(
+                "AgentMessage",
+                SimpleNamespace(content=response),
+            )
+            return SimpleNamespace(kind="DONE", explanation="MCP call complete")
+
+        import nemo_relay
 
         async def complete_llm(_request: Any) -> dict[str, Any]:
             return {

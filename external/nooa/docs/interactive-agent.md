@@ -30,7 +30,7 @@ factory build context also receives the resolved system instruction, workspace,
 artifact root, workflow settings, and exact skill paths.
 
 The descriptor accepts normalized models, model endpoint and temperature fields,
-`instructions.system`, and `skills`.
+`instructions.system`, `skills`, and whole MCP server configurations.
 
 ## Terminal Behavior
 
@@ -97,6 +97,34 @@ The factory owns target-specific construction and dependency validation. The
 adapter validates the returned object's public interactive-agent surface; it
 does not import target-specific agent classes.
 
+## Configure MCP Servers
+
+The adapter creates NOOA MCP tools from each normalized server, registers them
+as `mcp.<server-name>`, and activates the complete server. Stdio, server-sent
+events (SSE), and streamable HTTP transports are supported. Network servers can
+also use custom headers.
+
+For example, add a streamable HTTP server to an existing configuration:
+
+```python
+config.add_mcp_server(
+    "repository",
+    transport="streamable-http",
+    url="${REPOSITORY_MCP_URL}",
+    custom_headers={"X-Tenant": "code-review"},
+)
+```
+
+Use `config.remove_mcp_server("repository")` to run the same agent without that
+server. This add-or-remove pattern provides whole-server capability variation.
+The adapter does not declare normalized MCP authentication or per-method tool
+filters, so NeMo Fabric rejects those configurations during planning.
+
+The selected target must expose a NOOA-compatible skill registry through
+`agent.skills.register()` and `agent.skills.activate()`. `CodingAgent` and the
+registered ARC solver provide this surface. A custom `InteractiveAgent` can run
+without a skill registry when its configuration does not include MCP servers.
+
 ## Relay Telemetry
 
 Each Relay-enabled invocation installs NOOA's public `install_nemo_relay()`
@@ -149,7 +177,8 @@ The ARC launcher treats `DONE` as the end of one turn while the external
 harness decides when the game finishes. The target continues after `DONE` until
 the latest state is `WIN` or `GAME_OVER`, or the harness publishes a
 `harness stopped:` note. This completion policy remains outside the shared
-adapter.
+adapter. If the latest state is unavailable, the target ends the invocation
+instead of waiting indefinitely for another queue event.
 
 Expose the ARC example source before starting NeMo Fabric:
 
@@ -157,7 +186,10 @@ Expose the ARC example source before starting NeMo Fabric:
 export PYTHONPATH="$PWD/external/nooa/src:$PWD/../labs-OO-Agents/examples/arc_agi_3${PYTHONPATH:+:$PYTHONPATH}"
 ```
 
-The deterministic NeMo Fabric test uses a finite fake harness. A manual
+This command assumes that the `labs-OO-Agents` checkout is a sibling of the
+NVIDIA NeMo Fabric repository. Adjust the path when the checkout is elsewhere.
+
+The deterministic NeMo Fabric test uses a finite test harness. A manual
 full-game run requires the NOOA ARC harness, its `arc` optional dependencies,
 and an external game service.
 

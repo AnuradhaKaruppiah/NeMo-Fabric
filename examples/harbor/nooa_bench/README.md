@@ -20,7 +20,7 @@ Harbor owns the task container, verification, reward, retries, and job layout.
 The BenchAgent adapter owns model construction, one task execution, normalized
 results, optional Relay telemetry, and cleanup.
 
-## Prepare the task image
+## Prepare the Task Image
 
 Complete the [shared Harbor setup](../README.md#shared-host-setup), clone OO
 Agents beside this repository, and set a valid NVIDIA API key:
@@ -44,7 +44,7 @@ in a fresh temporary directory and uses Maturin with Zig for manylinux 2.17
 compatibility, so the Python 3.12 Debian task image does not depend on the
 host's glibc version.
 
-## Run the baseline
+## Run the Baseline
 
 Run from the repository root:
 
@@ -73,7 +73,7 @@ uv run python examples/harbor/nooa_bench/verify_run.py \
   examples/harbor/nooa_bench/runs/nooa-bench-baseline
 ```
 
-## Run with Relay telemetry
+## Run with Relay Telemetry
 
 Repeat the same run with Relay enabled:
 

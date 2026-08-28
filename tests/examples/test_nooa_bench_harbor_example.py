@@ -114,7 +114,7 @@ def make_job(tmp_path: Path, *, relay: bool) -> Path:
     return job_dir
 
 
-def test_verify_accepts_rewarded_relay_run(tmp_path: Path) -> None:
+def test_verify_accepts_rewarded_relay_run(tmp_path: Path):
     summary = verify(make_job(tmp_path, relay=True), require_relay=True)
 
     assert summary["reward"] == 1.0

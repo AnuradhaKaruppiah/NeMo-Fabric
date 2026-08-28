@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import types
 from contextlib import asynccontextmanager
@@ -35,7 +36,9 @@ NOOA_ADAPTER_SOURCE = ROOT / "external" / "nooa" / "src"
 sys.path.insert(0, str(NOOA_ADAPTER_SOURCE))
 
 from nemo_fabric_adapters.nooa import adapter  # noqa: E402
+from nemo_fabric_adapters.nooa import model_support  # noqa: E402
 from nemo_fabric_adapters.nooa import telemetry as nooa_telemetry  # noqa: E402
+from nemo_fabric_adapters.nooa.targets import arc_solver  # noqa: E402
 
 
 def _workflow(**settings: Any) -> dict[str, Any]:
@@ -155,28 +158,29 @@ def install_target_fixture(monkeypatch: pytest.MonkeyPatch):
 def _install_deterministic_relay(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     invocations: list[Any] = []
 
-    class DeterministicRelayTelemetry:
-        def __init__(self, **_kwargs: Any):
-            pass
-
-        async def invoke(self, *, agent: Any, call: Any, **_kwargs: Any):
-            invocations.append(agent)
-            result = await call()
-            return nooa_telemetry.RelayInvocation(
-                result=result,
-                report=nooa_telemetry.RelayReport(
-                    enabled=True,
-                    artifacts=(
-                        {"kind": "atof", "path": "/safe/current-turn.jsonl"},
-                        {"kind": "atif", "path": "/safe/current-turn.json"},
-                    ),
+    async def invoke(*, agent: Any, call: Any, **_kwargs: Any):
+        invocations.append(agent)
+        result = await call()
+        return nooa_telemetry.RelayInvocation(
+            called=True,
+            result=result,
+            report=nooa_telemetry.RelayReport(
+                enabled=True,
+                artifacts=(
+                    {"kind": "atof", "path": "/safe/current-turn.jsonl"},
+                    {"kind": "atif", "path": "/safe/current-turn.json"},
                 ),
-            )
+            ),
+        )
 
-        async def close(self) -> None:
-            return None
-
-    monkeypatch.setattr(adapter, "RelayTelemetry", DeterministicRelayTelemetry)
+    mock_telemetry = MagicMock(name="relay_telemetry")
+    mock_telemetry.invoke = AsyncMock(side_effect=invoke)
+    mock_telemetry.close = AsyncMock()
+    monkeypatch.setattr(
+        adapter,
+        "RelayTelemetry",
+        MagicMock(name="RelayTelemetry", return_value=mock_telemetry),
+    )
     return invocations
 
 
@@ -389,6 +393,36 @@ def test_registered_target_rejects_mcp_tool_filters(tmp_path: Path):
         Fabric().plan(config, base_dir=tmp_path)
 
 
+def test_registered_target_rejects_mcp_authentication(tmp_path: Path):
+    config = FabricConfig(
+        metadata=MetadataConfig(name="nooa-authenticated-mcp-test"),
+        discovery=DiscoveryConfig(
+            local_paths=[
+                ROOT / "external" / "nooa",
+                ROOT / "tests" / "fixtures" / "nooa",
+            ]
+        ),
+        workflow=WorkflowConfig(
+            target_id="nvidia.tests.nooa.echo",
+            settings={},
+        ),
+    )
+    config.add_mcp_server(
+        "repository",
+        transport="streamable-http",
+        url="https://mcp.example.test",
+        authentication={
+            "type": "service_account",
+            "client_id": "fabric",
+            "client_secret_env": "MCP_CLIENT_SECRET",
+            "token_url": "https://identity.example.test/token",
+        },
+    )
+
+    with pytest.raises(FabricConfigError, match="authentication"):
+        Fabric().plan(config, base_dir=tmp_path)
+
+
 def test_registered_target_rejects_unknown_settings(tmp_path: Path):
     config = FabricConfig(
         metadata=MetadataConfig(name="nooa-test"),
@@ -406,6 +440,33 @@ def test_registered_target_rejects_unknown_settings(tmp_path: Path):
 
     with pytest.raises(FabricConfigError, match="workflow.settings"):
         Fabric().plan(config, base_dir=tmp_path)
+
+
+def test_interactive_runtime_registers_and_invokes_mcp_in_subprocess(
+    tmp_path: Path,
+):
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = os.pathsep.join(
+        (
+            str(ROOT / "tests" / "fixtures" / "nooa" / "src"),
+            str(NOOA_ADAPTER_SOURCE),
+        )
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-m", "fabric_nooa_mcp_runtime", str(tmp_path)],
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=10,
+        cwd=ROOT,
+        env=environment,
+    )
+    result = json.loads(completed.stdout)
+    assert result["status"] == "succeeded"
+    assert result["output"]["response"] == (
+        f"calculator via {sys.executable}: hello MCP"
+    )
 
 
 def test_main_opts_into_typed_agent_config(monkeypatch: pytest.MonkeyPatch):
@@ -590,24 +651,24 @@ async def test_relay_report_is_attached_without_replaying_target(
     agent.handle.side_effect = handle
     install_target(MagicMock(return_value=agent))
 
-    class FakeRelayTelemetry:
-        def __init__(self, **_kwargs: Any):
-            pass
+    async def invoke_telemetry(*, call: Any, **_kwargs: Any):
+        return nooa_telemetry.RelayInvocation(
+            called=True,
+            result=await call(),
+            report=nooa_telemetry.RelayReport(
+                enabled=True,
+                artifacts=({"kind": "atif", "path": "/safe/turn.json"},),
+            ),
+        )
 
-        async def invoke(self, *, call: Any, **_kwargs: Any):
-            result = await call()
-            return nooa_telemetry.RelayInvocation(
-                result=result,
-                report=nooa_telemetry.RelayReport(
-                    enabled=True,
-                    artifacts=({"kind": "atif", "path": "/safe/turn.json"},),
-                ),
-            )
-
-        async def close(self) -> None:
-            return None
-
-    monkeypatch.setattr(adapter, "RelayTelemetry", FakeRelayTelemetry)
+    mock_telemetry = MagicMock(name="relay_telemetry")
+    mock_telemetry.invoke = AsyncMock(side_effect=invoke_telemetry)
+    mock_telemetry.close = AsyncMock()
+    monkeypatch.setattr(
+        adapter,
+        "RelayTelemetry",
+        MagicMock(name="RelayTelemetry", return_value=mock_telemetry),
+    )
     runtime = adapter.NooaRuntime()
 
     await runtime.start(_start_payload(tmp_path))
@@ -636,23 +697,23 @@ async def test_relay_setup_failure_does_not_execute_target(
     agent, _channels, _handlers = _agent_double()
     install_target(MagicMock(return_value=agent))
 
-    class FailingRelayTelemetry:
-        def __init__(self, **_kwargs: Any):
-            pass
-
-        async def invoke(self, **_kwargs: Any):
-            return nooa_telemetry.RelayInvocation(
-                result=None,
-                report=nooa_telemetry.RelayReport(
-                    enabled=True,
-                    error="Relay setup failed (ImportError)",
-                ),
-            )
-
-        async def close(self) -> None:
-            return None
-
-    monkeypatch.setattr(adapter, "RelayTelemetry", FailingRelayTelemetry)
+    mock_telemetry = MagicMock(name="relay_telemetry")
+    mock_telemetry.invoke = AsyncMock(
+        return_value=nooa_telemetry.RelayInvocation(
+            called=False,
+            result=None,
+            report=nooa_telemetry.RelayReport(
+                enabled=True,
+                error="Relay setup failed (ImportError)",
+            ),
+        )
+    )
+    mock_telemetry.close = AsyncMock()
+    monkeypatch.setattr(
+        adapter,
+        "RelayTelemetry",
+        MagicMock(name="RelayTelemetry", return_value=mock_telemetry),
+    )
     runtime = adapter.NooaRuntime()
 
     await runtime.start(_start_payload(tmp_path))
@@ -888,7 +949,7 @@ async def test_runtime_registers_and_activates_whole_mcp_servers(
     mcp_module.MCPManager = manager
     monkeypatch.setitem(sys.modules, "nooa", nooa_module)
     monkeypatch.setitem(sys.modules, "nooa.mcp", mcp_module)
-    monkeypatch.setenv("NOOA_TEST_MCP_COMMAND", sys.executable)
+    os.environ["NOOA_TEST_MCP_COMMAND"] = sys.executable
 
     config = AgentConfig.from_mapping(
         {
@@ -933,9 +994,7 @@ async def test_runtime_registers_and_activates_whole_mcp_servers(
         call("mcp.calculator", stdio_tool),
         call("mcp.repository", http_tool),
     ]
-    agent.skills.activate.assert_called_once_with(
-        ["mcp.calculator", "mcp.repository"]
-    )
+    agent.skills.activate.assert_called_once_with(["mcp.calculator", "mcp.repository"])
     agent.close.assert_awaited_once_with()
 
 
@@ -1019,6 +1078,45 @@ async def test_runtime_rejects_unsupported_mcp_policy(
 
     assert error.value.code == expected_code
     agent.close.assert_awaited_once_with()
+
+
+async def test_model_construction_preserves_original_error_when_cleanup_fails(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    model = MagicMock(name="model")
+    model.aclose = AsyncMock(side_effect=RuntimeError("cleanup failed"))
+    get_llm_client = MagicMock(side_effect=[model, ValueError("construction failed")])
+    nooa_module = types.ModuleType("nooa")
+    nooa_module.__path__ = []  # type: ignore[attr-defined]
+    unifiedllm_module = types.ModuleType("nooa.unifiedllm")
+    unifiedllm_module.get_llm_client = get_llm_client
+    monkeypatch.setitem(sys.modules, "nooa", nooa_module)
+    monkeypatch.setitem(sys.modules, "nooa.unifiedllm", unifiedllm_module)
+    os.environ["OPENAI_API_KEY"] = "test-key"
+    config = AgentConfig.from_mapping(
+        {
+            "models": {
+                "first": {"provider": "openai", "model": "openai/first"},
+                "second": {"provider": "openai", "model": "openai/second"},
+            },
+            "workflow": _workflow(),
+        }
+    )
+
+    with pytest.raises(ValueError, match="construction failed") as error:
+        await model_support.build_models(config)
+
+    assert error.value.__notes__ == [
+        "OO Agents model cleanup also failed (RuntimeError)"
+    ]
+    model.aclose.assert_awaited_once_with()
+
+
+def test_arc_solver_stops_when_latest_state_is_unavailable():
+    agent = MagicMock(name="arc_solver")
+    agent.latest_state.return_value = None
+
+    assert arc_solver._continue_arc_session(agent, "DONE", "turn complete") is False
 
 
 async def test_coding_agent_target_runs_with_normalized_model_and_skills(
@@ -1206,7 +1304,7 @@ async def test_arc_solver_target_runs_custom_queue_to_harness_completion(
     skill_path.mkdir(parents=True)
     skill_file = skill_path / "SKILL.md"
     skill_file.write_text("---\nname: grid-game-solver\n---\n", encoding="utf-8")
-    monkeypatch.setenv("NVIDIA_API_KEY", "test-key")
+    os.environ["NVIDIA_API_KEY"] = "test-key"
     config = AgentConfig.from_mapping(
         {
             "models": {
@@ -1306,22 +1404,16 @@ def _install_relay_doubles(
     current = [root_handle]
     scope_metadata: list[dict[str, Any]] = []
 
-    class Scope:
-        @staticmethod
-        def get_handle() -> Any:
-            return current[0]
-
-        @staticmethod
-        @contextmanager
-        def scope(_name: str, _kind: Any, *, metadata: dict[str, Any]):
-            scope_metadata.append(metadata)
-            current[0] = child_handle
-            try:
-                yield child_handle
-            finally:
-                if leak_scope:
-                    raise RuntimeError("scope leaked secret=do-not-report")
-                current[0] = root_handle
+    @contextmanager
+    def enter_scope(_name: str, _kind: Any, *, metadata: dict[str, Any]):
+        scope_metadata.append(metadata)
+        current[0] = child_handle
+        try:
+            yield child_handle
+        finally:
+            if leak_scope:
+                raise RuntimeError("scope leaked secret=do-not-report")
+            current[0] = root_handle
 
     @asynccontextmanager
     async def activate(_config: dict[str, Any]):
@@ -1334,7 +1426,9 @@ def _install_relay_doubles(
     relay_module.__path__ = []  # type: ignore[attr-defined]
     relay_module.ScopeType = SimpleNamespace(Agent="agent")
     relay_module.plugin = SimpleNamespace(plugin=activate)
-    relay_module.scope = Scope
+    relay_module.scope = MagicMock(name="scope")
+    relay_module.scope.get_handle.side_effect = lambda: current[0]
+    relay_module.scope.scope.side_effect = enter_scope
     nooa_module = types.ModuleType("nooa")
     nooa_module.__path__ = []  # type: ignore[attr-defined]
     middleware_module = types.ModuleType("nooa.nemo_relay_middleware")
@@ -1354,10 +1448,7 @@ async def test_relay_lifecycle_correlates_once_and_collects_current_artifacts(
     monkeypatch: pytest.MonkeyPatch,
 ):
     runtime_context = _relay_context(tmp_path)
-    monkeypatch.setenv(
-        "FABRIC_RELAY_CONFIG_PATH",
-        str(runtime_context.telemetry.config_path),
-    )
+    os.environ["FABRIC_RELAY_CONFIG_PATH"] = str(runtime_context.telemetry.config_path)
     monkeypatch.setattr(
         nooa_telemetry.importlib.metadata,
         "version",
@@ -1416,6 +1507,7 @@ async def test_relay_lifecycle_correlates_once_and_collects_current_artifacts(
     )
 
     assert calls == 1
+    assert result.called is True
     assert result.result == "terminal-result"
     assert result.report == nooa_telemetry.RelayReport(
         enabled=True,
@@ -1430,6 +1522,44 @@ async def test_relay_lifecycle_correlates_once_and_collects_current_artifacts(
             "nemo_fabric_runtime_id": "runtime-1",
         }
     ]
+
+
+async def test_relay_records_that_target_returned_none():
+    telemetry = nooa_telemetry.RelayTelemetry(
+        agent_name="test-agent",
+        base_dir=ROOT,
+        config=AgentConfig.from_mapping({"workflow": _workflow()}),
+    )
+    call_target = AsyncMock(return_value=None)
+
+    result = await telemetry.invoke(
+        agent=SimpleNamespace(event_manager=MagicMock()),
+        runtime_context=_invocation()[1],
+        call=call_target,
+    )
+
+    assert result.called is True
+    assert result.result is None
+    assert result.report is None
+    call_target.assert_awaited_once_with()
+
+
+@pytest.mark.parametrize(
+    ("current", "expected"),
+    [(None, True), (SimpleNamespace(uuid="child"), False)],
+)
+def test_relay_scope_comparison_handles_absent_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+    current: Any,
+    expected: bool,
+):
+    monkeypatch.setattr(
+        nooa_telemetry,
+        "_scope_handle",
+        MagicMock(return_value=current),
+    )
+
+    assert nooa_telemetry._scope_unchanged(None) is expected
 
 
 @pytest.mark.usefixtures("nemo_relay")
@@ -1480,7 +1610,7 @@ async def test_relay_072_emits_correlated_atof_and_atif(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("FABRIC_RELAY_CONFIG_PATH", str(config_path))
+    os.environ["FABRIC_RELAY_CONFIG_PATH"] = str(config_path)
 
     install = MagicMock(return_value=MagicMock())
     nooa_module = types.ModuleType("nooa")
@@ -1528,10 +1658,7 @@ async def test_relay_scope_leak_preserves_result_and_quarantines_later_turns(
     monkeypatch: pytest.MonkeyPatch,
 ):
     runtime_context = _relay_context(tmp_path)
-    monkeypatch.setenv(
-        "FABRIC_RELAY_CONFIG_PATH",
-        str(runtime_context.telemetry.config_path),
-    )
+    os.environ["FABRIC_RELAY_CONFIG_PATH"] = str(runtime_context.telemetry.config_path)
     monkeypatch.setattr(
         nooa_telemetry.importlib.metadata,
         "version",
@@ -1606,10 +1733,7 @@ async def test_incompatible_relay_fails_before_target_execution(
     monkeypatch: pytest.MonkeyPatch,
 ):
     runtime_context = _relay_context(tmp_path)
-    monkeypatch.setenv(
-        "FABRIC_RELAY_CONFIG_PATH",
-        str(runtime_context.telemetry.config_path),
-    )
+    os.environ["FABRIC_RELAY_CONFIG_PATH"] = str(runtime_context.telemetry.config_path)
     monkeypatch.setattr(
         nooa_telemetry.importlib.metadata,
         "version",
@@ -1629,5 +1753,6 @@ async def test_incompatible_relay_fails_before_target_execution(
     )
 
     assert result.result is None
+    assert result.called is False
     assert result.report.error == "Relay setup failed (RuntimeError)"
     call.assert_not_awaited()

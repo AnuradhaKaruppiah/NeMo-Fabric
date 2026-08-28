@@ -57,7 +57,7 @@ async def main() -> None:
     parser.add_argument(
         "--stream",
         action="store_true",
-        help="Stream Relay ATOF records and then print the separate terminal result.",
+        help="Collect Relay ATOF records and print them with the terminal result.",
     )
     parser.add_argument(
         "--plan",

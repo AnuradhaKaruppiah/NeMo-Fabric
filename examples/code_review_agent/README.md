@@ -75,8 +75,8 @@ combined.
 
 Install Relay as described in the
 [Relay installation guide](../../docs/getting-started/install.mdx#install-nemo-relay),
-and then enable Relay telemetry and stream Agent Trajectory Observability
-Format (ATOF) records:
+and then enable Relay telemetry and collect Agent Trajectory Observability
+Format (ATOF) stream records:
 
 ```bash
 .venv/bin/python -m examples.code_review_agent \
@@ -85,9 +85,10 @@ Format (ATOF) records:
   --input "Review calculator.py"
 ```
 
-The stream contains Relay ATOF records. The command prints the terminal result
-separately after the stream ends. Omit `--stream` to collect Relay artifacts
-without printing records as they arrive.
+The command collects Relay ATOF records and then prints one JSON document with
+the records and the separate terminal result after the stream completes. Omit
+`--stream` to retain Relay artifacts without including the records in console
+output.
 
 ### Compose Capabilities in Python
 
@@ -174,7 +175,7 @@ it through the same `--variant` option. The variant discovers
 default demo.
 
 Its Relay integration requires `nemo-relay>=0.7.2,<0.8`. The `--stream` option
-streams Relay ATOF records; it is not native model-response streaming.
+collects Relay ATOF records; it is not native model-response streaming.
 
 ### Pi (`pi`)
 

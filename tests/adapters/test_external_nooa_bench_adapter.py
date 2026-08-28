@@ -136,7 +136,11 @@ def bench_dependencies_fixture(monkeypatch: pytest.MonkeyPatch):
     mock_telemetry = MagicMock(name="relay_telemetry")
 
     async def invoke_telemetry(*, call: Any, **_kwargs: Any):
-        return nooa_telemetry.RelayInvocation(result=await call(), report=None)
+        return nooa_telemetry.RelayInvocation(
+            called=True,
+            result=await call(),
+            report=None,
+        )
 
     mock_telemetry.invoke = AsyncMock(side_effect=invoke_telemetry)
     mock_telemetry.close = AsyncMock()

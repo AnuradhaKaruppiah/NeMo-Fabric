@@ -33,7 +33,6 @@ FIXTURE_SOURCE = FIXTURE_ROOT / "src"
 @pytest.mark.usefixtures("nemo_relay")
 async def test_nooa_relay_streams_correlated_atof_and_returns_once(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ):
     current_pythonpath = os.environ.get("PYTHONPATH")
     pythonpath = os.pathsep.join(
@@ -43,8 +42,8 @@ async def test_nooa_relay_streams_correlated_atof_and_returns_once(
             *([current_pythonpath] if current_pythonpath else []),
         ]
     )
-    monkeypatch.setenv("PYTHONPATH", pythonpath)
-    monkeypatch.setenv("ADAPTER_PYTHON", sys.executable)
+    os.environ["PYTHONPATH"] = pythonpath
+    os.environ["ADAPTER_PYTHON"] = sys.executable
 
     config = FabricConfig(
         metadata=MetadataConfig(name="nooa-relay-e2e"),

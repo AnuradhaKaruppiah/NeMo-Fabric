@@ -67,6 +67,20 @@ async def close_models(models: Mapping[str, Any]) -> None:
             await _await_if_needed(close())
 
 
+def selected_model(models: Mapping[str, Any], *, target_name: str) -> Any:
+    """Select the default or only model for an InteractiveAgent target."""
+
+    if "default" in models:
+        return models["default"]
+    if len(models) == 1:
+        return next(iter(models.values()))
+    raise _config_error(
+        "nooa_invalid_models",
+        f"{target_name} requires a default model or exactly one model",
+        field="models",
+    )
+
+
 async def build_models(config: AgentConfig) -> dict[str, Any]:
     """Translate normalized Fabric model roles into OO Agents clients."""
 
@@ -103,7 +117,12 @@ async def build_models(config: AgentConfig) -> dict[str, Any]:
                 client_type=client_type,
                 **overrides,
             )
-    except BaseException:
-        await close_models(result)
+    except BaseException as error:
+        try:
+            await close_models(result)
+        except BaseException as cleanup_error:
+            error.add_note(
+                f"OO Agents model cleanup also failed ({type(cleanup_error).__name__})"
+            )
         raise
     return result

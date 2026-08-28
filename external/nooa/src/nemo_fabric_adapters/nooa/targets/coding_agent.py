@@ -5,19 +5,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from nemo_fabric_adapters.nooa import InteractiveAgentBuildContext
-
-
-def _selected_model(models: Mapping[str, Any]) -> Any:
-    if "default" in models:
-        return models["default"]
-    if len(models) == 1:
-        return next(iter(models.values()))
-    raise ValueError("CodingAgent requires a default model or exactly one model")
+from nemo_fabric_adapters.nooa.model_support import selected_model
 
 
 def _register_skills(agent: Any, paths: tuple[Path, ...]) -> None:
@@ -51,7 +43,7 @@ def create_agent(context: InteractiveAgentBuildContext) -> Any:
         else context.base_dir / ".nooa" / "libs"
     )
     agent = CodingAgent(
-        llm=_selected_model(context.models),
+        llm=selected_model(context.models, target_name="CodingAgent"),
         cwd=context.workspace,
         libs_dir=libs_dir,
     )

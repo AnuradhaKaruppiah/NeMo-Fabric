@@ -328,12 +328,13 @@ class BenchRuntime:
             runtime_context=runtime_context,
             call=invoke_agent,
         )
-        if relay_invocation.result is None:
+        if not relay_invocation.called:
             result = _failure_output(
                 "nooa_bench_telemetry_setup_failed",
                 "OO Agents BenchAgent Relay telemetry setup failed before task execution",
             )
         else:
+            assert isinstance(relay_invocation.result, AgentRunResult)
             result = relay_invocation.result
         return _with_telemetry(result, relay_invocation.report)
 

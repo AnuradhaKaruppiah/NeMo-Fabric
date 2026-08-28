@@ -6,20 +6,12 @@
 from __future__ import annotations
 
 import importlib
-from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from nemo_fabric_adapters.nooa import InteractiveAgentBuildContext
 from nemo_fabric_adapters.nooa import InteractiveAgentTarget
-
-
-def _selected_model(models: Mapping[str, Any]) -> Any:
-    if "default" in models:
-        return models["default"]
-    if len(models) == 1:
-        return next(iter(models.values()))
-    raise ValueError("ARC solver requires a default model or exactly one model")
+from nemo_fabric_adapters.nooa.model_support import selected_model
 
 
 def _skill_file(paths: tuple[Path, ...]) -> Path | None:
@@ -53,7 +45,7 @@ def _continue_arc_session(agent: Any, reason: str, _explanation: str) -> bool:
         return False
     state = _latest_state(agent)
     if state is None:
-        return True
+        return False
     if state.get("state") in {"WIN", "GAME_OVER"}:
         return False
     note = state.get("note")
@@ -74,7 +66,7 @@ def create_agent(context: InteractiveAgentBuildContext) -> InteractiveAgentTarge
     settings = context.settings
     alias = "the game"
     agent = solver_class(
-        llm=_selected_model(context.models),
+        llm=selected_model(context.models, target_name="ARC solver"),
         run_dir=_run_dir(context),
         game_id=alias,
         alias=alias,

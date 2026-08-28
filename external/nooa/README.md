@@ -14,6 +14,8 @@ lifecycle contract. Choose the integration that matches the agent interface:
 | [BenchAgent adapter](docs/bench-agent.md) | `nooa_bench.BenchAgent` tasks and Harbor evaluations |
 
 The shared `nvidia.fabric.nooa` adapter owns the common NOOA queue dispatcher.
+It also maps normalized skill paths and whole MCP servers into compatible
+registered targets.
 The dedicated `nvidia.fabric.nooa.bench-agent` adapter maps the benchmark-native
 `BenchAgent` task contract directly into a NeMo Fabric invocation.
 

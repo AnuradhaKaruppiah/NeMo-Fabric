@@ -26,4 +26,8 @@ ENV PYTHONPATH=/opt/nemo-fabric-nooa/src
 
 COPY calculator.py /app/calculator.py
 
+RUN useradd --create-home --uid 10001 fabric \
+    && chown -R fabric:fabric /app
+
+USER fabric
 WORKDIR /app

@@ -50,6 +50,7 @@ class RelayReport:
 class RelayInvocation:
     """Functional outcome and its independently managed telemetry outcome."""
 
+    called: bool
     result: Any | None
     report: RelayReport | None
 
@@ -109,7 +110,9 @@ def _scope_identity(handle: Any) -> Any:
 def _scope_unchanged(baseline: Any) -> bool:
     baseline_identity = _scope_identity(baseline)
     current_identity = _scope_identity(_scope_handle())
-    if baseline_identity is None or baseline_identity is _UNREADABLE:
+    if baseline_identity is None:
+        return current_identity is None
+    if baseline_identity is _UNREADABLE:
         return False
     if current_identity is None or current_identity is _UNREADABLE:
         return False
@@ -194,13 +197,14 @@ class RelayTelemetry:
     ) -> RelayInvocation:
         telemetry = runtime_context.telemetry
         if telemetry is None or not telemetry.relay_enabled:
-            return RelayInvocation(result=await call(), report=None)
+            return RelayInvocation(called=True, result=await call(), report=None)
 
         providers = telemetry.metadata.get("telemetry_providers", ["relay"])
         if not isinstance(providers, list) or any(
             provider != "relay" for provider in providers
         ):
             return RelayInvocation(
+                called=False,
                 result=None,
                 report=RelayReport(
                     enabled=True,
@@ -210,6 +214,7 @@ class RelayTelemetry:
 
         if self._quarantine is not None:
             return RelayInvocation(
+                called=True,
                 result=await call(),
                 report=RelayReport(
                     enabled=True,
@@ -235,6 +240,7 @@ class RelayTelemetry:
                 type(error).__name__,
             )
             return RelayInvocation(
+                called=False,
                 result=None,
                 report=RelayReport(
                     enabled=True,
@@ -243,6 +249,7 @@ class RelayTelemetry:
             )
 
         baseline = _scope_handle()
+        called = False
         result: T | None = None
         scope_fault: str | None = None
         plugin_fault: str | None = None
@@ -263,6 +270,7 @@ class RelayTelemetry:
                             ScopeType.Agent,
                             metadata=metadata,
                         ):
+                            called = True
                             result = await call()
                     except asyncio.CancelledError:
                         raise
@@ -286,7 +294,7 @@ class RelayTelemetry:
 
         artifact_fault: str | None = None
         artifacts: tuple[dict[str, str], ...] = ()
-        if result is not None:
+        if called:
             try:
                 if relay_artifacts.expects_local_atif(plugin_config):
                     finalized = await relay_artifacts.wait_for_finalized_atif(
@@ -300,6 +308,7 @@ class RelayTelemetry:
                 artifact_fault = _safe_fault("Relay artifact finalization", error)
         telemetry_fault = _join_faults(telemetry_fault, artifact_fault)
         return RelayInvocation(
+            called=called,
             result=result,
             report=RelayReport(
                 enabled=True,
