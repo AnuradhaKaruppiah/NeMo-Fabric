@@ -104,6 +104,29 @@ result = asyncio.run(main())
 
 The result includes the submitted final output and API-call usage.
 
+## Continue a Task Across Invocations
+
+Use one runtime to retain mini-SWE-agent conversation history across ordered
+invocations:
+
+```python
+async with await Fabric().start_runtime(
+    config,
+    base_dir="/workspace",
+) as runtime:
+    first = await runtime.invoke(
+        input="Inspect calculator.py and identify the bug."
+    )
+    second = await runtime.invoke(input="Fix it and run the tests.")
+```
+
+Before the second model call, the adapter removes the previous terminal `exit`
+message and appends the new input as a user message. Earlier system, user,
+assistant, and `bash` tool observation messages remain in the model context,
+including command output. History lasts only for the same runtime and is
+discarded when the runtime stops. The adapter does not currently truncate or
+summarize retained history.
+
 ## Stream Relay Telemetry
 
 Install the runtime, mini-SWE-agent harness, and NeMo Relay Python package in

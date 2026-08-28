@@ -27,7 +27,13 @@ def _submitted_output(error: Submitted) -> dict[str, Any]:
 
 
 class RetainingDefaultAgent(DefaultAgent):
-    """Preserve mini-SWE-agent history across ordered Fabric invocations."""
+    """Preserve mini-SWE-agent history across ordered Fabric invocations.
+
+    Before a later run, remove the prior terminal exit message, append the new
+    task as a user message, and suppress ``DefaultAgent`` history
+    initialization. History remains in memory without truncation until the
+    runtime stops.
+    """
 
     _retain_messages = _skip_initial_messages = False
 

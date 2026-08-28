@@ -77,6 +77,62 @@ result = asyncio.run(main())
 
 The result includes the submitted final text and API-call usage.
 
+## Continue a Task Across Invocations
+
+Use one runtime for ordered invocations that should share mini-SWE-agent
+conversation history:
+
+```python
+async def continue_task():
+    async with await Fabric().start_runtime(
+        config,
+        base_dir="/workspace",
+    ) as runtime:
+        first = await runtime.invoke(
+            input="Inspect calculator.py and identify the bug."
+        )
+        second = await runtime.invoke(input="Fix it and run the tests.")
+    return first, second
+```
+
+For example, the first invocation can produce this conversation:
+
+```text
+system: You are a coding agent.
+user: Inspect calculator.py and identify the bug.
+assistant: I will inspect the file.
+assistant action: bash {"command": "cat calculator.py"}
+tool: def divide(a, b): return a // b
+assistant: The divide function uses // instead of /.
+assistant action: bash {"command": "printf 'COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\\nThe divide function uses integer division.\\n'"}
+tool: COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT
+      The divide function uses integer division.
+exit: Submitted
+```
+
+Before the second model call, the adapter removes the terminal `exit` message
+and appends the new input. The retained context resembles the following
+conversation:
+
+```text
+system: You are a coding agent.
+user: Inspect calculator.py and identify the bug.
+assistant: I will inspect the file.
+assistant action: bash {"command": "cat calculator.py"}
+tool: def divide(a, b): return a // b
+assistant: The divide function uses // instead of /.
+assistant action: bash {"command": "printf 'COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\\nThe divide function uses integer division.\\n'"}
+tool: COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT
+      The divide function uses integer division.
+user: Fix it and run the tests.
+```
+
+Assistant messages and output from commands executed through the `bash` tool
+are part of the retained model context. Unrelated terminal output is not
+retained. History lasts only for the same runtime and is discarded when the
+runtime stops. The adapter does not currently truncate or summarize retained
+history, so repeated invocations can increase model context usage.
+
 ## Relay Telemetry
 
 When Relay is enabled, the adapter uses a Relay-specific mini-SWE-agent subclass
