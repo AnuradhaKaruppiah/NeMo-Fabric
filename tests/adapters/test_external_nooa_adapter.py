@@ -1524,23 +1524,68 @@ async def test_relay_lifecycle_correlates_once_and_collects_current_artifacts(
     ]
 
 
-async def test_relay_records_that_target_returned_none():
+async def test_relay_records_none_result_and_collects_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    runtime_context = _relay_context(tmp_path)
+    os.environ["FABRIC_RELAY_CONFIG_PATH"] = str(runtime_context.telemetry.config_path)
+    monkeypatch.setattr(
+        nooa_telemetry.importlib.metadata,
+        "version",
+        MagicMock(return_value="0.7.2"),
+    )
+    monkeypatch.setattr(
+        nooa_telemetry.common_utils,
+        "reject_ambient_relay_plugin_config",
+        MagicMock(),
+    )
+    monkeypatch.setattr(
+        nooa_telemetry.common_utils,
+        "reject_inherited_relay_plugin_config",
+        MagicMock(),
+    )
+    monkeypatch.setattr(
+        nooa_telemetry, "_artifact_snapshot", MagicMock(return_value={})
+    )
+    changed_artifacts = MagicMock(
+        return_value=({"kind": "atof", "path": "/safe/current.jsonl"},)
+    )
+    monkeypatch.setattr(nooa_telemetry, "_changed_artifacts", changed_artifacts)
+    monkeypatch.setattr(
+        nooa_telemetry.relay_artifacts,
+        "snapshot_atif_files",
+        MagicMock(return_value={}),
+    )
+    monkeypatch.setattr(
+        nooa_telemetry.relay_artifacts,
+        "expects_local_atif",
+        MagicMock(return_value=False),
+    )
+    _install_relay_doubles(monkeypatch)
     telemetry = nooa_telemetry.RelayTelemetry(
         agent_name="test-agent",
-        base_dir=ROOT,
+        base_dir=tmp_path,
         config=AgentConfig.from_mapping({"workflow": _workflow()}),
+    )
+    monkeypatch.setattr(
+        telemetry, "_plugin_config", MagicMock(return_value={"components": []})
     )
     call_target = AsyncMock(return_value=None)
 
     result = await telemetry.invoke(
         agent=SimpleNamespace(event_manager=MagicMock()),
-        runtime_context=_invocation()[1],
+        runtime_context=runtime_context,
         call=call_target,
     )
 
     assert result.called is True
     assert result.result is None
-    assert result.report is None
+    assert result.report == nooa_telemetry.RelayReport(
+        enabled=True,
+        artifacts=({"kind": "atof", "path": "/safe/current.jsonl"},),
+    )
+    changed_artifacts.assert_called_once_with({"components": []}, {})
     call_target.assert_awaited_once_with()
 
 
