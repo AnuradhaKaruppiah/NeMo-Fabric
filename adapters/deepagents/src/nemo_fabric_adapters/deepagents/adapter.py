@@ -18,6 +18,7 @@ import math
 import os
 import uuid
 from collections.abc import Callable
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 from typing import NamedTuple
@@ -689,7 +690,7 @@ class DeepAgentsRuntime:
     async def _invoke_with_telemetry(
         self,
         user_message: str,
-        request_id: str | None,
+        request_id: str,
     ) -> TurnOutcome:
         """Run one turn inside the Relay plugin/scope, isolating telemetry faults.
 
@@ -718,15 +719,17 @@ class DeepAgentsRuntime:
                 # plugin's ``__aexit__`` is replaced by any fault the plugin raises in
                 # turn, which would lose one of the two.
                 try:
-                    with self._relay_scope.scope(
-                        "deepagents-request",
-                        self._relay_scope_type.Agent,
-                        metadata={"nemo_fabric_request_id": request_id},
-                    ):
-                        outcome = await self._invoke_agent(
-                            user_message,
-                            callbacks=[callback_handler],
-                        )
+                    request_context, metadata = _relay_request_context(request_id)
+                    with request_context:
+                        with self._relay_scope.scope(
+                            "deepagents-request",
+                            self._relay_scope_type.Agent,
+                            metadata=metadata,
+                        ):
+                            outcome = await self._invoke_agent(
+                                user_message,
+                                callbacks=[callback_handler],
+                            )
                 except Exception as exc:
                     scope_error = _error_text(exc)
         except Exception as exc:  # telemetry lifecycle fault
@@ -957,6 +960,23 @@ def _join_faults(*faults: str | None) -> str | None:
     if not present:
         return None
     return "; ".join(present)
+
+
+def _relay_request_context(request_id: str) -> tuple[Any, dict[str, str]]:
+    """Use a UUID request id as Relay's propagated root, or preserve it as metadata."""
+
+    try:
+        request_uuid = str(uuid.UUID(request_id))
+    except ValueError:
+        return nullcontext(), {"nemo_fabric_request_id": request_id}
+
+    from nemo_relay import PropagationContext
+    from nemo_relay import create_scope_stack_from_propagation
+    from nemo_relay import use_scope_stack
+
+    propagation = PropagationContext(request_uuid, root_uuid=request_uuid)
+    stack = create_scope_stack_from_propagation(propagation)
+    return use_scope_stack(stack), {}
 
 
 def _relay_dependency_error() -> RuntimeError:
