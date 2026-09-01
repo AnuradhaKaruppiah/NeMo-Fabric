@@ -262,13 +262,14 @@ def fake_relay_fixture(monkeypatch):
     class ScopeType:
         Agent = "agent"
 
-    class PropagationContext:
-        def __init__(self, parent_uuid: str, root_uuid: str | None = None) -> None:
-            self.parent_uuid = parent_uuid
-            self.root_uuid = root_uuid
-            calls.setdefault("propagation_contexts", []).append(
-                (parent_uuid, root_uuid)
-            )
+    def build_propagation_context(
+        parent_uuid: str,
+        root_uuid: str | None = None,
+    ) -> types.SimpleNamespace:
+        calls.setdefault("propagation_contexts", []).append((parent_uuid, root_uuid))
+        return types.SimpleNamespace(parent_uuid=parent_uuid, root_uuid=root_uuid)
+
+    propagation_context = MagicMock(side_effect=build_propagation_context)
 
     class _Handle:
         """Stand-in for nemo_relay ScopeHandle; the adapter compares ``uuid``."""
@@ -304,13 +305,13 @@ def fake_relay_fixture(monkeypatch):
         return stack[-1]
 
     def create_scope_stack_from_propagation(
-        context: PropagationContext,
-    ) -> PropagationContext:
+        context: types.SimpleNamespace,
+    ) -> types.SimpleNamespace:
         calls.setdefault("propagation_stacks", []).append(context)
         return context
 
     @contextlib.contextmanager
-    def use_scope_stack(context: PropagationContext) -> Iterator[None]:
+    def use_scope_stack(context: types.SimpleNamespace) -> Iterator[None]:
         calls.setdefault("used_propagation_stacks", []).append(context)
         yield
 
@@ -330,7 +331,7 @@ def fake_relay_fixture(monkeypatch):
     relay_root.plugin = plugin_mod
     relay_root.scope = scope_mod
     relay_root.ScopeType = ScopeType
-    relay_root.PropagationContext = PropagationContext
+    relay_root.PropagationContext = propagation_context
     relay_root.create_scope_stack_from_propagation = create_scope_stack_from_propagation
     relay_root.use_scope_stack = use_scope_stack
     integrations_pkg = types.ModuleType("nemo_relay.integrations")
