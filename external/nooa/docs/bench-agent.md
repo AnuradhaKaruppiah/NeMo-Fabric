@@ -53,7 +53,7 @@ core, and `nooa-bench`. The NeMo Fabric configuration bundle must expose
 
 Follow the runnable
 [BenchAgent Harbor walkthrough](../../../examples/harbor/nooa_bench/README.md)
-to prepare the task image, run the baseline, verify Harbor's reward, and
+to prepare the task image, run the baseline, verify the Harbor reward, and
 validate Relay artifacts.
 
 ## Relay Telemetry

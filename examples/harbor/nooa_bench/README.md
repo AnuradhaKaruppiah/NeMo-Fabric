@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Run NVIDIA-labs Object Oriented Agents (NOOA) BenchAgent with Harbor
 
-This walkthrough evaluates NOOA `BenchAgent` through NVIDIA NeMo Fabric's
+This walkthrough evaluates NOOA `BenchAgent` through an NVIDIA NeMo Fabric
 complete Harbor path:
 
 ```mermaid
@@ -39,10 +39,10 @@ context:
 ```
 
 The task image installs `nemo-relay>=0.7.2,<0.8`, NOOA core, `nooa-cli`,
-`nooa-bench`, and the BenchAgent adapter. `prepare.sh` builds every Fabric wheel
+`nooa-bench`, and the BenchAgent adapter. `prepare.sh` builds every NeMo Fabric wheel
 in a fresh temporary directory and uses Maturin with Zig for manylinux 2.17
 compatibility, so the Python 3.12 Debian task image does not depend on the
-host's glibc version.
+glibc version installed in the host.
 
 ## Run the Baseline
 
