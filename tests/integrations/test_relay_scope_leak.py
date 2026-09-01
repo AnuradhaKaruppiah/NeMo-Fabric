@@ -171,7 +171,7 @@ async def test_uuid_request_id_seeds_real_relay_parent(monkeypatch):
     assert outcome.error is None
     assert outcome.telemetry_error is None
     assert recording_scope.parent_uuids == [request_id]
-    assert recording_scope.metadata == [{}]
+    assert recording_scope.metadata == [{"nemo_fabric_request_id": request_id}]
     assert nemo_relay.scope.get_handle().uuid == baseline.uuid
 
 

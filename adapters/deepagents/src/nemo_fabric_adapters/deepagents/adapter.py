@@ -963,12 +963,14 @@ def _join_faults(*faults: str | None) -> str | None:
 
 
 def _relay_request_context(request_id: str) -> tuple[Any, dict[str, str]]:
-    """Use a UUID request id as Relay's propagated root, or preserve it as metadata."""
+    """Use a UUID request id as Relay's propagated root and preserve its metadata."""
+
+    metadata = {"nemo_fabric_request_id": request_id}
 
     try:
         request_uuid = str(uuid.UUID(request_id))
     except ValueError:
-        return nullcontext(), {"nemo_fabric_request_id": request_id}
+        return nullcontext(), metadata
 
     from nemo_relay import PropagationContext
     from nemo_relay import create_scope_stack_from_propagation
@@ -976,7 +978,7 @@ def _relay_request_context(request_id: str) -> tuple[Any, dict[str, str]]:
 
     propagation = PropagationContext(request_uuid, root_uuid=request_uuid)
     stack = create_scope_stack_from_propagation(propagation)
-    return use_scope_stack(stack), {}
+    return use_scope_stack(stack), metadata
 
 
 def _relay_dependency_error() -> RuntimeError:
