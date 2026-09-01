@@ -254,10 +254,21 @@ async def _register_mcp_servers(agent: Any, config: AgentConfig) -> None:
                 env=dict(server.env),
             )
         else:
+            try:
+                headers = common_utils.expand_http_headers(
+                    name,
+                    dict(server.custom_headers),
+                )
+            except (TypeError, ValueError) as error:
+                raise _config_error(
+                    "nooa_invalid_mcp_server",
+                    f"OO Agents MCP server {name!r} has invalid custom headers",
+                    server=name,
+                ) from error
             tool = await MCPManager.create_url_server(
                 name,
                 target,
-                headers=dict(server.custom_headers),
+                headers=headers,
                 transport=transport,
             )
 

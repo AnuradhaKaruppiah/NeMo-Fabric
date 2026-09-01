@@ -66,12 +66,16 @@ def _start_payload(tmp_path: Path) -> dict[str, Any]:
     }
 
 
-def _runtime_context() -> RuntimeContext:
+def _runtime_context(
+    *,
+    invocation_id: str = "invocation-1",
+    request_id: str = "request-1",
+) -> RuntimeContext:
     return RuntimeContext.from_mapping(
         {
             "runtime_id": "runtime-1",
-            "invocation_id": "invocation-1",
-            "request_id": "request-1",
+            "invocation_id": invocation_id,
+            "request_id": request_id,
             "environment": {
                 "environment_id": "environment-1",
                 "provider": "test",
@@ -92,28 +96,35 @@ def bench_dependencies_fixture(monkeypatch: pytest.MonkeyPatch):
     unifiedllm.get_llm_client = mock_get_llm_client
     monkeypatch.setitem(sys.modules, unifiedllm.__name__, unifiedllm)
 
-    mock_initial_shell = MagicMock(name="initial_shell")
-    mock_initial_shell.close = AsyncMock()
-    mock_task_shell = MagicMock(name="task_shell")
-    mock_task_shell.close = AsyncMock()
-    mock_agent = MagicMock(name="bench_agent")
-    mock_agent.shell = mock_initial_shell
-    mock_agent.event_manager = MagicMock(name="event_manager")
+    def agent_double(index: int) -> tuple[MagicMock, MagicMock, MagicMock]:
+        mock_initial_shell = MagicMock(name=f"initial_shell_{index}")
+        mock_initial_shell.close = AsyncMock()
+        mock_task_shell = MagicMock(name=f"task_shell_{index}")
+        mock_task_shell.close = AsyncMock()
+        mock_agent = MagicMock(name=f"bench_agent_{index}")
+        mock_agent.shell = mock_initial_shell
+        mock_agent.event_manager = MagicMock(name=f"event_manager_{index}")
 
-    async def run_evaluation(task_input: dict[str, Any]) -> dict[str, Any]:
-        mock_agent.shell = mock_task_shell
-        return {
-            "response": "pytest -q",
-            "success": True,
-            "result": {
-                "solution_description": "Fixed the defect.",
-                "evidence": "pytest passed",
-                "command_to_verify": "pytest -q",
-            },
-        }
+        async def run_evaluation(task_input: dict[str, Any]) -> dict[str, Any]:
+            mock_agent.shell = mock_task_shell
+            return {
+                "response": "pytest -q",
+                "success": True,
+                "result": {
+                    "solution_description": "Fixed the defect.",
+                    "evidence": "pytest passed",
+                    "command_to_verify": "pytest -q",
+                },
+            }
 
-    mock_agent._run_evaluation = AsyncMock(side_effect=run_evaluation)
-    mock_bench_agent = MagicMock(return_value=mock_agent)
+        mock_agent._run_evaluation = AsyncMock(side_effect=run_evaluation)
+        return mock_agent, mock_initial_shell, mock_task_shell
+
+    agent_doubles = [agent_double(index) for index in range(2)]
+    mock_agents = [item[0] for item in agent_doubles]
+    mock_initial_shells = [item[1] for item in agent_doubles]
+    mock_task_shells = [item[2] for item in agent_doubles]
+    mock_bench_agent = MagicMock(side_effect=mock_agents)
     bench_module = types.ModuleType("nooa_bench.bench_agent")
     bench_module.BenchAgent = mock_bench_agent
     bench_package = types.ModuleType("nooa_bench")
@@ -148,14 +159,18 @@ def bench_dependencies_fixture(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(bench_adapter, "RelayTelemetry", mock_relay_telemetry)
 
     return {
-        "agent": mock_agent,
+        "agent": mock_agents[0],
+        "agents": mock_agents,
         "bench_agent": mock_bench_agent,
         "get_llm_client": mock_get_llm_client,
-        "initial_shell": mock_initial_shell,
+        "initial_shell": mock_initial_shells[0],
+        "initial_shells": mock_initial_shells,
         "model": mock_model,
         "relay_telemetry": mock_relay_telemetry,
         "start_task_tokens": mock_start_task_tokens,
-        "task_shell": mock_task_shell,
+        "task_shell": mock_task_shells[0],
+        "task_shells": mock_task_shells,
+        "telemetry": mock_telemetry,
     }
 
 
@@ -260,6 +275,54 @@ async def test_bench_runtime_maps_task_result_usage_and_cleanup(
         config=_config(),
         scope_name="nooa-bench-agent-request",
     )
+
+
+async def test_bench_runtime_isolates_agents_between_invocations(
+    tmp_path: Path,
+    bench_dependencies: dict[str, MagicMock],
+):
+    os.environ["OPENAI_API_KEY"] = "test-key"
+    runtime = bench_adapter.BenchRuntime()
+    await runtime.start(_start_payload(tmp_path))
+
+    first = await runtime.invoke(
+        AgentRunRequest.from_mapping({"input": "Fix the first task."}),
+        _runtime_context(),
+    )
+    second = await runtime.invoke(
+        AgentRunRequest.from_mapping({"input": "Fix the second task."}),
+        _runtime_context(invocation_id="invocation-2", request_id="request-2"),
+    )
+    await runtime.stop()
+
+    agents = bench_dependencies["agents"]
+    assert agents[0] is not agents[1]
+    assert bench_dependencies["bench_agent"].call_count == 2
+    assert [
+        item.kwargs["agent"]
+        for item in bench_dependencies["telemetry"].invoke.await_args_list
+    ] == agents
+    agents[0]._run_evaluation.assert_awaited_once_with(
+        {
+            "user_message": "Fix the first task.",
+            "working_dir": str(tmp_path / "workspace"),
+            "instructions": "Work carefully.",
+        }
+    )
+    agents[1]._run_evaluation.assert_awaited_once_with(
+        {
+            "user_message": "Fix the second task.",
+            "working_dir": str(tmp_path / "workspace"),
+            "instructions": "Work carefully.",
+        }
+    )
+    for shell in (
+        *bench_dependencies["initial_shells"],
+        *bench_dependencies["task_shells"],
+    ):
+        shell.close.assert_awaited_once_with()
+    assert first.status is second.status is AgentRunStatus.SUCCEEDED
+    bench_dependencies["model"].aclose.assert_awaited_once_with()
 
 
 async def test_bench_runtime_returns_safe_failure(

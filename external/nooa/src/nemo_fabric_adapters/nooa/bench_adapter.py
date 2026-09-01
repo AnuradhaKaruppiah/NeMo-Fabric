@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -190,18 +191,19 @@ def _with_telemetry(
 
 
 class BenchRuntime:
-    """One OO Agents BenchAgent owned by one Fabric runtime."""
+    """Runtime-owned model resources that create one BenchAgent per invocation."""
 
     def __init__(self) -> None:
         self._runtime_id: str | None = None
-        self._agent: Any | None = None
+        self._bench_agent_factory: Callable[..., Any] | None = None
+        self._model_role: str | None = None
         self._models: dict[str, Any] = {}
         self._workspace: Path | None = None
         self._instruction: str | None = None
         self._telemetry: RelayTelemetry | None = None
 
     async def start(self, payload: dict[str, Any]) -> None:
-        if self._agent is not None:
+        if self._bench_agent_factory is not None:
             raise lifecycle.LifecycleError(
                 "nooa_bench_runtime_already_started",
                 "OO Agents BenchAgent runtime is already started",
@@ -210,7 +212,7 @@ class BenchRuntime:
         config = _agent_config(payload)
         role = _selected_model_role(config)
         models: dict[str, Any] = {}
-        agent: Any | None = None
+        bench_agent_factory: Callable[..., Any] | None = None
         telemetry: RelayTelemetry | None = None
         try:
             runtime_id = common_utils.runtime_id(payload)
@@ -219,7 +221,7 @@ class BenchRuntime:
             models = await build_models(config)
             from nooa_bench.bench_agent import BenchAgent
 
-            agent = BenchAgent(llm=models[role])
+            bench_agent_factory = BenchAgent
             telemetry = RelayTelemetry(
                 agent_name=common_utils.agent_name(payload),
                 base_dir=base_dir,
@@ -227,22 +229,16 @@ class BenchRuntime:
                 scope_name="nooa-bench-agent-request",
             )
         except asyncio.CancelledError:
-            if agent is not None:
-                await _close_shell(agent)
             await close_models(models)
             if telemetry is not None:
                 await telemetry.close()
             raise
         except lifecycle.LifecycleError:
-            if agent is not None:
-                await _close_shell(agent)
             await close_models(models)
             if telemetry is not None:
                 await telemetry.close()
             raise
         except Exception as error:
-            if agent is not None:
-                await _close_shell(agent)
             await close_models(models)
             if telemetry is not None:
                 await telemetry.close()
@@ -251,8 +247,10 @@ class BenchRuntime:
                 "OO Agents BenchAgent failed to start",
             ) from error
 
+        assert bench_agent_factory is not None
         self._runtime_id = runtime_id
-        self._agent = agent
+        self._bench_agent_factory = bench_agent_factory
+        self._model_role = role
         self._models = models
         self._workspace = workspace
         self._instruction = _system_instruction(config)
@@ -264,7 +262,8 @@ class BenchRuntime:
         runtime_context: RuntimeContext,
     ) -> AgentRunResult:
         if (
-            self._agent is None
+            self._bench_agent_factory is None
+            or self._model_role is None
             or self._runtime_id is None
             or self._workspace is None
             or self._telemetry is None
@@ -284,7 +283,19 @@ class BenchRuntime:
                 "OO Agents BenchAgent input must be a string",
             )
 
-        agent = self._agent
+        try:
+            agent = self._bench_agent_factory(llm=self._models[self._model_role])
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            LOGGER.error(
+                "OO Agents BenchAgent construction failed (error_type=%s)",
+                type(error).__name__,
+            )
+            return _failure_output(
+                "nooa_bench_invoke_failed",
+                "OO Agents BenchAgent invocation failed; inspect adapter stderr for details",
+            )
 
         async def invoke_agent() -> AgentRunResult:
             task_input: dict[str, Any] = {
@@ -323,11 +334,31 @@ class BenchRuntime:
                     "OO Agents BenchAgent invocation failed; inspect adapter stderr for details",
                 )
 
-        relay_invocation = await self._telemetry.invoke(
-            agent=agent,
-            runtime_context=runtime_context,
-            call=invoke_agent,
-        )
+        try:
+            relay_invocation = await self._telemetry.invoke(
+                agent=agent,
+                runtime_context=runtime_context,
+                call=invoke_agent,
+            )
+        except BaseException:
+            try:
+                await _close_shell(agent)
+            except BaseException as cleanup_error:
+                LOGGER.error(
+                    "OO Agents BenchAgent cleanup failed while preserving invocation failure "
+                    "(error_type=%s)",
+                    type(cleanup_error).__name__,
+                )
+            raise
+        try:
+            await _close_shell(agent)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            raise lifecycle.LifecycleError(
+                "nooa_bench_invoke_cleanup_failed",
+                "OO Agents BenchAgent invocation failed to clean up",
+            ) from error
         if not relay_invocation.called:
             result = _failure_output(
                 "nooa_bench_telemetry_setup_failed",
@@ -339,11 +370,11 @@ class BenchRuntime:
         return _with_telemetry(result, relay_invocation.report)
 
     async def stop(self) -> None:
-        agent = self._agent
         models = self._models
         telemetry = self._telemetry
         self._runtime_id = None
-        self._agent = None
+        self._bench_agent_factory = None
+        self._model_role = None
         self._models = {}
         self._workspace = None
         self._instruction = None
@@ -354,12 +385,6 @@ class BenchRuntime:
                 await telemetry.close()
             except BaseException as error:
                 primary = error
-        if agent is not None:
-            try:
-                await _close_shell(agent)
-            except BaseException as error:
-                if primary is None:
-                    primary = error
         try:
             await close_models(models)
         except BaseException as error:

@@ -15,7 +15,7 @@
         "reflect_every": {"type": "integer", "minimum": 1},
         "visual": {"type": "string", "enum": ["off", "only", "additive"]},
         "png_scale": {"type": "integer", "minimum": 1},
-        "max_actions_per_turn": {"type": "integer", "minimum": 0}
+        "max_actions_per_turn": {"type": "integer", "minimum": 1}
       },
       "additionalProperties": false
     }

@@ -275,6 +275,20 @@ def test_registered_arc_target_projects_closed_settings(tmp_path: Path):
     }
 
 
+def test_registered_arc_target_rejects_zero_max_actions(tmp_path: Path):
+    config = FabricConfig(
+        metadata=MetadataConfig(name="nooa-arc-test"),
+        discovery=DiscoveryConfig(local_paths=[ROOT / "external" / "nooa"]),
+        workflow=WorkflowConfig(
+            target_id="nvidia.nooa.arc-solver",
+            settings={"max_actions_per_turn": 0},
+        ),
+    )
+
+    with pytest.raises(FabricConfigError, match="max_actions_per_turn"):
+        Fabric().plan(config, base_dir=tmp_path)
+
+
 @pytest.mark.parametrize(
     "settings",
     [
@@ -950,6 +964,7 @@ async def test_runtime_registers_and_activates_whole_mcp_servers(
     monkeypatch.setitem(sys.modules, "nooa", nooa_module)
     monkeypatch.setitem(sys.modules, "nooa.mcp", mcp_module)
     os.environ["NOOA_TEST_MCP_COMMAND"] = sys.executable
+    os.environ["MCP_ACCESS_TOKEN"] = "test-token"
 
     config = AgentConfig.from_mapping(
         {
@@ -964,7 +979,9 @@ async def test_runtime_registers_and_activates_whole_mcp_servers(
                     "repository": {
                         "transport": "streamable-http",
                         "url": "https://mcp.example.test/api",
-                        "custom_headers": {"X-Test": "value"},
+                        "custom_headers": {
+                            "Authorization": "Bearer ${MCP_ACCESS_TOKEN}"
+                        },
                     },
                 }
             },
@@ -987,7 +1004,7 @@ async def test_runtime_registers_and_activates_whole_mcp_servers(
     manager.create_url_server.assert_awaited_once_with(
         "repository",
         "https://mcp.example.test/api",
-        headers={"X-Test": "value"},
+        headers={"Authorization": "Bearer test-token"},
         transport="streamable-http",
     )
     assert agent.skills.register.call_args_list == [
@@ -995,6 +1012,48 @@ async def test_runtime_registers_and_activates_whole_mcp_servers(
         call("mcp.repository", http_tool),
     ]
     agent.skills.activate.assert_called_once_with(["mcp.calculator", "mcp.repository"])
+    agent.close.assert_awaited_once_with()
+
+
+async def test_runtime_rejects_invalid_mcp_header(
+    tmp_path: Path,
+    install_target,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    agent, _channels, _handlers = _agent_double()
+    install_target(MagicMock(return_value=agent))
+    manager = MagicMock(name="MCPManager")
+    manager.create_url_server = AsyncMock()
+    nooa_module = types.ModuleType("nooa")
+    nooa_module.__path__ = []  # type: ignore[attr-defined]
+    mcp_module = types.ModuleType("nooa.mcp")
+    mcp_module.MCPManager = manager
+    monkeypatch.setitem(sys.modules, "nooa", nooa_module)
+    monkeypatch.setitem(sys.modules, "nooa.mcp", mcp_module)
+    config = AgentConfig.from_mapping(
+        {
+            "mcp": {
+                "servers": {
+                    "repository": {
+                        "transport": "streamable-http",
+                        "url": "https://mcp.example.test/api",
+                        "custom_headers": {"Invalid Header": "value"},
+                    }
+                }
+            },
+            "workflow": _workflow(),
+        }
+    )
+    payload = _start_payload(tmp_path)
+    payload["config"] = config
+    runtime = adapter.NooaRuntime()
+
+    with pytest.raises(adapter.lifecycle.LifecycleError) as error:
+        await runtime.start(payload)
+
+    assert error.value.code == "nooa_invalid_mcp_server"
+    assert error.value.metadata == {"server": "repository"}
+    manager.create_url_server.assert_not_awaited()
     agent.close.assert_awaited_once_with()
 
 
