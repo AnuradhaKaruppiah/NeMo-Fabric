@@ -262,6 +262,15 @@ def fake_relay_fixture(monkeypatch):
     class ScopeType:
         Agent = "agent"
 
+    def build_propagation_context(
+        parent_uuid: str,
+        root_uuid: str | None = None,
+    ) -> types.SimpleNamespace:
+        calls.setdefault("propagation_contexts", []).append((parent_uuid, root_uuid))
+        return types.SimpleNamespace(parent_uuid=parent_uuid, root_uuid=root_uuid)
+
+    propagation_context = MagicMock(side_effect=build_propagation_context)
+
     class _Handle:
         """Stand-in for nemo_relay ScopeHandle; the adapter compares ``uuid``."""
 
@@ -295,6 +304,17 @@ def fake_relay_fixture(monkeypatch):
     def get_handle() -> _Handle:
         return stack[-1]
 
+    def create_scope_stack_from_propagation(
+        context: types.SimpleNamespace,
+    ) -> types.SimpleNamespace:
+        calls.setdefault("propagation_stacks", []).append(context)
+        return context
+
+    @contextlib.contextmanager
+    def use_scope_stack(context: types.SimpleNamespace) -> Iterator[None]:
+        calls.setdefault("used_propagation_stacks", []).append(context)
+        yield
+
     class NemoRelayDeepAgentsCallbackHandler:
         def __init__(self, *_args: object, **_kwargs: object) -> None:
             calls["callback_handler"] = self
@@ -311,6 +331,9 @@ def fake_relay_fixture(monkeypatch):
     relay_root.plugin = plugin_mod
     relay_root.scope = scope_mod
     relay_root.ScopeType = ScopeType
+    relay_root.PropagationContext = propagation_context
+    relay_root.create_scope_stack_from_propagation = create_scope_stack_from_propagation
+    relay_root.use_scope_stack = use_scope_stack
     integrations_pkg = types.ModuleType("nemo_relay.integrations")
     da_integ = types.ModuleType("nemo_relay.integrations.deepagents")
     da_integ.add_nemo_relay_integration = add_nemo_relay_integration
@@ -550,6 +573,48 @@ async def test_relay_telemetry_wraps_agent_and_reports_artifacts(
     assert fake_relay["callback_handler"] in (fake_sdks["config"] or {}).get(
         "callbacks", []
     )
+
+
+@pytest.mark.parametrize(
+    ("request_id", "expected_contexts", "expected_metadata"),
+    [
+        (
+            "018f47a4-3af7-7d94-8e61-9f0f89b5d312",
+            [("018f47a4-3af7-7d94-8e61-9f0f89b5d312",) * 2],
+            {
+                "nemo_fabric_request_id": "018f47a4-3af7-7d94-8e61-9f0f89b5d312"
+            },
+        ),
+        ("request-1", [], {"nemo_fabric_request_id": "request-1"}),
+    ],
+)
+async def test_request_id_relay_correlation(
+    tmp_path,
+    make_payload,
+    monkeypatch,
+    fake_relay,
+    request_id,
+    expected_contexts,
+    expected_metadata,
+):
+    monkeypatch.setattr(
+        adapter.common_utils,
+        "load_relay_plugin_config",
+        lambda _payload: {"version": 1, "components": []},
+    )
+    payload = make_payload(tmp_path)
+    payload["request"]["request_id"] = request_id
+    payload["runtime_context"]["telemetry"] = {
+        "relay_enabled": True,
+        "metadata": {"telemetry_providers": ["relay"]},
+    }
+
+    await invoke_once(payload)
+
+    assert fake_relay.get("propagation_contexts", []) == expected_contexts
+    assert fake_relay["scope_metadata"] == [expected_metadata]
+    if expected_contexts:
+        assert fake_relay["used_propagation_stacks"] == fake_relay["propagation_stacks"]
 
 
 async def test_ambient_relay_config_fails_runtime_start_before_agent_creation(
