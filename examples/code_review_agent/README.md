@@ -9,7 +9,7 @@ This example uses NVIDIA NeMo Fabric to review the sample repository in
 `repos/my-service`. Start with the default Hermes Agent, add the capabilities
 you need, and then run the same task with another agent harness.
 
-The example builds each configuration from the public Pydantic models. Its
+The example builds each configuration from the public Pydantic models. The
 factory and composition functions return independent copies, so changing one
 configuration does not affect another.
 
@@ -31,7 +31,7 @@ Set `NVIDIA_API_KEY`, then run the example:
   --show-output
 ```
 
-Hermes Agent is the default, so the command does not need `--variant hermes`.
+Since Hermes Agent is the default, the command does not need `--variant hermes`.
 It prints the normalized run result followed by the agent response and writes
 artifacts under `examples/code_review_agent/artifacts/hermes/`.
 
@@ -66,7 +66,7 @@ changing the rest of the configuration:
   --plan
 ```
 
-Use `--skill-path PATH` to replace the default with another skill. Repeat the
+Use `--skill-path <PATH?` to replace the default with another skill. Repeat the
 option to add multiple directories. Relative paths resolve from
 `examples/code_review_agent`; `--skill-path` and `--no-skills` cannot be
 combined.
@@ -75,7 +75,7 @@ combined.
 
 Install Relay as described in the
 [Relay installation guide](../../docs/getting-started/install.mdx#install-nemo-relay),
-and then enable Relay telemetry and collect Agent Trajectory Observability
+and then enable Relay telemetry to collect Agent Trajectory Observability
 Format (ATOF) stream records:
 
 ```bash
@@ -113,7 +113,7 @@ sandbox_config = with_opensandbox(config)
 ```
 
 Set `GITHUB_MCP_URL` before running a configuration that uses the GitHub MCP
-server. The default demo does not contact that server. Pass `base_dir=BASE_DIR`
+server. The default demo does not contact that server. Pass `base_dir=<BASE_DIR>`
 when planning or running these configurations.
 
 The module also includes Relay OpenTelemetry and OpenInference examples.
