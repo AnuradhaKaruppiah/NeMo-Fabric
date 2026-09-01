@@ -203,14 +203,18 @@ class MiniSweAgentRuntime:
                 self._relay_plugin_config
             ) as activation_report:
                 common_utils.reject_inherited_relay_plugin_config(activation_report)
-                with self._relay_scope.scope(
-                    "mini-swe-agent.request",
-                    self._relay_scope_type.Agent,
-                    metadata={
-                        "nemo_fabric_request_id": context.request_id,
-                        "nemo_fabric_invocation_id": context.invocation_id,
-                    },
-                ) as handle:
+                request_context, metadata = common_utils.relay_request_context(
+                    context.request_id
+                )
+                metadata["nemo_fabric_invocation_id"] = context.invocation_id
+                with (
+                    request_context,
+                    self._relay_scope.scope(
+                        "mini-swe-agent.request",
+                        self._relay_scope_type.Agent,
+                        metadata=metadata,
+                    ) as handle,
+                ):
                     self._agent.begin_relay_invocation(handle)
                     try:
                         result = await self._run_agent(task)

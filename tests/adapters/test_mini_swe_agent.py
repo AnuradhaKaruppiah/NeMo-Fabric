@@ -154,6 +154,9 @@ def mock_relay_fixture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict:
 
     calls: dict[str, list] = {
         "plugin_configs": [],
+        "propagation_contexts": [],
+        "propagation_stacks": [],
+        "used_propagation_stacks": [],
         "request_scopes": [],
         "step_starts": [],
         "step_ends": [],
@@ -177,6 +180,19 @@ def mock_relay_fixture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict:
         calls["request_scopes"].append((name, scope_type, kwargs))
         yield request_handle
 
+    def propagation_context(parent_uuid, root_uuid=None):
+        calls["propagation_contexts"].append((parent_uuid, root_uuid))
+        return SimpleNamespace(parent_uuid=parent_uuid, root_uuid=root_uuid)
+
+    def create_propagation_stack(context):
+        calls["propagation_stacks"].append(context)
+        return context
+
+    @contextmanager
+    def use_propagation_stack(stack):
+        calls["used_propagation_stacks"].append(stack)
+        yield stack
+
     def push_step(name, scope_type, **kwargs):
         calls["step_starts"].append((name, scope_type, kwargs))
         return step_handle
@@ -199,6 +215,13 @@ def mock_relay_fixture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict:
         calls["tool_ends"].append((handle, output, kwargs))
 
     monkeypatch.setattr(nemo_relay.plugin, "plugin", plugin_context)
+    monkeypatch.setattr(nemo_relay, "PropagationContext", propagation_context)
+    monkeypatch.setattr(
+        nemo_relay,
+        "create_scope_stack_from_propagation",
+        create_propagation_stack,
+    )
+    monkeypatch.setattr(nemo_relay, "use_scope_stack", use_propagation_stack)
     monkeypatch.setattr(nemo_relay.scope, "scope", request_scope)
     monkeypatch.setattr(nemo_relay.scope, "push", push_step)
     monkeypatch.setattr(nemo_relay.scope, "pop", pop_step)
@@ -392,6 +415,33 @@ async def test_relay_enabled_uses_instrumented_subclass_and_reports_artifacts(
     assert mock_relay["step_ends"][0][1]["output"] == {
         "status": "interrupted",
         "interrupt_type": "Submitted",
+    }
+
+
+async def test_uuid_request_id_seeds_relay_propagation(
+    mock_mini,
+    mini_payload,
+    mock_relay,
+):
+    request_id = "018f47a4-3af7-7d94-8e61-9f0f89b5d312"
+    mini_payload["runtime_context"].update(
+        {
+            "request_id": request_id,
+            "telemetry": {"relay_enabled": True},
+        }
+    )
+    runtime = adapter.MiniSweAgentRuntime()
+    start = {**mini_payload, "config": AgentConfig.from_mapping(mini_payload["config"])}
+    await runtime.start(start)
+
+    result = await runtime.invoke(*invocation(mini_payload))
+
+    assert result.status == "succeeded"
+    assert mock_relay["propagation_contexts"] == [(request_id, request_id)]
+    assert mock_relay["used_propagation_stacks"] == mock_relay["propagation_stacks"]
+    assert mock_relay["request_scopes"][0][2]["metadata"] == {
+        "nemo_fabric_request_id": request_id,
+        "nemo_fabric_invocation_id": "mini-invocation",
     }
 
 

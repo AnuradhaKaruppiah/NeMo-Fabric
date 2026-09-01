@@ -131,13 +131,21 @@ async def observe_invocation(
     )
     async with plugin.plugin(plugin_config) as activation_report:
         common_utils.reject_inherited_relay_plugin_config(activation_report)
-        with scope.scope(
-            "email-phishing-invocation",
-            scope_type.Agent,
-            metadata={
+        request_context, metadata = common_utils.relay_request_context(
+            context.request_id
+        )
+        metadata.update(
+            {
                 "nemo_fabric_runtime_id": context.runtime_id,
                 "nemo_fabric_invocation_id": context.invocation_id,
-                "nemo_fabric_request_id": context.request_id,
-            },
+            }
+        )
+        with (
+            request_context,
+            scope.scope(
+                "email-phishing-invocation",
+                scope_type.Agent,
+                metadata=metadata,
+            ),
         ):
             yield observation
