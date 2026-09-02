@@ -19,7 +19,7 @@ Native Python client for resolving and running NVIDIA NeMo Fabric agents.
 
 Primary Python entrypoint for NeMo Fabric.
 
-Every lifecycle method accepts a complete, typed ``FabricConfig`` plus an optional ``base_dir`` used to resolve relative paths. Compose variants in Python before calling the SDK. The ``doctor()``, ``plan()``, and ``run()`` results are typed, read-only mapping models. ``start_runtime()`` returns an active ``Runtime`` handle.
+Every lifecycle method accepts a complete, typed ``FabricConfig`` plus an optional ``base_dir`` used to resolve relative paths. Compose variants in Python before calling the SDK. The ``doctor()``, ``plan()``, and ``run()`` results are typed, read-only mapping models. ``start_runtime()`` returns an active local ``Runtime`` handle. Explicit environment users call ``prepare_environment()``, ``start_runtime_in()``, and ``release_environment()`` separately.
 
 ``Fabric`` uses the native Rust extension. SDK calls raise ``FabricNativeUnavailableError`` when the native extension is not installed.
 
@@ -103,6 +103,70 @@ Planning resolves the selected adapter and reports optional runtime capabilities
 ---
 
 
+### <kbd>method</kbd> `prepare_environment`
+
+```python
+async def prepare_environment(
+    config: FabricConfig,
+    *,
+    base_dir: str | os.PathLike[str] | None = None,
+) -> EnvironmentHandle
+```
+
+Prepare or attach to an execution environment.
+
+The returned handle is independent of any runtime session. The caller owns the lifecycle decision and must eventually pass it to ``release_environment()``.
+
+
+
+**Args:**
+
+ - <b>`config`</b>:  Complete typed ``FabricConfig`` describing the environment.
+ - <b>`base_dir`</b>:  Base directory for resolving relative paths.
+
+
+
+**Returns:**
+ A typed, immutable ``EnvironmentHandle``.
+
+
+
+**Raises:**
+
+ - <b>`FabricConfigError`</b>:  If config resolution or the returned handle is invalid.
+ - <b>`FabricNativeUnavailableError`</b>:  If the native extension is not installed.
+ - <b>`FabricRuntimeError`</b>:  If environment preparation fails.
+
+---
+
+
+### <kbd>method</kbd> `release_environment`
+
+```python
+async def release_environment(environment: EnvironmentHandle) -> None
+```
+
+Release or detach a prepared environment through its provider.
+
+Local and externally owned environments detach without deletion. Provider-managed, Fabric-owned environments may be deleted according to their normalized ownership contract.
+
+
+
+**Args:**
+
+ - <b>`environment`</b>:  Handle returned by ``prepare_environment()``.
+
+
+
+**Raises:**
+
+ - <b>`FabricConfigError`</b>:  If ``environment`` is not a typed handle.
+ - <b>`FabricNativeUnavailableError`</b>:  If the native extension is not installed.
+ - <b>`FabricRuntimeError`</b>:  If release or detach fails.
+
+---
+
+
 ### <kbd>method</kbd> `run`
 
 ```python
@@ -180,6 +244,49 @@ Each call starts a new logical runtime. Runtime-scoped overrides are recursively
 
  - <b>`FabricConfigError`</b>:  If inputs or overrides are invalid, or streaming  is requested without NeMo Relay enabled.
  - <b>`FabricNativeUnavailableError`</b>:  If the native extension is not  installed.
+ - <b>`FabricRuntimeError`</b>:  If runtime startup fails.
+
+---
+
+
+### <kbd>method</kbd> `start_runtime_in`
+
+```python
+async def start_runtime_in(
+    config: FabricConfig,
+    environment: EnvironmentHandle,
+    *,
+    base_dir: str | os.PathLike[str] | None = None,
+    overrides: Mapping[str, Any] | None = None,
+    streaming: bool = False,
+) -> Runtime
+```
+
+Start one stateful runtime in an explicitly prepared environment.
+
+Starting or stopping the runtime does not release ``environment``. This lets consumers run sequential sessions, or coordinate concurrent sessions, without hiding environment ownership inside a session API.
+
+
+
+**Args:**
+
+ - <b>`config`</b>:  Complete typed ``FabricConfig`` matching the environment.
+ - <b>`environment`</b>:  Handle returned by ``prepare_environment()``.
+ - <b>`base_dir`</b>:  Base directory for resolving relative paths.
+ - <b>`overrides`</b>:  JSON-compatible runtime-scoped invocation overrides.
+ - <b>`streaming`</b>:  Whether to provision NeMo Relay ATOF streaming.
+
+
+
+**Returns:**
+ An active ``Runtime`` bound to ``environment``.
+
+
+
+**Raises:**
+
+ - <b>`FabricConfigError`</b>:  If inputs are invalid or the handle does not match the plan.
+ - <b>`FabricNativeUnavailableError`</b>:  If the native extension is not installed.
  - <b>`FabricRuntimeError`</b>:  If runtime startup fails.
 
 

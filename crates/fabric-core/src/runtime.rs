@@ -30,6 +30,9 @@ use crate::config::{
     validate_agent_run_result_extensions, validate_config, validate_harness_settings,
     validate_tool_definitions, validate_workflow,
 };
+use crate::environment::{
+    release_environment as release_prepared_environment, resolve_environment_provider,
+};
 use crate::error::{FabricError, Result};
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
@@ -753,75 +756,56 @@ pub fn run_plan(plan: &RunPlan, request: RunRequest) -> Result<RunResult> {
 
 /// Resolve or attach to the execution environment context for a run plan.
 pub fn prepare_environment(plan: &RunPlan) -> Result<EnvironmentHandle> {
-    let mut metadata = BTreeMap::new();
-    let mut connection = BTreeMap::new();
-    let (
-        provider,
-        control_location,
-        ownership,
-        workspace,
-        artifacts,
-        environment_env,
-        connection_settings,
-        environment_metadata,
-        settings,
-    ) = if let Some(environment) = &plan.environment_plan {
-        (
-            environment.provider.clone(),
-            environment.control_location,
-            environment.ownership,
-            environment.workspace.clone(),
-            environment.artifacts.clone(),
-            environment.env.clone(),
-            environment.connection.clone(),
-            environment.metadata.clone(),
-            environment.settings.clone(),
-        )
-    } else {
-        (
-            "local".to_string(),
-            ControlLocation::ExternalControl,
-            EnvironmentOwnership::CallerOwned,
-            Some(plan.base_dir.clone()),
-            plan.config
-                .runtime
-                .artifacts
-                .as_ref()
-                .map(|artifacts| resolve_path(&plan.base_dir, artifacts)),
-            BTreeMap::new(),
-            serde_json::Map::new(),
-            serde_json::Map::new(),
-            serde_json::Map::new(),
-        )
-    };
-    let workspace = match workspace {
-        Some(path) => Some(absolute_path(path)?),
-        None => None,
-    };
-    for (key, value) in connection_settings {
-        connection.insert(key, value);
-    }
-    for (key, value) in settings {
-        metadata.insert(key, value);
-    }
-    for (key, value) in environment_metadata {
-        metadata.insert(key, value);
-    }
-    Ok(EnvironmentHandle {
-        environment_id: new_id("environment"),
-        provider,
-        control_location,
-        workspace,
-        artifacts,
-        env: environment_env,
-        ownership,
-        connection,
-        metadata,
-    })
+    let provider_id = plan
+        .environment_plan
+        .as_ref()
+        .map_or("local", |environment| environment.provider.as_str());
+    let provider = resolve_environment_provider(provider_id).ok_or_else(|| {
+        FabricError::UnsupportedEnvironmentProvider {
+            provider: provider_id.to_string(),
+            adapter_kind: adapter_kind(plan),
+        }
+    })?;
+    provider.prepare(plan)
+}
+
+/// Release an execution environment previously returned by [`prepare_environment`].
+///
+/// Local and externally owned environments are detached without deletion. A provider may delete
+/// a Fabric-owned environment according to its normalized ownership contract.
+pub fn release_environment(environment: &EnvironmentHandle) -> Result<()> {
+    release_prepared_environment(environment).map(|_| ())
 }
 
 /// Start or connect to a harness runtime.
+///
+/// This compatibility entrypoint prepares the default or explicitly configured local environment.
+/// Non-local providers require the consumer to call [`prepare_environment`] followed by
+/// [`start_runtime_in`].
 pub fn start_runtime(plan: &RunPlan) -> Result<RuntimeHandle> {
+    validate_runtime_start(plan)?;
+    let provider = planned_environment_provider(plan);
+    if provider != "local" {
+        return Err(FabricError::EnvironmentHandleRequired {
+            provider: provider.to_string(),
+        });
+    }
+    let environment = prepare_environment(plan)?;
+    start_runtime_in_validated(plan, &environment)
+}
+
+/// Start or connect to a harness runtime in an explicitly prepared environment.
+///
+/// This operation neither prepares nor releases the environment. The consumer retains the
+/// [`EnvironmentHandle`] and remains responsible for calling [`release_environment`] after the
+/// runtime has stopped and any required inspection has completed.
+pub fn start_runtime_in(plan: &RunPlan, environment: &EnvironmentHandle) -> Result<RuntimeHandle> {
+    validate_runtime_start(plan)?;
+    validate_environment_handle(plan, environment)?;
+    start_runtime_in_validated(plan, environment)
+}
+
+fn validate_runtime_start(plan: &RunPlan) -> Result<()> {
     validate_config(&plan.config)?;
     validate_agent_config(&plan.agent_config)?;
     validate_harness_settings(&plan.config, plan.adapter_descriptor.as_ref())?;
@@ -833,9 +817,15 @@ pub fn start_runtime(plan: &RunPlan) -> Result<RuntimeHandle> {
         plan.adapter_descriptor.as_ref(),
         plan.adapter_target_descriptor.as_ref(),
     )?;
-    let environment = prepare_environment(plan)?;
-    if uses_local_host(plan) {
-        return LocalHostAdapter.start(plan, environment);
+    Ok(())
+}
+
+fn start_runtime_in_validated(
+    plan: &RunPlan,
+    environment: &EnvironmentHandle,
+) -> Result<RuntimeHandle> {
+    if environment.provider == "local" && uses_local_host(plan) {
+        return LocalHostAdapter.start(plan, environment.clone());
     }
     Err(FabricError::UnsupportedRuntimeAdapter {
         harness: harness(plan),
@@ -947,6 +937,83 @@ fn uses_local_host(plan: &RunPlan) -> bool {
         adapter_kind(plan),
         AdapterKind::Process | AdapterKind::Python
     )
+}
+
+fn planned_environment_provider(plan: &RunPlan) -> &str {
+    plan.environment_plan
+        .as_ref()
+        .map_or("local", |environment| environment.provider.as_str())
+}
+
+fn validate_environment_handle(plan: &RunPlan, environment: &EnvironmentHandle) -> Result<()> {
+    if environment.environment_id.trim().is_empty() {
+        return environment_handle_mismatch(environment, "environment_id", "non-empty", "");
+    }
+    expect_environment_field(
+        environment,
+        "provider",
+        planned_environment_provider(plan),
+        &environment.provider,
+    )?;
+    let (expected_control, expected_ownership) = plan.environment_plan.as_ref().map_or(
+        (
+            ControlLocation::ExternalControl,
+            EnvironmentOwnership::CallerOwned,
+        ),
+        |configured| (configured.control_location, configured.ownership),
+    );
+    expect_environment_field(
+        environment,
+        "control_location",
+        control_location_name(expected_control),
+        control_location_name(environment.control_location),
+    )?;
+    expect_environment_field(
+        environment,
+        "ownership",
+        environment_ownership_name(expected_ownership),
+        environment_ownership_name(environment.ownership),
+    )
+}
+
+fn expect_environment_field(
+    environment: &EnvironmentHandle,
+    field: &'static str,
+    expected: &str,
+    actual: &str,
+) -> Result<()> {
+    if expected == actual {
+        return Ok(());
+    }
+    environment_handle_mismatch(environment, field, expected, actual)
+}
+
+fn environment_handle_mismatch<T>(
+    environment: &EnvironmentHandle,
+    field: &'static str,
+    expected: &str,
+    actual: &str,
+) -> Result<T> {
+    Err(FabricError::EnvironmentHandleMismatch {
+        field,
+        expected: expected.to_string(),
+        actual: actual.to_string(),
+        environment_id: environment.environment_id.clone(),
+    })
+}
+
+fn control_location_name(location: ControlLocation) -> &'static str {
+    match location {
+        ControlLocation::ExternalControl => "external_control",
+        ControlLocation::InEnvControl => "in_env_control",
+    }
+}
+
+fn environment_ownership_name(ownership: EnvironmentOwnership) -> &'static str {
+    match ownership {
+        EnvironmentOwnership::CallerOwned => "caller_owned",
+        EnvironmentOwnership::FabricOwned => "fabric_owned",
+    }
 }
 
 fn validate_runtime_handle(plan: &RunPlan, runtime: &RuntimeHandle) -> Result<()> {
@@ -2327,7 +2394,7 @@ fn runtime_telemetry_context(
     })
 }
 
-fn resolve_path(root: &Path, path: &Path) -> PathBuf {
+pub(crate) fn resolve_path(root: &Path, path: &Path) -> PathBuf {
     if path.is_absolute() {
         return path.to_path_buf();
     }
@@ -2468,7 +2535,7 @@ fn fallback_interpreter(
     }
 }
 
-fn absolute_path(path: PathBuf) -> Result<PathBuf> {
+pub(crate) fn absolute_path(path: PathBuf) -> Result<PathBuf> {
     if path.is_absolute() {
         return Ok(path);
     }
@@ -2922,7 +2989,7 @@ fn event_with_metadata(
     }
 }
 
-fn new_id(prefix: &str) -> String {
+pub(crate) fn new_id(prefix: &str) -> String {
     // The atomic counter only differentiates ids within one Fabric process.
     // Include the process id so independently running Fabric processes cannot
     // collide when they generate ids in the same millisecond.
@@ -3220,6 +3287,226 @@ for line in sys.stdin:
         let plan = resolve_run_plan_from_config(config, ResolveContext::new(&root))
             .expect("resolve local-host plan");
         (root, plan)
+    }
+
+    #[test]
+    fn default_environment_prepares_through_local_provider() {
+        let (root, mut plan) = local_host_plan("success");
+        plan.environment_plan = None;
+        plan.config.environment = None;
+
+        let environment = prepare_environment(&plan).expect("prepare default environment");
+
+        assert_eq!(environment.provider, "local");
+        assert_eq!(
+            environment.control_location,
+            ControlLocation::ExternalControl
+        );
+        assert_eq!(environment.ownership, EnvironmentOwnership::CallerOwned);
+        assert_eq!(environment.workspace, Some(root.clone()));
+        assert_eq!(environment.artifacts, Some(root.join("artifacts")));
+        assert!(environment.env.is_empty());
+        assert!(environment.connection.is_empty());
+        assert!(environment.metadata.is_empty());
+        release_environment(&environment).expect("release local environment");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn explicit_local_provider_preserves_resolved_environment_fields() {
+        let (root, mut plan) = local_host_plan("success");
+        let environment_plan = plan
+            .environment_plan
+            .as_mut()
+            .expect("resolved environment plan");
+        environment_plan.control_location = ControlLocation::InEnvControl;
+        environment_plan.ownership = EnvironmentOwnership::FabricOwned;
+        environment_plan.workspace = Some(root.join("workspace"));
+        environment_plan.artifacts = Some(root.join("collected"));
+        environment_plan
+            .connection
+            .insert("endpoint".to_string(), serde_json::json!("local"));
+        environment_plan
+            .settings
+            .insert("setting".to_string(), serde_json::json!(true));
+        environment_plan
+            .settings
+            .insert("shared".to_string(), serde_json::json!("setting"));
+        environment_plan
+            .metadata
+            .insert("shared".to_string(), serde_json::json!("consumer"));
+
+        let environment = prepare_environment(&plan).expect("prepare explicit local environment");
+
+        assert_eq!(environment.provider, "local");
+        assert_eq!(environment.control_location, ControlLocation::InEnvControl);
+        assert_eq!(environment.ownership, EnvironmentOwnership::FabricOwned);
+        assert_eq!(environment.workspace, Some(root.join("workspace")));
+        assert_eq!(environment.artifacts, Some(root.join("collected")));
+        assert_eq!(
+            environment.env.get("FABRIC_NORMALIZED_ENV"),
+            Some(&"visible".to_string())
+        );
+        assert_eq!(
+            environment.connection.get("endpoint"),
+            Some(&serde_json::json!("local"))
+        );
+        assert_eq!(
+            environment.metadata.get("setting"),
+            Some(&serde_json::json!(true))
+        );
+        assert_eq!(
+            environment.metadata.get("shared"),
+            Some(&serde_json::json!("consumer"))
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn environment_preparation_rejects_unregistered_provider() {
+        let (root, mut plan) = local_host_plan("success");
+        plan.environment_plan
+            .as_mut()
+            .expect("resolved environment plan")
+            .provider = "unregistered".to_string();
+
+        let error = prepare_environment(&plan).expect_err("provider must be registered");
+
+        assert!(matches!(
+            error,
+            FabricError::UnsupportedEnvironmentProvider {
+                provider,
+                adapter_kind: AdapterKind::Python,
+            } if provider == "unregistered"
+        ));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn openshell_environment_requires_fabric_ownership_before_launch() {
+        let (root, mut plan) = local_host_plan("success");
+        plan.environment_plan
+            .as_mut()
+            .expect("resolved environment plan")
+            .provider = "openshell".to_string();
+
+        let error = prepare_environment(&plan).expect_err("caller-owned profile must fail");
+
+        assert!(matches!(
+            error,
+            FabricError::InvalidConfig { field, reason }
+                if field == "environment.ownership"
+                    && reason.contains("fabric_owned")
+        ));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn configure_openshell_environment(plan: &mut RunPlan) {
+        let environment_plan = plan
+            .environment_plan
+            .as_mut()
+            .expect("resolved environment plan");
+        environment_plan.provider = "openshell".to_string();
+        environment_plan.control_location = ControlLocation::InEnvControl;
+        environment_plan.ownership = EnvironmentOwnership::FabricOwned;
+
+        let environment_config = plan
+            .config
+            .environment
+            .as_mut()
+            .expect("environment config");
+        environment_config.provider = "openshell".to_string();
+        environment_config.control_location = ControlLocation::InEnvControl;
+        environment_config.ownership = EnvironmentOwnership::FabricOwned;
+    }
+
+    #[test]
+    fn non_local_start_requires_explicit_environment_without_preparing_it() {
+        let (root, mut plan) = local_host_plan("success");
+        configure_openshell_environment(&mut plan);
+
+        let error = start_runtime(&plan).expect_err("non-local start must require a handle");
+
+        assert!(matches!(
+            error,
+            FabricError::EnvironmentHandleRequired { provider }
+                if provider == "openshell"
+        ));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn explicit_binding_starts_in_the_prepared_local_environment() {
+        let (root, plan) = local_host_plan("success");
+        let environment = prepare_environment(&plan).expect("prepare local environment");
+
+        let runtime = start_runtime_in(&plan, &environment).expect("bind local environment");
+
+        assert_eq!(
+            runtime.environment.environment_id,
+            environment.environment_id
+        );
+        assert_eq!(runtime.environment, environment);
+        stop_runtime(&plan, &runtime).expect("stop runtime");
+        release_environment(&environment).expect("release environment");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn explicit_binding_rejects_a_handle_from_another_provider() {
+        let (root, plan) = local_host_plan("success");
+        let mut environment = prepare_environment(&plan).expect("prepare local environment");
+        environment.provider = "openshell".to_string();
+
+        let error = start_runtime_in(&plan, &environment).expect_err("provider must match");
+
+        assert!(matches!(
+            error,
+            FabricError::EnvironmentHandleMismatch {
+                field: "provider",
+                expected,
+                actual,
+                environment_id,
+            } if expected == "local"
+                && actual == "openshell"
+                && environment_id == environment.environment_id
+        ));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn unsupported_non_local_binding_does_not_release_the_environment() {
+        let (root, mut plan) = local_host_plan("success");
+        configure_openshell_environment(&mut plan);
+        let environment = EnvironmentHandle {
+            environment_id: "environment-retained".to_string(),
+            provider: "openshell".to_string(),
+            control_location: ControlLocation::InEnvControl,
+            workspace: Some(PathBuf::from("/sandbox")),
+            artifacts: Some(PathBuf::from("/sandbox/artifacts")),
+            env: BTreeMap::new(),
+            ownership: EnvironmentOwnership::FabricOwned,
+            connection: BTreeMap::new(),
+            metadata: BTreeMap::new(),
+        };
+
+        let error = start_runtime_in(&plan, &environment)
+            .expect_err("capsule control is not implemented in this slice");
+
+        assert!(matches!(
+            error,
+            FabricError::UnsupportedRuntimeAdapter { .. }
+        ));
+        assert_eq!(environment.environment_id, "environment-retained");
+
+        let _ = fs::remove_dir_all(root);
     }
 
     fn openai_stream_listener(
