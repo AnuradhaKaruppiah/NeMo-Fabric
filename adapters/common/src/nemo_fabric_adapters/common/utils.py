@@ -13,8 +13,20 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from nemo_fabric_adapter_contract.codec import JsonValue
+
 
 _FIELD_NAME = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
+
+
+def normalize_user_input(value: JsonValue) -> str:
+    """Return user input as text, serializing structured values deterministically."""
+    if value is None:
+        return ""
+    elif isinstance(value, str):
+        return value
+
+    return json.dumps(value, sort_keys=True)
 
 
 def validate_http_header(server_name: str, name: str, value: str) -> None:

@@ -28,6 +28,10 @@ mini-swe-agent = [
   "nemo-fabric[mini-swe-agent]",
 ]
 
+remote-agent = [
+  "nemo-fabric[remote-agent]",
+]
+
 harbor = [
   "nemo-fabric[harbor]",
 ]
@@ -54,6 +58,7 @@ adapters = [
   # Install the mini-SWE-agent adapter with Relay so focused adapter tests cover
   # its optional subclass-based telemetry integration.
   "nemo-fabric-adapters-mini-swe-agent[relay]",
+  "nemo-fabric-adapters-remote-agent[harness]",
 ]
 
 adapter-tests = [
@@ -62,6 +67,7 @@ adapter-tests = [
   "nemo-fabric-adapters-deepagents[harness]",
   "nemo-fabric-adapters-hermes[full]; python_version < '3.14'",
   "nemo-fabric-adapters-mini-swe-agent[harness]",
+  "nemo-fabric-adapters-remote-agent[full]",
 ]
 
 langgraph-example = [
@@ -124,6 +130,7 @@ nemo-fabric-adapters-codex = { path = "adapters/codex", editable = true }
 nemo-fabric-adapters-deepagents = { path = "adapters/deepagents", editable = true }
 nemo-fabric-adapters-hermes = { path = "adapters/hermes", editable = true }
 nemo-fabric-adapters-mini-swe-agent = { path = "adapters/mini-swe-agent", editable = true }
+nemo-fabric-adapters-remote-agent = { path = "adapters/remote-agent", editable = true }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

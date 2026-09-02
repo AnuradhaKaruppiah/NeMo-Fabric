@@ -1106,8 +1106,8 @@ name = "h2"
 version = "4.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "hpack", marker = "python_full_version >= '3.12'" },
-    { name = "hyperframe", marker = "python_full_version >= '3.12'" },
+    { name = "hpack" },
+    { name = "hyperframe" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1d/17/afa56379f94ad0fe8defd37d6eb3f89a25404ffc71d4d848893d270325fc/h2-4.3.0.tar.gz", hash = "sha256:6c59efe4323fa18b47a632221a1888bd7fde6249819beda254aeca909f221bf1", size = 2152026, upload-time = "2025-08-23T18:12:19.778Z" }
 wheels = [
@@ -1449,7 +1449,7 @@ wheels = [
 
 [package.optional-dependencies]
 http2 = [
-    { name = "h2", marker = "python_full_version >= '3.12'" },
+    { name = "h2" },
 ]
 socks = [
     { name = "socksio", marker = "python_full_version < '3.14'" },
@@ -2385,6 +2385,9 @@ mini-swe-agent = [
 relay = [
     { name = "nemo-relay" },
 ]
+remote-agent = [
+    { name = "nemo-fabric-adapters-remote-agent" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -2394,11 +2397,12 @@ requires-dist = [
     { name = "nemo-fabric-adapters-deepagents", extras = ["harness"], marker = "extra == 'deepagents'", editable = "adapters/deepagents" },
     { name = "nemo-fabric-adapters-hermes", marker = "python_full_version < '3.14' and extra == 'hermes-agent'", editable = "adapters/hermes" },
     { name = "nemo-fabric-adapters-mini-swe-agent", extras = ["harness"], marker = "extra == 'mini-swe-agent'", editable = "adapters/mini-swe-agent" },
+    { name = "nemo-fabric-adapters-remote-agent", extras = ["harness"], marker = "extra == 'remote-agent'", editable = "adapters/remote-agent" },
     { name = "nemo-fabric-runtime", editable = "sdk/python/nemo-fabric-runtime" },
     { name = "nemo-relay", marker = "extra == 'relay'", specifier = ">=0.7.2,<0.8" },
     { name = "pyyaml", marker = "extra == 'harbor'", specifier = ">=6.0" },
 ]
-provides-extras = ["claude", "codex", "deepagents", "mini-swe-agent", "harbor", "hermes-agent", "relay"]
+provides-extras = ["claude", "codex", "deepagents", "mini-swe-agent", "remote-agent", "harbor", "hermes-agent", "relay"]
 
 [[package]]
 name = "nemo-fabric-adapter-contract"
@@ -2568,6 +2572,24 @@ requires-dist = [
 provides-extras = ["harness", "relay", "full"]
 
 [[package]]
+name = "nemo-fabric-adapters-remote-agent"
+version = "0.3.0"
+source = { editable = "adapters/remote-agent" }
+dependencies = [
+    { name = "httpx", extra = ["http2"] },
+    { name = "nemo-fabric-adapter-contract" },
+    { name = "nemo-fabric-adapters-common" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", extras = ["http2"], specifier = "~=0.28" },
+    { name = "nemo-fabric-adapter-contract", editable = "adapter-contract/python" },
+    { name = "nemo-fabric-adapters-common", editable = "adapters/common" },
+]
+provides-extras = ["harness", "full"]
+
+[[package]]
 name = "nemo-fabric-development"
 version = "0.0.0"
 source = { virtual = "." }
@@ -2598,6 +2620,9 @@ mini-swe-agent = [
 relay = [
     { name = "nemo-fabric", extra = ["relay"] },
 ]
+remote-agent = [
+    { name = "nemo-fabric", extra = ["remote-agent"] },
+]
 
 [package.dev-dependencies]
 adapter-tests = [
@@ -2606,6 +2631,7 @@ adapter-tests = [
     { name = "nemo-fabric-adapters-deepagents", extra = ["harness"] },
     { name = "nemo-fabric-adapters-hermes", extra = ["full"], marker = "python_full_version < '3.14'" },
     { name = "nemo-fabric-adapters-mini-swe-agent", extra = ["harness"] },
+    { name = "nemo-fabric-adapters-remote-agent" },
 ]
 adapters = [
     { name = "hermes-agent", marker = "python_full_version < '3.14'" },
@@ -2616,6 +2642,7 @@ adapters = [
     { name = "nemo-fabric-adapters-deepagents", extra = ["relay"] },
     { name = "nemo-fabric-adapters-hermes", marker = "python_full_version < '3.14'" },
     { name = "nemo-fabric-adapters-mini-swe-agent", extra = ["relay"] },
+    { name = "nemo-fabric-adapters-remote-agent" },
 ]
 dev = [
     { name = "ipython" },
@@ -2666,9 +2693,10 @@ requires-dist = [
     { name = "nemo-fabric", extras = ["hermes-agent"], marker = "python_full_version < '3.14' and extra == 'hermes-agent'", editable = "sdk/python/nemo-fabric" },
     { name = "nemo-fabric", extras = ["mini-swe-agent"], marker = "extra == 'mini-swe-agent'", editable = "sdk/python/nemo-fabric" },
     { name = "nemo-fabric", extras = ["relay"], marker = "extra == 'relay'", editable = "sdk/python/nemo-fabric" },
+    { name = "nemo-fabric", extras = ["remote-agent"], marker = "extra == 'remote-agent'", editable = "sdk/python/nemo-fabric" },
     { name = "nemo-fabric-runtime", editable = "sdk/python/nemo-fabric-runtime" },
 ]
-provides-extras = ["claude", "codex", "deepagents", "mini-swe-agent", "harbor", "hermes-agent", "relay"]
+provides-extras = ["claude", "codex", "deepagents", "mini-swe-agent", "remote-agent", "harbor", "hermes-agent", "relay"]
 
 [package.metadata.requires-dev]
 adapter-tests = [
@@ -2677,6 +2705,7 @@ adapter-tests = [
     { name = "nemo-fabric-adapters-deepagents", extras = ["harness"], editable = "adapters/deepagents" },
     { name = "nemo-fabric-adapters-hermes", extras = ["full"], marker = "python_full_version < '3.14'", editable = "adapters/hermes" },
     { name = "nemo-fabric-adapters-mini-swe-agent", extras = ["harness"], editable = "adapters/mini-swe-agent" },
+    { name = "nemo-fabric-adapters-remote-agent", extras = ["full"], editable = "adapters/remote-agent" },
 ]
 adapters = [
     { name = "hermes-agent", marker = "python_full_version < '3.14'", editable = "external/hermes-agent" },
@@ -2687,6 +2716,7 @@ adapters = [
     { name = "nemo-fabric-adapters-deepagents", extras = ["relay"], editable = "adapters/deepagents" },
     { name = "nemo-fabric-adapters-hermes", marker = "python_full_version < '3.14'", editable = "adapters/hermes" },
     { name = "nemo-fabric-adapters-mini-swe-agent", extras = ["relay"], editable = "adapters/mini-swe-agent" },
+    { name = "nemo-fabric-adapters-remote-agent", extras = ["harness"], editable = "adapters/remote-agent" },
 ]
 dev = [
     { name = "ipython", specifier = "~=8.20" },
