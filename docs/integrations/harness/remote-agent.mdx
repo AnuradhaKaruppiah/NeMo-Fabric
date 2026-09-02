@@ -32,7 +32,13 @@ Set the remote API root, including its `/v1` path, in `HarnessConfig.settings`.
 `api_type` defaults to `openai-responses`.
 
 ```python
-from nemo_fabric import HarnessConfig
+from nemo_fabric import (
+    Fabric,
+    FabricConfig,
+    HarnessConfig,
+    MetadataConfig,
+    ModelConfig,
+)
 
 harness = HarnessConfig(
     adapter_id="nvidia.fabric.remote-agent",
@@ -57,6 +63,46 @@ and as `x-api-key` for Anthropic Messages. For Anthropic Messages, you can set
 The connect timeout defaults to 10 seconds, and the timeout between response
 bytes defaults to 600 seconds.
 
-The adapter exposes terminal invocation only. It does not support MCP, skills,
-tool policy, Relay telemetry, streaming, or subagents. It keeps the completed
-user/assistant transcript for ordered invocations within a runtime.
+## Stream Relay telemetry
+
+The adapter supports Relay-backed `Runtime.invoke_stream()` when the remote
+service already has NVIDIA NeMo Relay instrumentation. Enable Relay and request
+streaming when you start the runtime:
+
+```python
+config = FabricConfig(
+    metadata=MetadataConfig(name="remote-agent"),
+    harness=harness,
+    models={"default": ModelConfig(provider="remote", model="agent")},
+).enable_relay()
+
+async with await Fabric().start_runtime(config, streaming=True) as runtime:
+    stream = runtime.invoke_stream(input="Review this change")
+    async for record in stream:
+        print(record)
+    result = await stream.result()
+```
+
+NeMo Fabric creates the ATOF listener and adds four headers to the remote API
+request:
+
+| Header | Remote-service behavior |
+| --- | --- |
+| `x-nemo-fabric-atof-stream-url` | Add this ephemeral HTTP NDJSON URL as an invocation-scoped ATOF stream sink. Do not persist it. |
+| `x-nemo-fabric-request-id` | Set `nemo_fabric_request_id` on the root Agent scope used for correlation. |
+| `x-nemo-fabric-runtime-id` | Optional runtime correlation metadata. |
+| `x-nemo-fabric-invocation-id` | Optional invocation correlation metadata. |
+
+The remote service owns its Relay installation and base configuration. The
+adapter does not start Relay or install Relay packages. It invokes the remote
+endpoint once while the SDK owns correlation, buffering, backpressure, and the
+separate terminal result. The listener must be reachable from the service; use
+`NEMO_FABRIC_STREAMING_HOST` when the default loopback address is not reachable.
+
+`capabilities.streaming` remains false because that descriptor flag represents
+adapter-native OpenAI Chat Completions chunks. The adapter still reduces native
+OpenAI and Anthropic streams to a terminal result.
+
+The adapter does not support MCP, skills, tool policy, or subagents. It keeps
+the completed user/assistant transcript for ordered invocations within a
+runtime.

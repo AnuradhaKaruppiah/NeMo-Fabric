@@ -20,22 +20,61 @@ from nemo_fabric_adapter_contract.models import RuntimeContext
 from nemo_fabric_adapters.remote_agent import adapter
 
 
-def _context() -> RuntimeContext:
-    return RuntimeContext.from_mapping(
-        {
-            "runtime_id": "remote-agent-runtime",
-            "invocation_id": "remote-agent-invocation",
-            "request_id": "remote-agent-request",
-            "environment": {
-                "environment_id": "remote-agent-environment",
-                "provider": "local",
-                "control_location": "in_env_control",
-                "workspace": ".",
-                "env": {},
-                "ownership": "caller_owned",
-            },
-            "artifacts": {},
+def _context(*, relay_config_path: Path | None = None) -> RuntimeContext:
+    payload = {
+        "runtime_id": "remote-agent-runtime",
+        "invocation_id": "remote-agent-invocation",
+        "request_id": "remote-agent-request",
+        "environment": {
+            "environment_id": "remote-agent-environment",
+            "provider": "local",
+            "control_location": "in_env_control",
+            "workspace": ".",
+            "env": {},
+            "ownership": "caller_owned",
+        },
+        "artifacts": {},
+    }
+    if relay_config_path is not None:
+        payload["telemetry"] = {
+            "relay_enabled": True,
+            "config_path": str(relay_config_path),
         }
+    return RuntimeContext.from_mapping(payload)
+
+
+def _write_relay_stream_config(path: Path, stream_url: str) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "relay": {
+                    "config": {
+                        "version": 1,
+                        "components": [
+                            {
+                                "kind": "observability",
+                                "enabled": True,
+                                "config": {
+                                    "version": 3,
+                                    "atof": {
+                                        "enabled": True,
+                                        "sinks": [
+                                            {
+                                                "type": "stream",
+                                                "name": "nemo-fabric-stream",
+                                                "url": stream_url,
+                                                "transport": "ndjson",
+                                            }
+                                        ],
+                                    },
+                                },
+                            }
+                        ],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
     )
 
 
@@ -157,6 +196,117 @@ async def test_remote_agent_retains_transcript_and_reports_http_failure(
     assert result.status == "failed"
     assert result.error.code == "remote_agent_http_error"
     assert result.error.retryable is True
+
+
+@pytest.mark.parametrize(
+    "api_type",
+    ["openai-responses", "openai-completions", "anthropic-messages"],
+)
+async def test_remote_agent_forwards_relay_stream_context(
+    api_server: str,
+    api_type: str,
+    repo_root: Path,
+    tmp_path: Path,
+):
+    stream_url = "http://127.0.0.1:43123/atof"
+    relay_config_path = tmp_path / "relay-config.json"
+    _write_relay_stream_config(relay_config_path, stream_url)
+    config = AgentConfig.from_mapping(
+        {
+            "harness": {
+                "settings": {"base_url": f"{api_server}/v1", "api_type": api_type}
+            },
+            "models": {"default": {"provider": "test", "model": "fabric-echo"}},
+        }
+    )
+    context = _context(relay_config_path=relay_config_path)
+    runtime = adapter.RemoteAgentRuntime()
+    await runtime.start(
+        {
+            "config": config,
+            "runtime_context": context.to_mapping(),
+            "base_dir": str(repo_root),
+        }
+    )
+
+    try:
+        result = await runtime.invoke(AgentRunRequest(input="Hello."), context)
+    finally:
+        await runtime.stop()
+
+    async with httpx.AsyncClient() as control_client:
+        captured = (await control_client.get(f"{api_server}/_request_headers")).json()
+    assert result.status == "succeeded"
+    assert captured[-1][adapter.FABRIC_RUNTIME_ID_HEADER] == context.runtime_id
+    assert captured[-1][adapter.FABRIC_INVOCATION_ID_HEADER] == context.invocation_id
+    assert captured[-1][adapter.FABRIC_REQUEST_ID_HEADER] == context.request_id
+    assert captured[-1][adapter.FABRIC_ATOF_STREAM_URL_HEADER] == stream_url
+
+
+async def test_remote_agent_does_not_forward_stream_context_without_stream_sink(
+    api_server: str,
+    repo_root: Path,
+):
+    config = AgentConfig.from_mapping(
+        {
+            "harness": {"settings": {"base_url": f"{api_server}/v1"}},
+            "models": {"default": {"provider": "test", "model": "fabric-echo"}},
+        }
+    )
+    context = _context()
+    runtime = adapter.RemoteAgentRuntime()
+    await runtime.start(
+        {
+            "config": config,
+            "runtime_context": context.to_mapping(),
+            "base_dir": str(repo_root),
+        }
+    )
+
+    try:
+        result = await runtime.invoke(AgentRunRequest(input="Hello."), context)
+    finally:
+        await runtime.stop()
+
+    async with httpx.AsyncClient() as control_client:
+        captured = (await control_client.get(f"{api_server}/_request_headers")).json()
+    assert result.status == "succeeded"
+    assert not set(captured[-1]).intersection(
+        {
+            adapter.FABRIC_RUNTIME_ID_HEADER,
+            adapter.FABRIC_INVOCATION_ID_HEADER,
+            adapter.FABRIC_REQUEST_ID_HEADER,
+            adapter.FABRIC_ATOF_STREAM_URL_HEADER,
+        }
+    )
+
+
+async def test_remote_agent_rejects_invalid_resolved_relay_config(
+    repo_root: Path,
+    tmp_path: Path,
+):
+    relay_config_path = tmp_path / "relay-config.json"
+    relay_config_path.write_text("not-json", encoding="utf-8")
+    config = AgentConfig.from_mapping(
+        {
+            "harness": {"settings": {"base_url": "https://agents.example.test/v1"}},
+            "models": {"default": {"provider": "test", "model": "fabric-echo"}},
+        }
+    )
+    runtime = adapter.RemoteAgentRuntime()
+
+    with pytest.raises(adapter.lifecycle.LifecycleError) as caught:
+        await runtime.start(
+            {
+                "config": config,
+                "runtime_context": _context(
+                    relay_config_path=relay_config_path
+                ).to_mapping(),
+                "base_dir": str(repo_root),
+            }
+        )
+
+    assert caught.value.code == "remote_agent_invalid_relay_configuration"
 
 
 async def test_remote_agent_configures_http_client(
@@ -290,5 +440,8 @@ def test_remote_agent_descriptor_and_module_entrypoint(repo_root: Path):
     )
     assert descriptor["config"]["system_instruction_modes"] == ["replace"]
     assert descriptor["capabilities"]["streaming"] is False
-    assert "telemetry" not in descriptor
+    assert descriptor["telemetry"]["providers"]["relay"] == {
+        "outputs": ["atof"],
+        "integration_modes": ["remote_service"],
+    }
     assert result.returncode == 0, result.stderr

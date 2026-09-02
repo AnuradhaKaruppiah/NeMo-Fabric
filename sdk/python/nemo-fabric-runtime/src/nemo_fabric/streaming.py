@@ -340,8 +340,8 @@ class _AtofStreamListener:
             self._warned_unconnected = True
             warnings.warn(
                 "No Relay ATOF connection reached the SDK listener. "
-                "Relay-backed streaming yielded no records. Claude and Codex "
-                f"gateways must be able to reach {self._host}.",
+                "Relay-backed streaming yielded no records. The Relay producer "
+                f"must be able to reach {self._host}.",
                 RuntimeWarning,
                 stacklevel=3,
             )
