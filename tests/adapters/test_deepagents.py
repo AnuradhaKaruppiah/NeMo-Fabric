@@ -12,6 +12,7 @@ integration test in ``tests/e2e/test_deepagents.py``.
 from __future__ import annotations
 
 import importlib.machinery
+import json
 import os
 import sys
 import types
@@ -34,6 +35,18 @@ from nemo_fabric_adapter_contract.models import McpOAuth2Config
 from nemo_fabric_adapter_contract.models import McpServiceAccountConfig
 from nemo_fabric_adapter_contract.models import RuntimeContext
 from nemo_fabric_adapters.deepagents import adapter  # noqa: E402
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_descriptor_declares_replace_system_instruction_mode():
+    descriptor = json.loads(
+        (ROOT / "adapters/deepagents/deepagents.fabric-adapter.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert descriptor["config"]["system_instruction_modes"] == ["replace"]
 
 
 def lifecycle_start_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -567,7 +580,12 @@ async def test_relay_telemetry_wraps_agent_and_reports_artifacts(
     # the top-level invocation is wrapped in the deepagents-request Agent scope
     # ("agent" is the fake ScopeType.Agent sentinel from the fake_relay fixture)
     assert fake_relay["scopes"] == [("deepagents-request", "agent")]
-    assert fake_relay["scope_metadata"] == [{"nemo_fabric_request_id": "request-1"}]
+    assert fake_relay["scope_metadata"] == [
+        {
+            "nemo_fabric_request_id": "request-1",
+            "nemo_fabric_invocation_id": "inv-1",
+        }
+    ]
     # the Deep Agents callback handler is added to the LangGraph run config so
     # LangGraph scopes and human-in-the-loop interrupt/resume marks are captured
     assert fake_relay["callback_handler"] in (fake_sdks["config"] or {}).get(
@@ -582,10 +600,18 @@ async def test_relay_telemetry_wraps_agent_and_reports_artifacts(
             "018f47a4-3af7-7d94-8e61-9f0f89b5d312",
             [("018f47a4-3af7-7d94-8e61-9f0f89b5d312",) * 2],
             {
-                "nemo_fabric_request_id": "018f47a4-3af7-7d94-8e61-9f0f89b5d312"
+                "nemo_fabric_request_id": "018f47a4-3af7-7d94-8e61-9f0f89b5d312",
+                "nemo_fabric_invocation_id": "inv-1",
             },
         ),
-        ("request-1", [], {"nemo_fabric_request_id": "request-1"}),
+        (
+            "request-1",
+            [],
+            {
+                "nemo_fabric_request_id": "request-1",
+                "nemo_fabric_invocation_id": "inv-1",
+            },
+        ),
     ],
 )
 async def test_request_id_relay_correlation(
@@ -1193,7 +1219,12 @@ async def test_native_telemetry_exports_without_artifacts(
     assert "relay-mw" in fake_sdks["create_kwargs"]["middleware"]
     # the scope + callback handler apply to any observability-enabled run, native included
     assert fake_relay["scopes"] == [("deepagents-request", "agent")]
-    assert fake_relay["scope_metadata"] == [{"nemo_fabric_request_id": "request-1"}]
+    assert fake_relay["scope_metadata"] == [
+        {
+            "nemo_fabric_request_id": "request-1",
+            "nemo_fabric_invocation_id": "inv-1",
+        }
+    ]
     assert fake_relay["callback_handler"] in (fake_sdks["config"] or {}).get(
         "callbacks", []
     )
@@ -1595,9 +1626,7 @@ def test_aggregate_usage_discards_nonfinite_cost(message):
 
 
 def test_aggregate_usage_discards_tokens_larger_than_uint64():
-    assert adapter._aggregate_usage(
-        [{"usage": {"input_tokens": 1 << 64}}]
-    ) is None
+    assert adapter._aggregate_usage([{"usage": {"input_tokens": 1 << 64}}]) is None
 
 
 async def test_replayed_state_usage_counts_current_turn_only(
@@ -1708,6 +1737,16 @@ async def test_persistent_runtime_scopes_relay_per_invocation(
     ]
     assert first["thread_id"] == second["thread_id"]
     assert first["relay_artifacts"] == second["relay_artifacts"] == artifacts
+    assert fake_relay["scope_metadata"] == [
+        {
+            "nemo_fabric_request_id": "request-1",
+            "nemo_fabric_invocation_id": "inv-1",
+        },
+        {
+            "nemo_fabric_request_id": "request-1",
+            "nemo_fabric_invocation_id": "inv-2",
+        },
+    ]
     assert fake_sdks["saver_exits"] == 1
 
 
@@ -1716,6 +1755,26 @@ async def test_stream_requests_subgraphs(tmp_path, make_payload, fake_sdks):
     # for usage aggregation.
     await invoke_once(make_payload(tmp_path))
     assert fake_sdks["subgraphs"] is True
+
+
+async def test_build_agent_kwargs_rejects_append_system_instruction(
+    tmp_path, make_payload
+):
+    payload = make_payload(tmp_path)
+    payload["config"]["instructions"]["system"]["mode"] = "append"
+    config = AgentConfig.from_mapping(payload["config"])
+
+    with pytest.raises(adapter.lifecycle.LifecycleError) as caught:
+        await adapter.build_agent_kwargs(
+            config,
+            RuntimeContext.from_mapping(payload["runtime_context"]),
+            payload["base_dir"],
+            MagicMock(),
+            config.harness.settings,
+        )
+
+    assert caught.value.code == "unsupported_system_instruction_mode"
+    assert caught.value.metadata["field"] == "instructions.system.mode"
 
 
 @pytest.mark.usefixtures("use_real_langgraph")

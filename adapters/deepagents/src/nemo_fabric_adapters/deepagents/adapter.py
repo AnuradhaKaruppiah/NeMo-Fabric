@@ -33,6 +33,7 @@ from nemo_fabric_adapter_contract.models import AgentRunResult
 from nemo_fabric_adapter_contract.models import AgentRunStatus
 from nemo_fabric_adapter_contract.models import AgentUsage
 from nemo_fabric_adapter_contract.models import RuntimeContext
+from nemo_fabric_adapters.common import instructions as common_instructions
 from nemo_fabric_adapters.common import lifecycle
 import nemo_fabric_adapters.common.utils as common_utils
 
@@ -370,16 +371,16 @@ async def build_agent_kwargs(
     model: Any,
     settings: dict[str, Any],
 ) -> dict[str, Any]:
-    instructions = config.instructions
+    instruction = common_instructions.system_instruction(
+        config,
+        adapter="Deep Agents",
+        supported_modes={"replace"},
+    )
     kwargs: dict[str, Any] = {
         "model": model,
         "tools": await resolve_tools(config),
         # deepagents 0.5.x/0.6.x take the system prompt as ``system_prompt``.
-        "system_prompt": (
-            instructions.system.content
-            if instructions and instructions.system
-            else None
-        ),
+        "system_prompt": instruction.content if instruction else None,
         "skills": resolve_skills(config),
         "backend": resolve_backend(runtime_context, base_dir),
     }
@@ -619,7 +620,11 @@ class DeepAgentsRuntime:
         if self._observability is None:
             outcome = await self._invoke_agent(user_message)
         else:
-            outcome = await self._invoke_with_telemetry(user_message, request_id)
+            outcome = await self._invoke_with_telemetry(
+                user_message,
+                request_id,
+                runtime_context.invocation_id,
+            )
 
         if outcome.error is None:
             self._completed_invocations += 1
@@ -690,6 +695,7 @@ class DeepAgentsRuntime:
         self,
         user_message: str,
         request_id: str,
+        invocation_id: str,
     ) -> TurnOutcome:
         """Run one turn inside the Relay plugin/scope, isolating telemetry faults.
 
@@ -721,6 +727,7 @@ class DeepAgentsRuntime:
                     request_context, metadata = common_utils.relay_request_context(
                         request_id
                     )
+                    metadata["nemo_fabric_invocation_id"] = invocation_id
                     with request_context:
                         with self._relay_scope.scope(
                             "deepagents-request",
