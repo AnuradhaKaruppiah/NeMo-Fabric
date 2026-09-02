@@ -24,6 +24,7 @@ from typing import NamedTuple
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import ToolMessage
+from langgraph.errors import GraphRecursionError
 from nemo_fabric_adapter_contract.models import AgentConfig
 from nemo_fabric_adapter_contract.models import AgentMcpServerConfig
 from nemo_fabric_adapter_contract.models import AgentModelConfig
@@ -169,6 +170,10 @@ def selected_model_config(config: AgentConfig) -> AgentModelConfig:
     raise AdapterConfigError(
         "Deep Agents requires a default model or exactly one model."
     )
+
+
+def _max_turns(config: AgentConfig) -> int | None:
+    return config.runtime.max_turns if config.runtime is not None else None
 
 
 def build_chat_model(model_config: AgentModelConfig) -> tuple[Any, str, str | None]:
@@ -560,9 +565,13 @@ class DeepAgentsRuntime:
 
             from deepagents import create_deep_agent
 
-            self._agent = create_deep_agent(
+            agent = create_deep_agent(
                 **_supported_kwargs(create_deep_agent, agent_kwargs)
             )
+            max_turns = _max_turns(agent_config)
+            if max_turns is not None:
+                agent = agent.with_config({"recursion_limit": max_turns})
+            self._agent = agent
             self._start_payload = payload
             self._started = True
         except BaseException:
@@ -676,7 +685,7 @@ class DeepAgentsRuntime:
             output=output,
             error=(
                 AgentRunError(
-                    code="deepagents_invocation_failed",
+                    code=outcome.error_code or "deepagents_invocation_failed",
                     message=str(reported_error or "Deep Agents invocation failed"),
                 )
                 if failed
@@ -766,6 +775,11 @@ class DeepAgentsRuntime:
                 user_message,
                 self._thread_id,
                 callbacks=callbacks,
+            )
+        except GraphRecursionError:
+            return TurnOutcome(
+                error="Deep Agents reached its graph recursion limit.",
+                error_code="deepagents_recursion_limit_reached",
             )
         except Exception as exc:  # normalized adapter failure
             return TurnOutcome(error=_error_text(exc))
@@ -917,6 +931,7 @@ class TurnOutcome(NamedTuple):
     events: list[dict[str, Any]] | None = None
     turn_messages: list[dict[str, Any]] | None = None
     error: str | None = None
+    error_code: str | None = None
     telemetry_error: str | None = None
 
 
