@@ -1,0 +1,77 @@
+# Experimental OpenShell environment provider
+
+NVIDIA NeMo Fabric recognizes `environment.provider="openshell"` as an
+experimental out-of-process provider. Fabric starts
+`fabric-environment-openshell serve --stdio`; the binary is supplied by the
+OpenShell integration and uses the OpenShell Rust SDK. OpenShell is therefore
+not a dependency of `nemo-fabric-core`.
+
+Set `NEMO_FABRIC_OPEN_SHELL_PROVIDER` to an absolute provider-binary path when
+the binary is not on `PATH`. This variable is operator configuration and is not
+serialized into a Fabric plan.
+
+The first provider profile uses the existing normalized environment fields:
+
+```python
+from nemo_fabric import EnvironmentConfig
+
+environment = EnvironmentConfig(
+    provider="openshell",
+    control_location="in_env_control",
+    ownership="fabric_owned",
+    workspace="/sandbox",
+    artifacts="/sandbox/artifacts",
+    connection={
+        "gateway": "https://openshell.example.com",
+        "workspace": "fabric-demo",
+        "token_env": "OPEN_SHELL_TOKEN",
+    },
+    settings={
+        "image": "registry.example/fabric-capsule@sha256:<64-hex-digest>",
+        "command": ["fabric-capsule-runner", "serve"],
+        "ready_timeout_seconds": 60,
+        "exec_timeout_seconds": 30,
+        "delete_timeout_seconds": 30,
+    },
+)
+```
+
+The provider rejects caller-owned sandboxes, external control, mutable image
+tags, blank commands, unknown connection/settings fields, and literal token
+fields. `token_env` and `ca_cert_env` name environment variables inherited by
+the provider process; their values are not returned in the normalized
+environment handle.
+
+Phase 1B implements gateway health, create/get/wait-ready, buffered exec with
+bounded published output, identity-checked inspection, delete, and wait-deleted. Adapter execution
+inside the sandbox is intentionally not enabled yet. Consumers now prepare an
+environment explicitly and pass its handle to
+`start_runtime_in(plan, environment_handle)`; `start_runtime(plan)` rejects
+non-local plans without contacting the provider. Phase 1C will bind the
+explicit runtime operation to typed capsule `start`, `invoke`, and `stop`
+messages instead of exposing a generic remote shell through Fabric's public
+API. Runtime stop and start failure do not release the environment; the
+consumer calls `release_environment(environment_handle)` explicitly.
+
+The Python orchestration deliberately keeps the same three lifecycles visible:
+
+```python
+fabric = Fabric()
+environment = await fabric.prepare_environment(config)
+try:
+    runtime = await fabric.start_runtime_in(config, environment)
+    try:
+        first = await runtime.invoke(input="first turn")
+        second = await runtime.invoke(input="second turn")
+    finally:
+        await runtime.stop()
+
+    # Inspect the still-live sandbox and its artifacts here.
+finally:
+    await fabric.release_environment(environment)
+```
+
+The consumer may run multiple independent environment/runtime pairs
+concurrently. A single `Runtime` remains one sequential session, and the
+Phase 1C capsule profile will initially allow only one active session per
+OpenShell environment.
