@@ -2,21 +2,27 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [package]
-name = "nemo-fabric-core"
+name = "nemo-fabric-capsule"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Core config and runtime contract for NeMo Fabric."
-readme = "README.md"
+description = "Resident capsule control process for NVIDIA NeMo Fabric runtimes."
+
+[lib]
+name = "nemo_fabric_capsule"
+
+[[bin]]
+name = "fabric-capsule-runner"
+path = "src/bin/runner.rs"
+
+[[bin]]
+name = "fabric-capsule-ctl"
+path = "src/bin/control.rs"
 
 [lints]
 workspace = true
 
 [dependencies]
-jsonschema.workspace = true
-nemo-fabric-capsule.workspace = true
-schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-thiserror.workspace = true

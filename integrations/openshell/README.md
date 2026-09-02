@@ -43,14 +43,17 @@ the provider process; their values are not returned in the normalized
 environment handle.
 
 Phase 1B implements gateway health, create/get/wait-ready, buffered exec with
-bounded published output, identity-checked inspection, delete, and wait-deleted. Adapter execution
-inside the sandbox is intentionally not enabled yet. Consumers now prepare an
+bounded published output, identity-checked inspection, delete, and wait-deleted. Phase 1C adds a
+resident, typed capsule-control path for process and Python adapters. Consumers prepare an
 environment explicitly and pass its handle to
 `start_runtime_in(plan, environment_handle)`; `start_runtime(plan)` rejects
-non-local plans without contacting the provider. Phase 1C will bind the
-explicit runtime operation to typed capsule `start`, `invoke`, and `stop`
-messages instead of exposing a generic remote shell through Fabric's public
-API. Runtime stop and start failure do not release the environment; the
+non-local plans without contacting the provider. Fabric routes `start`,
+buffered `invoke`, and `stop` as correlated
+`fabric.capsule-control.v1alpha1` messages. The provider executes only the
+matching `fabric-capsule-ctl` operation; it does not expose generic remote
+shell through Fabric's public API. The capsule image must contain
+`fabric-capsule-runner`, `fabric-capsule-ctl`, and the configured adapter plus
+its target. Runtime stop and start failure do not release the environment; the
 consumer calls `release_environment(environment_handle)` explicitly.
 
 The Python orchestration deliberately keeps the same three lifecycles visible:
@@ -73,5 +76,6 @@ finally:
 
 The consumer may run multiple independent environment/runtime pairs
 concurrently. A single `Runtime` remains one sequential session, and the
-Phase 1C capsule profile will initially allow only one active session per
-OpenShell environment.
+capsule profile allows only one active session per OpenShell environment. A
+second bind returns a stable environment-in-use error. Streaming,
+reconnect/resubscribe, cancellation, and artifact collection remain deferred.
