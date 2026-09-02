@@ -2,7 +2,7 @@
 title: "Module runtime"
 sidebar-title: "runtime"
 description: "Runtime invocation helpers."
-position: 124
+position: 126
 ---
 {/* SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0 */}
@@ -49,6 +49,8 @@ Runtime invocation helpers.
 - [invoke_openai_stream](fn-invoke-openai-stream.mdx): Invoke a started harness runtime and pass through native OpenAI chat-completion chunks.
 - [invoke_runtime](fn-invoke-runtime.mdx): Invoke a started harness runtime.
 - [prepare_environment](fn-prepare-environment.mdx): Resolve or attach to the execution environment context for a run plan.
+- [release_environment](fn-release-environment.mdx): Release an execution environment previously returned by [`prepare_environment`](fn-prepare-environment.mdx).
 - [run_plan](fn-run-plan.mdx): Invoke a NeMo Fabric run plan.
 - [start_runtime](fn-start-runtime.mdx): Start or connect to a harness runtime.
+- [start_runtime_in](fn-start-runtime-in.mdx): Start or connect to a harness runtime in an explicitly prepared environment.
 - [stop_runtime](fn-stop-runtime.mdx): Stop or detach from a harness runtime.

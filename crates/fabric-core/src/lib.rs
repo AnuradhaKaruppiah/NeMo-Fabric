@@ -8,6 +8,7 @@ pub mod agent_config;
 pub mod agent_execution;
 pub mod config;
 pub mod doctor;
+mod environment;
 pub mod error;
 pub mod runtime;
 pub mod schema;
@@ -45,7 +46,8 @@ pub use runtime::{
     OpenAiStreamInvocation, OpenAiStreamProfile, OpenAiStreamProtocolVersion, OpenAiStreamRecord,
     OpenAiStreamSink, OpenAiStreamTransport, RunRequest, RunResult, RunStatus, RunUsage,
     RuntimeContext, RuntimeHandle, RuntimeTelemetryContext, TelemetryRef, invoke_openai_stream,
-    invoke_runtime, prepare_environment, run_plan, start_runtime, stop_runtime,
+    invoke_runtime, prepare_environment, release_environment, run_plan, start_runtime,
+    start_runtime_in, stop_runtime,
 };
 pub use schema::{
     SchemaName, generate_all_schemas, generate_schema, generate_schema_json, write_schema_snapshots,
