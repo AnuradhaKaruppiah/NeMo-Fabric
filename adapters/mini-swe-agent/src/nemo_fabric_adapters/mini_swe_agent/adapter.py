@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
-import json
 import os
 from typing import Any
 
@@ -124,8 +123,7 @@ class MiniSweAgentRuntime:
         request: contract.AgentRunRequest,
         context: contract.RuntimeContext,
     ) -> contract.AgentRunResult:
-        raw_task = request.input
-        task = raw_task if isinstance(raw_task, str) else json.dumps(raw_task)
+        task = common_utils.normalize_user_input(request.input)
         inherited_quarantine = self._telemetry_quarantine is not None
         telemetry_errors: list[str] = []
         if self._relay_enabled:
