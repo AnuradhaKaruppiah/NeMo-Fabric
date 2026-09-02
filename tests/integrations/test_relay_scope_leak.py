@@ -166,12 +166,21 @@ async def test_uuid_request_id_seeds_real_relay_parent(monkeypatch):
     runtime._callback_handler_type = NemoRelayCallbackHandler
     request_id = "018f47a4-3af7-7d94-8e61-9f0f89b5d312"
 
-    outcome = await runtime._invoke_with_telemetry("hello", request_id)
+    outcome = await runtime._invoke_with_telemetry(
+        "hello",
+        request_id,
+        "invocation-1",
+    )
 
     assert outcome.error is None
     assert outcome.telemetry_error is None
     assert recording_scope.parent_uuids == [request_id]
-    assert recording_scope.metadata == [{"nemo_fabric_request_id": request_id}]
+    assert recording_scope.metadata == [
+        {
+            "nemo_fabric_request_id": request_id,
+            "nemo_fabric_invocation_id": "invocation-1",
+        }
+    ]
     assert nemo_relay.scope.get_handle().uuid == baseline.uuid
 
 
@@ -203,8 +212,16 @@ async def test_a_poisoned_runtime_quarantines_its_next_turn(monkeypatch):
     runtime._relay_scope_type = nemo_relay.ScopeType
     runtime._callback_handler_type = NemoRelayCallbackHandler
 
-    first = await runtime._invoke_with_telemetry("hello", "request-1")
-    second = await runtime._invoke_with_telemetry("hello again", "request-2")
+    first = await runtime._invoke_with_telemetry(
+        "hello",
+        "request-1",
+        "invocation-1",
+    )
+    second = await runtime._invoke_with_telemetry(
+        "hello again",
+        "request-2",
+        "invocation-2",
+    )
 
     # Turn 1 completed, reported the real Relay fault, and poisoned the runtime.
     assert first.error is None
@@ -217,4 +234,9 @@ async def test_a_poisoned_runtime_quarantines_its_next_turn(monkeypatch):
     assert second.telemetry_error == runtime._telemetry_quarantine
     assert "not at the top of the stack" not in second.telemetry_error
     assert recording_scope.opened == ["deepagents-request"]
-    assert recording_scope.metadata == [{"nemo_fabric_request_id": "request-1"}]
+    assert recording_scope.metadata == [
+        {
+            "nemo_fabric_request_id": "request-1",
+            "nemo_fabric_invocation_id": "invocation-1",
+        }
+    ]
