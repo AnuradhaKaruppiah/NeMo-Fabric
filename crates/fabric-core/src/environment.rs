@@ -9,6 +9,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
+use nemo_fabric_capsule::{CapsuleControlRequest, CapsuleControlResponse};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -164,6 +165,25 @@ pub(crate) fn release_environment(
         }),
         OPEN_SHELL_PROVIDER_ID => {
             OPEN_SHELL_ENVIRONMENT_PROVIDER.request(ProviderOperation::Release { environment })
+        }
+        provider => Err(FabricError::UnsupportedEnvironmentProvider {
+            provider: provider.to_string(),
+            adapter_kind: crate::config::AdapterKind::Process,
+        }),
+    }
+}
+
+/// Send one typed lifecycle operation to the resident controller in an OpenShell capsule.
+pub(crate) fn control_capsule(
+    environment: &EnvironmentHandle,
+    request: &CapsuleControlRequest,
+) -> Result<CapsuleControlResponse> {
+    match environment.provider.as_str() {
+        OPEN_SHELL_PROVIDER_ID => {
+            OPEN_SHELL_ENVIRONMENT_PROVIDER.request(ProviderOperation::CapsuleControl {
+                environment,
+                request,
+            })
         }
         provider => Err(FabricError::UnsupportedEnvironmentProvider {
             provider: provider.to_string(),
@@ -348,6 +368,10 @@ enum ProviderOperation<'a> {
         environment_id: &'a str,
         environment: &'a EnvironmentPlan,
     },
+    CapsuleControl {
+        environment: &'a EnvironmentHandle,
+        request: &'a CapsuleControlRequest,
+    },
     Release {
         environment: &'a EnvironmentHandle,
     },
@@ -357,6 +381,7 @@ impl ProviderOperation<'_> {
     fn name(&self) -> &'static str {
         match self {
             Self::Prepare { .. } => "prepare",
+            Self::CapsuleControl { .. } => "capsule_control",
             Self::Release { .. } => "release",
         }
     }

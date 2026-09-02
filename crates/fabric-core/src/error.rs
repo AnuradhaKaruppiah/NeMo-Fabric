@@ -283,6 +283,16 @@ pub enum FabricError {
         /// Environment handle id.
         environment_id: String,
     },
+    /// An environment already has an active Fabric runtime session.
+    #[error(
+        "environment `{environment_id}` is already bound to runtime `{runtime_id}`; stop that runtime before starting another session"
+    )]
+    EnvironmentInUse {
+        /// Environment whose exclusive session slot is occupied.
+        environment_id: String,
+        /// Active runtime holding the slot.
+        runtime_id: String,
+    },
     /// Process adapter settings were invalid.
     #[error("invalid process adapter settings for {path}: {source}")]
     InvalidProcessSettings {
