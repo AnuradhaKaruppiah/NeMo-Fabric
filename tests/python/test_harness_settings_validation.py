@@ -213,7 +213,10 @@ def test_remote_agent_rejects_nonpositive_timeout(tmp_path: Path, setting: str):
 
 def test_remote_agent_accepts_relay_atof_for_invoke_stream(tmp_path: Path):
     config = _config(
-        {"base_url": "https://agents.example.test/v1"},
+        {
+            "base_url": "https://agents.example.test/v1",
+            "relay_streaming": True,
+        },
         adapter_id="nvidia.fabric.remote-agent",
     ).enable_relay()
 

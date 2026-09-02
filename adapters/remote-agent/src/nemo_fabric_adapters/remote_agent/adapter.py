@@ -10,7 +10,6 @@ import json
 import math
 import os
 from collections.abc import AsyncIterator
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -29,11 +28,7 @@ API_PATHS = {
     "openai-completions": "/chat/completions",
     "anthropic-messages": "/messages",
 }
-FABRIC_RUNTIME_ID_HEADER = "x-nemo-fabric-runtime-id"
-FABRIC_INVOCATION_ID_HEADER = "x-nemo-fabric-invocation-id"
-FABRIC_REQUEST_ID_HEADER = "x-nemo-fabric-request-id"
-FABRIC_ATOF_STREAM_URL_HEADER = "x-nemo-fabric-atof-stream-url"
-FABRIC_STREAM_SINK_NAME = "nemo-fabric-stream"
+FABRIC_REQUEST_ID_METADATA = "nemo_fabric_request_id"
 
 
 def _api_url(base_url: str, api_type: str) -> str:
@@ -100,84 +95,24 @@ async def _sse_events(
         yield event, json.loads("\n".join(data))
 
 
-def _relay_stream_url(context: contract.RuntimeContext) -> str | None:
-    telemetry = context.telemetry
-    if telemetry is None or not telemetry.relay_enabled:
-        return None
-    if telemetry.config_path is None:
-        raise lifecycle.LifecycleError(
-            "remote_agent_invalid_relay_configuration",
-            "Remote Agent Relay telemetry is missing its resolved configuration",
-        )
-    try:
-        document = json.loads(Path(telemetry.config_path).read_text(encoding="utf-8"))
-        components = document["relay"]["config"].get("components", [])
-    except (
-        OSError,
-        AttributeError,
-        json.JSONDecodeError,
-        KeyError,
-        TypeError,
-    ) as error:
-        raise lifecycle.LifecycleError(
-            "remote_agent_invalid_relay_configuration",
-            "Remote Agent could not read the resolved Relay configuration",
-        ) from error
-
-    matches: list[dict[str, Any]] = []
-    for component in components:
-        if not isinstance(component, dict) or component.get("kind") != "observability":
-            continue
-        observability = component.get("config")
-        if not isinstance(observability, dict):
-            continue
-        atof = observability.get("atof")
-        if not isinstance(atof, dict) or not atof.get("enabled"):
-            continue
-        sinks = atof.get("sinks") or []
-        if not isinstance(sinks, list):
-            continue
-        matches.extend(
-            sink
-            for sink in sinks
-            if isinstance(sink, dict) and sink.get("name") == FABRIC_STREAM_SINK_NAME
-        )
-
-    if not matches:
-        return None
-    if len(matches) != 1:
-        raise lifecycle.LifecycleError(
-            "remote_agent_invalid_relay_configuration",
-            "Remote Agent requires exactly one Fabric-managed ATOF stream sink",
-        )
-    sink = matches[0]
-    url = sink.get("url")
-    if (
-        sink.get("type") != "stream"
-        or sink.get("transport") != "ndjson"
-        or not isinstance(url, str)
-        or not url.startswith("http://")
-    ):
-        raise lifecycle.LifecycleError(
-            "remote_agent_invalid_relay_configuration",
-            "Remote Agent Fabric-managed ATOF sink must use HTTP NDJSON",
-        )
-    return url
-
-
-def _invocation_headers(
+def _relay_streaming_enabled(
+    settings: dict[str, Any],
     context: contract.RuntimeContext,
-    relay_stream_url: str | None,
-) -> dict[str, str]:
-    if relay_stream_url is None:
-        return {}
-    headers = {
-        FABRIC_RUNTIME_ID_HEADER: context.runtime_id,
-        FABRIC_INVOCATION_ID_HEADER: context.invocation_id,
-        FABRIC_REQUEST_ID_HEADER: context.request_id,
-        FABRIC_ATOF_STREAM_URL_HEADER: relay_stream_url,
-    }
-    return headers
+) -> bool:
+    configured = settings.get("relay_streaming", False) is True
+    relay_enabled = context.telemetry is not None and context.telemetry.relay_enabled
+    if configured != relay_enabled:
+        reason = (
+            "requires Relay telemetry to be enabled"
+            if configured
+            else "must be explicitly enabled when Relay telemetry is configured"
+        )
+        raise lifecycle.LifecycleError(
+            "remote_agent_invalid_relay_configuration",
+            f"Remote Agent relay_streaming {reason}",
+            metadata={"field": "harness.settings.relay_streaming"},
+        )
+    return configured
 
 
 class RemoteAgentRuntime:
@@ -190,7 +125,7 @@ class RemoteAgentRuntime:
         self._runtime_id: str | None = None
         self._api_type = DEFAULT_API_TYPE
         self._messages: list[dict[str, str]] = []
-        self._relay_stream_url: str | None = None
+        self._relay_streaming = False
 
     async def start(self, payload: dict[str, Any]) -> None:
         config: contract.AgentConfig = payload["config"]
@@ -217,7 +152,7 @@ class RemoteAgentRuntime:
             adapter="Remote Agent",
             supported_modes={"replace"},
         )
-        relay_stream_url = _relay_stream_url(context)
+        relay_streaming = _relay_streaming_enabled(settings, context)
         model = _selected_model(config)
         headers: dict[str, str] = {}
         if model.api_key_env is not None:
@@ -261,7 +196,7 @@ class RemoteAgentRuntime:
         )
         self._config = config
         self._runtime_id = context.runtime_id
-        self._relay_stream_url = relay_stream_url
+        self._relay_streaming = relay_streaming
 
     async def invoke(
         self,
@@ -279,14 +214,18 @@ class RemoteAgentRuntime:
             )
 
         user_text = common_utils.normalize_user_input(request.input)
-        headers = _invocation_headers(context, self._relay_stream_url)
+        metadata = (
+            {FABRIC_REQUEST_ID_METADATA: context.request_id}
+            if self._relay_streaming
+            else None
+        )
         try:
             if self._api_type == "openai-responses":
-                text, usage = await self._invoke_responses(user_text, headers)
+                text, usage = await self._invoke_responses(user_text, metadata)
             elif self._api_type == "openai-completions":
-                text, usage = await self._invoke_completions(user_text, headers)
+                text, usage = await self._invoke_completions(user_text, metadata)
             else:
-                text, usage = await self._invoke_messages(user_text, headers)
+                text, usage = await self._invoke_messages(user_text, metadata)
         except httpx.HTTPStatusError as error:
             return self._result_error(error.response.status_code)
         except httpx.RequestError as error:
@@ -323,7 +262,7 @@ class RemoteAgentRuntime:
         self._endpoint = None
         self._config = None
         self._runtime_id = None
-        self._relay_stream_url = None
+        self._relay_streaming = False
         self._messages = []
         if client is not None:
             await client.aclose()
@@ -331,7 +270,7 @@ class RemoteAgentRuntime:
     async def _invoke_responses(
         self,
         user_text: str,
-        headers: dict[str, str],
+        metadata: dict[str, str] | None,
     ) -> tuple[str, contract.AgentUsage | None]:
         config = self._config
         if config is None:
@@ -346,9 +285,9 @@ class RemoteAgentRuntime:
             payload["instructions"] = config.instructions.system.content
         if model.temperature is not None:
             payload["temperature"] = model.temperature
-        async with self._client.stream(
-            "POST", self._endpoint, json=payload, headers=headers
-        ) as response:
+        if metadata is not None:
+            payload["metadata"] = metadata
+        async with self._client.stream("POST", self._endpoint, json=payload) as response:
             response.raise_for_status()
             async for event, value in _sse_events(response):
                 if event == "response.completed":
@@ -364,7 +303,7 @@ class RemoteAgentRuntime:
     async def _invoke_completions(
         self,
         user_text: str,
-        headers: dict[str, str],
+        metadata: dict[str, str] | None,
     ) -> tuple[str, contract.AgentUsage | None]:
         config = self._config
         if config is None:
@@ -379,9 +318,9 @@ class RemoteAgentRuntime:
         payload: dict[str, Any] = {"model": model.model, "messages": messages}
         if model.temperature is not None:
             payload["temperature"] = model.temperature
-        response = await self._client.post(
-            self._endpoint, json=payload, headers=headers
-        )
+        if metadata is not None:
+            payload["metadata"] = metadata
+        response = await self._client.post(self._endpoint, json=payload)
         response.raise_for_status()
         value = response.json()
         usage = value.get("usage", {})
@@ -394,7 +333,7 @@ class RemoteAgentRuntime:
     async def _invoke_messages(
         self,
         user_text: str,
-        headers: dict[str, str],
+        metadata: dict[str, str] | None,
     ) -> tuple[str, contract.AgentUsage | None]:
         config = self._config
         if config is None:
@@ -412,11 +351,11 @@ class RemoteAgentRuntime:
             payload["system"] = config.instructions.system.content
         if model.temperature is not None:
             payload["temperature"] = model.temperature
+        if metadata is not None:
+            payload["metadata"] = metadata
         text = ""
         input_tokens = output_tokens = None
-        async with self._client.stream(
-            "POST", self._endpoint, json=payload, headers=headers
-        ) as response:
+        async with self._client.stream("POST", self._endpoint, json=payload) as response:
             response.raise_for_status()
             async for event, value in _sse_events(response):
                 if event == "message_start":

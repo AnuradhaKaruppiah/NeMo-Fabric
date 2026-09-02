@@ -9,7 +9,6 @@ from contextlib import contextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
-import httpx
 import uvicorn
 
 
@@ -33,11 +32,9 @@ def mock_api_server(port: int) -> Iterator[str]:
 
     def reset_state() -> None:
         app.state.requests = []
-        app.state.request_headers = []
         app.state.status_code = 200
         app.state.tool_call = None
         app.state.tool_call_sent = False
-        app.state.emit_atof = False
         app.state.mcp_authorization_headers = []
 
     reset_state()
@@ -66,12 +63,6 @@ def mock_api_server(port: int) -> Iterator[str]:
 
         return list(app.state.requests)
 
-    @app.get("/_request_headers")
-    def request_headers() -> list[dict[str, str]]:
-        """Return headers captured for OpenAI- and Anthropic-compatible calls."""
-
-        return list(app.state.request_headers)
-
     @app.post("/_scenario")
     async def scenario(request: Request) -> dict[str, object]:
         """Configure the status code or a single tool call for subsequent requests."""
@@ -80,11 +71,9 @@ def mock_api_server(port: int) -> Iterator[str]:
         app.state.status_code = int(payload.get("status_code", 200))
         app.state.tool_call = payload.get("tool_call")
         app.state.tool_call_sent = False
-        app.state.emit_atof = bool(payload.get("emit_atof", False))
         return {
             "status_code": app.state.status_code,
             "tool_call": app.state.tool_call,
-            "emit_atof": app.state.emit_atof,
         }
 
     @app.post("/_reset")
@@ -146,7 +135,6 @@ def mock_api_server(port: int) -> Iterator[str]:
     async def chat_completions(request: Request):
         payload = await request.json()
         app.state.requests.append(payload)
-        app.state.request_headers.append(dict(request.headers))
         if app.state.status_code != 200:
             return JSONResponse(
                 status_code=app.state.status_code,
@@ -157,7 +145,6 @@ def mock_api_server(port: int) -> Iterator[str]:
                     }
                 },
             )
-        await _emit_remote_agent_atof(request, app.state.emit_atof)
 
         tool_call = app.state.tool_call
         if (
@@ -212,7 +199,6 @@ def mock_api_server(port: int) -> Iterator[str]:
     async def responses(request: Request):
         payload = await request.json()
         app.state.requests.append(payload)
-        app.state.request_headers.append(dict(request.headers))
         if app.state.status_code != 200:
             return JSONResponse(
                 status_code=app.state.status_code,
@@ -223,7 +209,6 @@ def mock_api_server(port: int) -> Iterator[str]:
                     }
                 },
             )
-        await _emit_remote_agent_atof(request, app.state.emit_atof)
 
         tool_call = app.state.tool_call
         if (
@@ -241,7 +226,6 @@ def mock_api_server(port: int) -> Iterator[str]:
     async def messages(request: Request):
         payload = await request.json()
         app.state.requests.append(payload)
-        app.state.request_headers.append(dict(request.headers))
         if app.state.status_code != 200:
             return JSONResponse(
                 status_code=app.state.status_code,
@@ -253,7 +237,6 @@ def mock_api_server(port: int) -> Iterator[str]:
                     },
                 },
             )
-        await _emit_remote_agent_atof(request, app.state.emit_atof)
 
         tool_call = app.state.tool_call
         if (
@@ -294,32 +277,6 @@ def mock_api_server(port: int) -> Iterator[str]:
     finally:
         server.should_exit = True
         thread.join(timeout=5)
-
-
-async def _emit_remote_agent_atof(request: Request, enabled: bool) -> None:
-    if not enabled:
-        return
-    stream_url = request.headers["x-nemo-fabric-atof-stream-url"]
-    request_id = request.headers["x-nemo-fabric-request-id"]
-    records = [
-        {
-            "kind": "scope",
-            "scope_category": "start",
-            "uuid": "remote-agent-root",
-            "name": "remote-agent",
-            "metadata": {"nemo_fabric_request_id": request_id},
-        },
-        {
-            "kind": "mark",
-            "uuid": "remote-agent-event",
-            "parent_uuid": "remote-agent-root",
-            "name": "remote-agent.progress",
-        },
-    ]
-    content = "".join(f"{json.dumps(record)}\n" for record in records)
-    async with httpx.AsyncClient() as client:
-        response = await client.post(stream_url, content=content)
-        response.raise_for_status()
 
 
 def _stream_chat_completion(payload: dict[str, object], content: str) -> Iterator[str]:

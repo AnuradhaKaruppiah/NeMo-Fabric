@@ -30,6 +30,7 @@ includes `/v1`; `api_type` defaults to `openai-responses`.
 | `api_type` | `openai-responses`, `openai-completions`, or `anthropic-messages` |
 | `connect_timeout_seconds` | Connection timeout; defaults to `10` |
 | `read_timeout_seconds` | Timeout between response bytes; defaults to `600` |
+| `relay_streaming` | Opt in to request-ID correlation with a Relay-instrumented remote service; defaults to `false` |
 
 The adapter accepts `models`, `models.temperature`, and replacement
 `instructions.system` values.
@@ -40,21 +41,21 @@ otherwise uses `4096`.
 ## Relay-backed streaming
 
 The adapter supports `Runtime.invoke_stream()` when the independently deployed
-service is instrumented with NVIDIA NeMo Relay. Enable Relay in `FabricConfig`
-and pass `streaming=True` to `Fabric.start_runtime(...)`. NeMo Fabric owns the
-ATOF listener and sends these headers with each remote request:
+service is instrumented with NVIDIA NeMo Relay. Set `relay_streaming: true`,
+enable Relay in `FabricConfig`, configure an HTTP ATOF stream sink named
+`nemo-fabric-stream`, and pass `streaming=True` to
+`Fabric.start_runtime(...)`. Fabric binds the sink URL as its collector; the
+remote deployment must already publish ATOF to that same URL.
 
-| Header | Remote-service behavior |
-| --- | --- |
-| `x-nemo-fabric-atof-stream-url` | Add this ephemeral HTTP NDJSON URL as an invocation-scoped ATOF stream sink. Do not persist it. |
-| `x-nemo-fabric-request-id` | Set `nemo_fabric_request_id` on the root Agent scope used for stream correlation. |
-| `x-nemo-fabric-runtime-id` | Optional runtime correlation metadata. |
-| `x-nemo-fabric-invocation-id` | Optional invocation correlation metadata. |
+The adapter adds `metadata.nemo_fabric_request_id` to the mapped OpenAI or
+Anthropic request body. The remote service must carry that value into its Relay
+turn correlation metadata. It receives no listener URL or correlation headers.
+The remote service owns its Relay installation and configuration; the adapter
+does not install or start Relay there.
 
-The remote service owns its Relay installation and configuration. The adapter
-does not start Relay or install Relay packages. It invokes the remote endpoint
-exactly once while the SDK handles correlation, buffering, backpressure, and
-the separate terminal result.
+Invocations on one runtime are serialized. Use a unique request ID for each
+turn and fully consume or close one stream before starting the next. Each
+collector URL can be bound by only one Fabric runtime at a time.
 
 The descriptor keeps `capabilities.streaming: false` because that flag means
 adapter-native OpenAI Chat Completions streaming. Protocol-native OpenAI and
