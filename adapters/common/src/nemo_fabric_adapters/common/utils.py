@@ -10,6 +10,8 @@ import json
 import os
 import re
 import sys
+import uuid
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -255,6 +257,24 @@ def relay_enabled(payload: dict[str, Any]) -> bool:
 def native_telemetry_config(payload: dict[str, Any]) -> dict[str, Any]:
     config = telemetry_plan(payload).get("native_config") or {}
     return config if isinstance(config, dict) else {}
+
+
+def relay_request_context(request_id: str) -> tuple[Any, dict[str, str]]:
+    """Use a UUID request ID as Relay's propagated root and preserve metadata."""
+
+    metadata = {"nemo_fabric_request_id": request_id}
+    try:
+        request_uuid = str(uuid.UUID(request_id))
+    except ValueError:
+        return nullcontext(), metadata
+
+    from nemo_relay import PropagationContext
+    from nemo_relay import create_scope_stack_from_propagation
+    from nemo_relay import use_scope_stack
+
+    propagation = PropagationContext(request_uuid, root_uuid=request_uuid)
+    stack = create_scope_stack_from_propagation(propagation)
+    return use_scope_stack(stack), metadata
 
 
 def ambient_relay_plugin_config_paths() -> list[Path]:

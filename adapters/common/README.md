@@ -115,3 +115,17 @@ adapter that needs configuration during invocation retains it as runtime-owned
 state during `start`. Adapter stdout is reserved for the protocol; diagnostics
 are redirected to stderr. A host crash or protocol timeout terminates that
 runtime.
+
+## Relay Request Correlation
+
+In-process Relay SDK adapters that own their Agent scope can use
+`nemo_fabric_adapters.common.utils.relay_request_context()` around each Agent
+scope. A UUID `RuntimeContext.request_id` becomes the propagated Relay root;
+other request IDs remain available as `nemo_fabric_request_id` metadata. The
+helper always preserves that metadata so Relay-backed streaming can identify
+the active turn.
+
+This helper does not apply to adapters that send telemetry through an external
+Relay gateway or whose upstream integration creates an isolated scope context.
+Those adapters retain their native session correlation until their Relay
+boundary accepts a per-turn propagation context.

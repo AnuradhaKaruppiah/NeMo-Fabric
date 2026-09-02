@@ -9,12 +9,16 @@ import asyncio
 import builtins
 import json
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from nemo_fabric_adapter_contract.models import RuntimeContext
 
+from examples.langgraph_custom_agent.adapter import telemetry as telemetry_module
 from examples.langgraph_custom_agent.adapter.telemetry import _load_plugin_config
 from examples.langgraph_custom_agent.adapter.telemetry import observe_invocation
 from examples.langgraph_custom_agent.agent.graph import build_email_phishing_graph
@@ -24,6 +28,7 @@ def _context(
     config_path: Path | None = None,
     *,
     invocation_id: str = "invocation-1",
+    request_id: str | None = None,
 ) -> RuntimeContext:
     telemetry = None
     if config_path is not None:
@@ -36,7 +41,7 @@ def _context(
         {
             "runtime_id": "runtime-1",
             "invocation_id": invocation_id,
-            "request_id": f"request-{invocation_id}",
+            "request_id": request_id or f"request-{invocation_id}",
             "environment": {
                 "environment_id": "environment-1",
                 "provider": "local",
@@ -96,6 +101,79 @@ def test_partial_relay_config_defaults_to_observability_version_3(tmp_path):
             }
         ],
     }
+
+
+def test_uuid_request_id_seeds_relay_propagation(tmp_path, monkeypatch):
+    request_id = "018f47a4-3af7-7d94-8e61-9f0f89b5d312"
+    request_scope = MagicMock()
+    request_context = MagicMock(
+        return_value=(
+            request_scope,
+            {"nemo_fabric_request_id": request_id},
+        )
+    )
+    agent_scope = MagicMock()
+    scope_api = SimpleNamespace(scope=MagicMock(return_value=agent_scope))
+
+    @asynccontextmanager
+    async def plugin_context(_config):
+        yield None
+
+    plugin_api = SimpleNamespace(plugin=MagicMock(side_effect=plugin_context))
+    monkeypatch.setattr(
+        telemetry_module,
+        "_load_plugin_config",
+        lambda *_args, **_kwargs: {"version": 1, "components": []},
+    )
+    monkeypatch.setattr(
+        telemetry_module.common_utils,
+        "reject_ambient_relay_plugin_config",
+        MagicMock(),
+    )
+    monkeypatch.setattr(
+        telemetry_module.common_utils,
+        "reject_inherited_relay_plugin_config",
+        MagicMock(),
+    )
+    monkeypatch.setattr(
+        telemetry_module.common_utils,
+        "relay_request_context",
+        request_context,
+    )
+    monkeypatch.setattr(
+        telemetry_module,
+        "_relay_api",
+        lambda: (
+            plugin_api,
+            scope_api,
+            SimpleNamespace(Agent="agent"),
+            MagicMock(),
+        ),
+    )
+
+    async def run() -> None:
+        async with observe_invocation(
+            _context(tmp_path / "unused.json", request_id=request_id),
+            base_dir=tmp_path,
+            agent_name="email-phishing",
+            model_name="test-model",
+        ):
+            pass
+
+    asyncio.run(run())
+
+    request_context.assert_called_once_with(request_id)
+    request_scope.__enter__.assert_called_once_with()
+    request_scope.__exit__.assert_called_once()
+    scope_api.scope.assert_called_once_with(
+        "email-phishing-invocation",
+        "agent",
+        metadata={
+            "nemo_fabric_request_id": request_id,
+            "nemo_fabric_runtime_id": "runtime-1",
+            "nemo_fabric_invocation_id": "invocation-1",
+        },
+    )
 
 
 def test_relay_observes_graph_and_model_backed_node(tmp_path, monkeypatch):

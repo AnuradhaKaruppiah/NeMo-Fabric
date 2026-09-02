@@ -203,6 +203,15 @@ Return `AgentRunStatus.FAILED` with an `AgentRunError` when the target completes
 with a failed outcome. Raise an exception when the adapter cannot produce a
 normalized terminal result.
 
+For in-process Relay SDK telemetry where the adapter owns the invocation-level
+Agent scope, wrap that scope with
+`nemo_fabric_adapters.common.utils.relay_request_context(context.request_id)`.
+The helper uses a UUID request ID as Relay's propagated root and always returns
+`nemo_fabric_request_id` metadata, including for non-UUID request IDs. Do not
+apply this pattern to an external Relay gateway or an upstream integration that
+creates an isolated scope context unless its boundary accepts a per-turn
+propagation context.
+
 ## Handle Custom Agents
 
 For a shared framework adapter, select the registered target with

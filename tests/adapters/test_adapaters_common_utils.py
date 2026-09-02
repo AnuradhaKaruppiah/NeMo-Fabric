@@ -7,12 +7,74 @@ import os
 import re
 import sys
 import tomllib
+from contextlib import contextmanager
 from io import StringIO
 from pathlib import Path
+from types import ModuleType
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import MagicMock
 
 import nemo_fabric_adapters.common.utils as common_utils
 import pytest
+
+
+@pytest.mark.parametrize(
+    ("request_id", "expected_context"),
+    [
+        (
+            "018f47a4-3af7-7d94-8e61-9f0f89b5d312",
+            (
+                "018f47a4-3af7-7d94-8e61-9f0f89b5d312",
+                "018f47a4-3af7-7d94-8e61-9f0f89b5d312",
+            ),
+        ),
+        ("request-1", None),
+    ],
+)
+def test_relay_request_context(
+    request_id: str,
+    expected_context: tuple[str, str] | None,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    relay = ModuleType("nemo_relay")
+    propagation_context = MagicMock(
+        side_effect=lambda parent_uuid, root_uuid=None: SimpleNamespace(
+            parent_uuid=parent_uuid,
+            root_uuid=root_uuid,
+        )
+    )
+    create_stack = MagicMock(side_effect=lambda context: context)
+    used_stacks = []
+
+    @contextmanager
+    def use_stack(stack):
+        used_stacks.append(stack)
+        yield stack
+
+    relay.PropagationContext = propagation_context
+    relay.create_scope_stack_from_propagation = create_stack
+    relay.use_scope_stack = use_stack
+    monkeypatch.setitem(sys.modules, "nemo_relay", relay)
+
+    request_context, metadata = common_utils.relay_request_context(request_id)
+    with request_context:
+        pass
+
+    assert metadata == {"nemo_fabric_request_id": request_id}
+    if expected_context is None:
+        propagation_context.assert_not_called()
+        create_stack.assert_not_called()
+        assert used_stacks == []
+    else:
+        propagation_context.assert_called_once_with(
+            expected_context[0], root_uuid=expected_context[1]
+        )
+        create_stack.assert_called_once()
+        created_context = create_stack.call_args.args[0]
+        assert created_context.parent_uuid == expected_context[0]
+        assert created_context.root_uuid == expected_context[1]
+        assert used_stacks == [created_context]
 
 
 @pytest.mark.parametrize(

@@ -18,7 +18,6 @@ import math
 import os
 import uuid
 from collections.abc import Callable
-from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 from typing import NamedTuple
@@ -619,7 +618,11 @@ class DeepAgentsRuntime:
         if self._observability is None:
             outcome = await self._invoke_agent(user_message)
         else:
-            outcome = await self._invoke_with_telemetry(user_message, request_id)
+            outcome = await self._invoke_with_telemetry(
+                user_message,
+                request_id,
+                runtime_context.invocation_id,
+            )
 
         if outcome.error is None:
             self._completed_invocations += 1
@@ -690,6 +693,7 @@ class DeepAgentsRuntime:
         self,
         user_message: str,
         request_id: str,
+        invocation_id: str,
     ) -> TurnOutcome:
         """Run one turn inside the Relay plugin/scope, isolating telemetry faults.
 
@@ -718,7 +722,10 @@ class DeepAgentsRuntime:
                 # plugin's ``__aexit__`` is replaced by any fault the plugin raises in
                 # turn, which would lose one of the two.
                 try:
-                    request_context, metadata = _relay_request_context(request_id)
+                    request_context, metadata = common_utils.relay_request_context(
+                        request_id
+                    )
+                    metadata["nemo_fabric_invocation_id"] = invocation_id
                     with request_context:
                         with self._relay_scope.scope(
                             "deepagents-request",
@@ -959,25 +966,6 @@ def _join_faults(*faults: str | None) -> str | None:
     if not present:
         return None
     return "; ".join(present)
-
-
-def _relay_request_context(request_id: str) -> tuple[Any, dict[str, str]]:
-    """Use a UUID request id as Relay's propagated root and preserve its metadata."""
-
-    metadata = {"nemo_fabric_request_id": request_id}
-
-    try:
-        request_uuid = str(uuid.UUID(request_id))
-    except ValueError:
-        return nullcontext(), metadata
-
-    from nemo_relay import PropagationContext
-    from nemo_relay import create_scope_stack_from_propagation
-    from nemo_relay import use_scope_stack
-
-    propagation = PropagationContext(request_uuid, root_uuid=request_uuid)
-    stack = create_scope_stack_from_propagation(propagation)
-    return use_scope_stack(stack), metadata
 
 
 def _relay_dependency_error() -> RuntimeError:
