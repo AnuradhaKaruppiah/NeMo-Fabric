@@ -45,18 +45,6 @@ service is instrumented with NVIDIA NeMo Relay. Configure the Fabric runtime as
 follows:
 
 ```python
-from nemo_fabric import (
-    Fabric,
-    FabricConfig,
-    HarnessConfig,
-    MetadataConfig,
-    ModelConfig,
-    RelayAtofConfig,
-    RelayAtofStreamSinkConfig,
-    RelayObservabilityConfig,
-    RunRequest,
-)
-
 collector_url = "http://fabric-host:43123/atof"
 
 config = FabricConfig(
