@@ -176,9 +176,18 @@ request ID for each turn and fully consume or close one stream before starting
 the next. Parallel invocations require independent runtimes and a distinct
 collector URL for each runtime.
 
+The adapter retains the completed user/assistant transcript for ordered
+invocations in one runtime.
+
+## Limitations
+
+The remote agent is configured and started independently of Fabric, so Fabric
+cannot normalize or apply configuration that controls how the agent is
+constructed. The adapter normalizes only `models`, `models.temperature`, and
+replacement `instructions.system` settings. MCP, skills, tool policy, and
+subagents can be configured by the remote deployment, but the adapter does not
+expose them through `FabricConfig`.
+
 The descriptor keeps `capabilities.streaming: false` because that flag means
 adapter-native OpenAI Chat Completions streaming. Protocol-native OpenAI and
 Anthropic events are still reduced to the terminal result and are not exposed.
-
-The adapter does not expose MCP, skills, tool policy, or subagents. It retains
-the completed user/assistant transcript for ordered invocations in one runtime.
