@@ -38,24 +38,138 @@ Set `models.default.api_key_env` when the service requires a credential. For
 Anthropic Messages, optionally set `models.default.settings.max_tokens`; it
 otherwise uses `4096`.
 
-## Relay-backed streaming
+## Relay-Backed Streaming
 
 The adapter supports `Runtime.invoke_stream()` when the independently deployed
-service is instrumented with NVIDIA NeMo Relay. Set `relay_streaming: true`,
-enable Relay in `FabricConfig`, configure an HTTP ATOF stream sink named
-`nemo-fabric-stream`, and pass `streaming=True` to
-`Fabric.start_runtime(...)`. Fabric binds the sink URL as its collector; the
-remote deployment must already publish ATOF to that same URL.
+service is instrumented with NVIDIA NeMo Relay. Configure the Fabric runtime as
+follows:
 
-The adapter adds `metadata.nemo_fabric_request_id` to the mapped OpenAI or
-Anthropic request body. The remote service must carry that value into its Relay
-turn correlation metadata. It receives no listener URL or correlation headers.
-The remote service owns its Relay installation and configuration; the adapter
-does not install or start Relay there.
+```python
+from nemo_fabric import (
+    Fabric,
+    FabricConfig,
+    HarnessConfig,
+    MetadataConfig,
+    ModelConfig,
+    RelayAtofConfig,
+    RelayAtofStreamSinkConfig,
+    RelayObservabilityConfig,
+    RunRequest,
+)
 
-Invocations on one runtime are serialized. Use a unique request ID for each
-turn and fully consume or close one stream before starting the next. Each
-collector URL can be bound by only one Fabric runtime at a time.
+collector_url = "http://fabric-host:43123/atof"
+
+config = FabricConfig(
+    metadata=MetadataConfig(name="remote-agent"),
+    harness=HarnessConfig(
+        adapter_id="nvidia.fabric.remote-agent",
+        settings={
+            "base_url": "https://remote-agent.example.com/v1",
+            "api_type": "openai-completions",
+            "relay_streaming": True,
+        },
+    ),
+    models={
+        "default": ModelConfig(provider="remote", model="remote-hermes")
+    },
+).enable_relay(
+    observability=RelayObservabilityConfig(
+        atof=RelayAtofConfig(
+            enabled=True,
+            sinks=[
+                RelayAtofStreamSinkConfig(
+                    name="nemo-fabric-stream",
+                    url=collector_url,
+                    transport="ndjson",
+                )
+            ],
+        )
+    )
+)
+
+async with await Fabric().start_runtime(config, streaming=True) as runtime:
+    for request_id, prompt in (
+        ("req-1", "First request"),
+        ("req-2", "Second request"),
+    ):
+        stream = runtime.invoke_stream(
+            request=RunRequest(input=prompt, request_id=request_id)
+        )
+        async for record in stream:
+            print(record)
+        result = await stream.result()
+        print(result.output)
+```
+
+Configure the remote deployment to publish ATOF to the same collector URL:
+
+```yaml
+atof:
+  enabled: true
+  sinks:
+    - type: stream
+      name: nemo-fabric-stream
+      url: http://fabric-host:43123/atof
+      transport: ndjson
+```
+
+Map the correlation metadata from the remote request into the Hermes request:
+
+```python
+request_id = payload["metadata"]["nemo_fabric_request_id"]
+result = await hermes_runtime.invoke(
+    request=RunRequest(input=user_input, request_id=request_id)
+)
+```
+
+The following sequence shows two serialized invocations:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant App as Consumer
+    participant Fabric as Fabric + Remote Adapter
+    participant API as Remote HTTP Endpoint
+    participant Hermes as Hermes + Remote Relay
+    participant Collector as Fabric ATOF Collector
+
+    Note over Fabric,Collector: Startup<br/>Both configs use the same collector URL<br/>Fabric binds the ATOF endpoint
+
+    rect rgb(239, 246, 255)
+        Note over App,Collector: Invocation 1<br/>request ID = req-1
+        App->>Fabric: invoke_stream(req-1)
+        Fabric->>API: POST invoke<br/>metadata.nemo_fabric_request_id = req-1
+        API->>Hermes: Map req-1 to task_id and invoke
+        Hermes-->>Collector: ATOF NDJSON<br/>hermes.turn.start(task_id=req-1)
+        Collector-->>Fabric: Matched req-1 records
+        Fabric-->>App: Yield req-1 ATOF records
+        Hermes-->>API: Terminal agent response
+        API-->>Fabric: Terminal HTTP response
+        Fabric-->>App: stream.result() for req-1
+    end
+
+    Note over App,Collector: Serialized runtime<br/>Invocation 2 starts after invocation 1 is finalized
+
+    rect rgb(240, 251, 243)
+        Note over App,Collector: Invocation 2<br/>request ID = req-2
+        App->>Fabric: invoke_stream(req-2)
+        Fabric->>API: POST invoke<br/>metadata.nemo_fabric_request_id = req-2
+        API->>Hermes: Map req-2 to task_id and invoke
+        Hermes--xCollector: Delayed req-1 record
+        Note right of Collector: Discarded<br/>Request ID does not match the active turn
+        Hermes-->>Collector: ATOF NDJSON<br/>hermes.turn.start(task_id=req-2)
+        Collector-->>Fabric: Matched req-2 records
+        Fabric-->>App: Yield req-2 ATOF records only
+        Hermes-->>API: Terminal agent response
+        API-->>Fabric: Terminal HTTP response
+        Fabric-->>App: stream.result() for req-2
+    end
+```
+
+The adapter sends no listener URL or correlation headers. Invocations on one
+runtime are serialized. Use a unique request ID for each turn and fully consume
+or close one stream before starting the next. Use a distinct collector URL for
+each parallel runtime.
 
 The descriptor keeps `capabilities.streaming: false` because that flag means
 adapter-native OpenAI Chat Completions streaming. Protocol-native OpenAI and
