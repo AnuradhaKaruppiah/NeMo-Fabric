@@ -44,6 +44,20 @@ The adapter supports `Runtime.invoke_stream()` when the independently deployed
 service is instrumented with NVIDIA NeMo Relay. Configure the Fabric runtime as
 follows:
 
+### Remote Agent Requirements
+
+For Relay-backed streaming, the remote deployment must:
+
+- Own its Relay installation and publish NDJSON ATOF to the same collector URL
+  that Fabric binds.
+- Read the Fabric request ID from
+  `metadata.nemo_fabric_request_id` in the mapped invoke request body and use it
+  as the request ID for its Relay-instrumented runtime. For Hermes, map it to
+  `RunRequest.request_id`, as shown below.
+
+The adapter sends neither a listener URL nor correlation headers. Correlation
+is carried only in the mapped invoke request body.
+
 ```python
 collector_url = "http://fabric-host:43123/atof"
 
@@ -101,7 +115,8 @@ atof:
       transport: ndjson
 ```
 
-Map the correlation metadata from the remote request into the Hermes request:
+For Hermes, map the correlation metadata from the remote request into the
+Hermes request:
 
 ```python
 request_id = payload["metadata"]["nemo_fabric_request_id"]
@@ -154,10 +169,12 @@ sequenceDiagram
     end
 ```
 
-The adapter sends no listener URL or correlation headers. Invocations on one
-runtime are serialized. Use a unique request ID for each turn and fully consume
-or close one stream before starting the next. Use a distinct collector URL for
-each parallel runtime.
+### Invocation Constraints
+
+Invocations on one runtime are serialized. The consumer must use a unique
+request ID for each turn and fully consume or close one stream before starting
+the next. Parallel invocations require independent runtimes and a distinct
+collector URL for each runtime.
 
 The descriptor keeps `capabilities.streaming: false` because that flag means
 adapter-native OpenAI Chat Completions streaming. Protocol-native OpenAI and
