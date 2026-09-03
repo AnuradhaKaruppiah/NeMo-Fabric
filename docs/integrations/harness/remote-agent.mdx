@@ -102,19 +102,34 @@ async with await Fabric().start_runtime(config, streaming=True) as runtime:
     result = await stream.result()
 ```
 
-The collector URL must be `http://<fabric-host>:<port>/atof` and reachable from
-the remote deployment. Fabric binds the collector listener when the runtime
-starts; it does not start or configure the remote deployment's Relay sink. The
-remote Relay configuration must publish to the same URL. The adapter adds
-`metadata.nemo_fabric_request_id` to each mapped OpenAI or Anthropic request
-body; the remote service must carry it into its Relay turn correlation
-metadata. It sends no listener URL or correlation headers.
+Relay-backed streaming has two sides:
 
-The remote service owns its Relay installation and base configuration. The
-adapter does not start Relay or install Relay packages. Invocations on one
-runtime are serialized. Give every turn a unique request ID and fully consume
-or close each stream before invoking again. A collector URL can be bound by one
-Fabric runtime at a time; use a distinct URL for each parallel runtime.
+- **Receiver — Fabric runtime:**
+  `start_runtime(..., streaming=True)` opens the HTTP endpoint at the configured
+  URL. The reserved `nemo-fabric-stream` entry supplies the address that Fabric
+  binds.
+- **Publisher — remote deployment:** The independently started remote service
+  owns its Relay installation. Its Relay stream sink posts NDJSON ATOF records
+  to the Fabric listener. Fabric does not start or configure the remote Relay
+  installation or its sink.
+
+Both sides must be configured with the same URL; the adapter does not send the
+listener URL to the remote service. For correlation, the adapter puts the Fabric
+request ID in `metadata.nemo_fabric_request_id` in each mapped OpenAI or
+Anthropic request body. The remote endpoint must carry it into its Relay turn
+correlation metadata. The adapter sends no correlation headers.
+
+The collector URL must be `http://<fabric-host>:<port>/atof` and reachable from
+the remote deployment. Invocations on one runtime are serialized. Give every
+turn a unique request ID and fully consume or close each stream before invoking
+again. The remote service can start before the Fabric runtime, but the Fabric
+listener must be running before the first invocation.
+
+Multiple Fabric runtimes can use `invoke` against the same remote agent, subject
+to the remote service's concurrency and session-isolation behavior. With the
+single remote sink shown above, only one Fabric runtime can use `invoke_stream`
+at a time because only one runtime can bind the configured listener URL. This
+configuration does not support parallel `invoke_stream` runtimes.
 
 The adapter keeps the completed user/assistant transcript for ordered
 invocations within a runtime.

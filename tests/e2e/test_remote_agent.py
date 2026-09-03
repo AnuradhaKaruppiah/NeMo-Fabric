@@ -195,21 +195,23 @@ async def test_remote_agent_streams_two_correlated_hermes_invocations(
     results = []
     runtime_loop = asyncio.get_running_loop()
 
+    # The independently deployed service is already running before Fabric binds
+    # the ATOF listener, matching the expected production startup order.
     async with await Fabric().start_runtime(
-        remote_config,
-        base_dir=repo_root,
-        streaming=True,
-    ) as remote_runtime:
-        async with await Fabric().start_runtime(
-            remote_hermes_config,
-            base_dir=code_review_agent_dir,
-        ) as hermes_runtime:
-            with _remote_hermes_server(
-                port=remote_port,
-                runtime=hermes_runtime,
-                runtime_loop=runtime_loop,
-                received_request_ids=received_request_ids,
-            ):
+        remote_hermes_config,
+        base_dir=code_review_agent_dir,
+    ) as hermes_runtime:
+        with _remote_hermes_server(
+            port=remote_port,
+            runtime=hermes_runtime,
+            runtime_loop=runtime_loop,
+            received_request_ids=received_request_ids,
+        ):
+            async with await Fabric().start_runtime(
+                remote_config,
+                base_dir=repo_root,
+                streaming=True,
+            ) as remote_runtime:
                 for index, request_id in enumerate(request_ids, start=1):
                     stream = remote_runtime.invoke_stream(
                         request=RunRequest(
