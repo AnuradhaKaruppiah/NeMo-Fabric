@@ -25,6 +25,7 @@ from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 
 import pytest
+from langgraph.errors import GraphRecursionError
 from nemo_fabric_adapter_contract.codec import ContractValidationError
 from nemo_fabric_adapter_contract.models import AgentConfig
 from nemo_fabric_adapter_contract.models import AgentMcpServerConfig
@@ -39,14 +40,15 @@ from nemo_fabric_adapters.deepagents import adapter  # noqa: E402
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_descriptor_declares_replace_system_instruction_mode():
+def test_descriptor_declares_supported_normalized_config():
     descriptor = json.loads(
-        (ROOT / "adapters/deepagents/deepagents.fabric-adapter.json").read_text(
+        (ROOT / "adapters/python/deepagents/deepagents.fabric-adapter.json").read_text(
             encoding="utf-8"
         )
     )
 
     assert descriptor["config"]["system_instruction_modes"] == ["replace"]
+    assert "runtime.max_turns" in descriptor["config"]["accepts"]
 
 
 def lifecycle_start_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -122,7 +124,15 @@ def fake_sdks_fixture(monkeypatch):
     def build_agent(**kwargs):
         recorder["create_kwargs"] = kwargs
 
-        async def astream(inputs, config=None, *, stream_mode=None, subgraphs=False):
+        async def stream(
+            agent_name, inputs, config=None, *, stream_mode=None, subgraphs=False
+        ):
+            if "stream_error" in recorder:
+                raise recorder["stream_error"]
+            recorder["astream_agent"] = agent_name
+            recorder["astream_recursion_limit"] = recorder.get(
+                "bound_recursion_limit" if agent_name == "bound" else "original_recursion_limit"
+            )
             recorder["config"] = config
             recorder["subgraphs"] = subgraphs
             recorder["checkpointer"] = kwargs.get("checkpointer")
@@ -139,7 +149,39 @@ def fake_sdks_fixture(monkeypatch):
             yield ((), "values", {"messages": [{"role": "user", "content": user}, ai]})
 
         agent = MagicMock()
+        bound_agent = MagicMock()
+
+        async def astream(inputs, config=None, *, stream_mode=None, subgraphs=False):
+            async for item in stream(
+                "original",
+                inputs,
+                config,
+                stream_mode=stream_mode,
+                subgraphs=subgraphs,
+            ):
+                yield item
+
+        async def bound_astream(
+            inputs, config=None, *, stream_mode=None, subgraphs=False
+        ):
+            async for item in stream(
+                "bound",
+                inputs,
+                config,
+                stream_mode=stream_mode,
+                subgraphs=subgraphs,
+            ):
+                yield item
+
+        def with_config(config):
+            recorder["bound_recursion_limit"] = config["recursion_limit"]
+            return bound_agent
+
         agent.astream = astream
+        agent.with_config.side_effect = with_config
+        bound_agent.astream = bound_astream
+        recorder["agent"] = agent
+        recorder["bound_agent"] = bound_agent
         return agent
 
     deepagents_mod = types.ModuleType("deepagents")
@@ -1367,7 +1409,10 @@ async def test_invoke_compiled_agent_wires_callbacks_into_run_config(fake_sdks):
 
     agent = create_deep_agent(model=object())
     await adapter.invoke_compiled_agent(
-        agent, "hello", "thread-1", callbacks=["cb-a", "cb-b"]
+        agent,
+        "hello",
+        "thread-1",
+        callbacks=["cb-a", "cb-b"],
     )
 
     config = fake_sdks["config"]
@@ -1412,6 +1457,46 @@ async def test_checkpointer_closed_on_success_and_failure(
             lifecycle_start_payload(make_payload(tmp_path))
         )
     assert fake_sdks["saver_exits"] == 2
+
+
+async def test_max_turns_configures_langgraph_recursion_limit(
+    tmp_path, make_payload, fake_sdks
+):
+    payload = make_payload(tmp_path)
+    payload["config"]["runtime"] = {"max_turns": 7}
+
+    result = await invoke_once(payload)
+
+    assert result["failed"] is False
+    fake_sdks["agent"].with_config.assert_called_once_with({"recursion_limit": 7})
+    assert fake_sdks["astream_agent"] == "bound"
+    assert fake_sdks["astream_recursion_limit"] == 7
+
+
+async def test_omitted_max_turns_preserves_deepagents_default(
+    tmp_path, make_payload, fake_sdks
+):
+    result = await invoke_once(make_payload(tmp_path))
+
+    assert result["failed"] is False
+    fake_sdks["agent"].with_config.assert_not_called()
+    assert fake_sdks["astream_agent"] == "original"
+    assert fake_sdks["astream_recursion_limit"] is None
+
+
+async def test_recursion_limit_failure_is_normalized(
+    tmp_path, make_payload, fake_sdks
+):
+    fake_sdks["stream_error"] = GraphRecursionError("internal limit details")
+
+    result = await invoke_once(make_payload(tmp_path))
+
+    assert result["failed"] is True
+    assert result["error"] == {
+        "code": "deepagents_recursion_limit_reached",
+        "message": "Deep Agents reached its graph recursion limit.",
+        "retryable": False,
+    }
 
 
 async def test_mcp_servers_become_adapter_tools(
