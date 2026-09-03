@@ -87,7 +87,7 @@ config = FabricConfig(
             sinks=[
                 RelayAtofStreamSinkConfig(
                     name="nemo-fabric-stream",
-                    url="http://127.0.0.1:43123/atof",
+                    url="http://fabric-host:43123/atof",
                     transport="ndjson",
                 )
             ],
@@ -102,9 +102,10 @@ async with await Fabric().start_runtime(config, streaming=True) as runtime:
     result = await stream.result()
 ```
 
-The sink URL must be `http://<host>:<port>/atof`, and the remote Relay
-configuration must contain the same URL. Fabric binds it as the collector when
-the runtime starts. The adapter adds
+The collector URL must be `http://<fabric-host>:<port>/atof` and reachable from
+the remote deployment. Fabric binds the collector listener when the runtime
+starts; it does not start or configure the remote deployment's Relay sink. The
+remote Relay configuration must publish to the same URL. The adapter adds
 `metadata.nemo_fabric_request_id` to each mapped OpenAI or Anthropic request
 body; the remote service must carry it into its Relay turn correlation
 metadata. It sends no listener URL or correlation headers.
