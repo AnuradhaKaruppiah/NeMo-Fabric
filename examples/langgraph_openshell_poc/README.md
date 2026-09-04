@@ -41,7 +41,8 @@ sequenceDiagram
     G->>S: write delivery-receipt.json
     F->>S: collect declared artifact
     F-->>C: result + local receipt path
-    C->>F: stop runtime; release environment
+    C->>F: stop runtime
+    C->>F: release environment
     F->>O: delete sandbox
 ```
 
