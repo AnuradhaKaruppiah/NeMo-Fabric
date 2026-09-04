@@ -13,6 +13,8 @@ serialized into a Fabric plan.
 The first provider profile uses the existing normalized environment fields:
 
 ```python
+from pathlib import Path
+
 from nemo_fabric import EnvironmentConfig
 
 environment = EnvironmentConfig(
@@ -29,6 +31,7 @@ environment = EnvironmentConfig(
     settings={
         "image": "registry.example/fabric-capsule@sha256:<64-hex-digest>",
         "command": ["fabric-capsule-runner", "serve"],
+        "policy_yaml": Path("policy.yaml").read_text(encoding="utf-8"),
         "ready_timeout_seconds": 60,
         "exec_timeout_seconds": 30,
         "delete_timeout_seconds": 30,
@@ -43,9 +46,12 @@ the provider process; their values are not returned in the normalized
 environment handle.
 
 Phase 1B implements gateway health, create/get/wait-ready, buffered exec with
-bounded published output, identity-checked inspection, delete, and wait-deleted. Phase 1C adds a
-resident, typed capsule-control path for process and Python adapters. Consumers prepare an
-environment explicitly and pass its handle to
+bounded published output, identity-checked inspection, delete, and
+wait-deleted. Phase 1C adds a resident, typed capsule-control path for process
+and Python adapters. Phase 1D passes a validated OpenShell policy at sandbox
+creation and collects adapter-declared artifacts through a traversal-safe,
+size-bounded provider operation. Consumers prepare an environment explicitly
+and pass its handle to
 `start_runtime_in(plan, environment_handle)`; `start_runtime(plan)` rejects
 non-local plans without contacting the provider. Fabric routes `start`,
 buffered `invoke`, and `stop` as correlated
@@ -78,4 +84,11 @@ The consumer may run multiple independent environment/runtime pairs
 concurrently. A single `Runtime` remains one sequential session, and the
 capsule profile allows only one active session per OpenShell environment. A
 second bind returns a stable environment-in-use error. Streaming,
-reconnect/resubscribe, cancellation, and artifact collection remain deferred.
+reconnect/resubscribe, and cancellation remain deferred.
+
+The environment lifecycle calls are an optional development convenience. In
+deployment, a consumer or platform can own OpenShell provisioning and hand an
+existing normalized environment to Fabric. See
+[`examples/langgraph_openshell_poc`](../../examples/langgraph_openshell_poc/)
+for a real gateway/Docker vertical slice with a stateful LangGraph, an L7
+policy-denied preferred route, an allowed fallback, and a collected receipt.

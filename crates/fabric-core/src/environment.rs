@@ -13,6 +13,7 @@ use nemo_fabric_capsule::{CapsuleControlRequest, CapsuleControlResponse};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::agent_execution::AgentArtifact;
 use crate::config::{ControlLocation, EnvironmentOwnership, EnvironmentPlan, RunPlan};
 use crate::error::{FabricError, Result};
 use crate::runtime::{EnvironmentHandle, absolute_path, new_id, resolve_path};
@@ -183,6 +184,31 @@ pub(crate) fn control_capsule(
             OPEN_SHELL_ENVIRONMENT_PROVIDER.request(ProviderOperation::CapsuleControl {
                 environment,
                 request,
+            })
+        }
+        provider => Err(FabricError::UnsupportedEnvironmentProvider {
+            provider: provider.to_string(),
+            adapter_kind: crate::config::AdapterKind::Process,
+        }),
+    }
+}
+
+/// Collect a bounded set of adapter-declared files from an OpenShell capsule.
+pub(crate) fn collect_artifacts(
+    environment: &EnvironmentHandle,
+    artifacts: &[AgentArtifact],
+) -> Result<Vec<CollectedArtifact>> {
+    match environment.provider.as_str() {
+        OPEN_SHELL_PROVIDER_ID => {
+            let artifacts = artifacts
+                .iter()
+                .map(|artifact| ProviderArtifactRequest {
+                    path: &artifact.path,
+                })
+                .collect();
+            OPEN_SHELL_ENVIRONMENT_PROVIDER.request(ProviderOperation::CollectArtifacts {
+                environment,
+                artifacts,
             })
         }
         provider => Err(FabricError::UnsupportedEnvironmentProvider {
@@ -372,6 +398,10 @@ enum ProviderOperation<'a> {
         environment: &'a EnvironmentHandle,
         request: &'a CapsuleControlRequest,
     },
+    CollectArtifacts {
+        environment: &'a EnvironmentHandle,
+        artifacts: Vec<ProviderArtifactRequest<'a>>,
+    },
     Release {
         environment: &'a EnvironmentHandle,
     },
@@ -382,6 +412,7 @@ impl ProviderOperation<'_> {
         match self {
             Self::Prepare { .. } => "prepare",
             Self::CapsuleControl { .. } => "capsule_control",
+            Self::CollectArtifacts { .. } => "collect_artifacts",
             Self::Release { .. } => "release",
         }
     }
@@ -416,6 +447,17 @@ struct PreparedEnvironment {
     connection: serde_json::Map<String, Value>,
     #[serde(default)]
     metadata: serde_json::Map<String, Value>,
+}
+
+#[derive(Serialize)]
+struct ProviderArtifactRequest<'a> {
+    path: &'a std::path::Path,
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+pub(crate) struct CollectedArtifact {
+    pub(crate) path: PathBuf,
+    pub(crate) content: Vec<u8>,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
