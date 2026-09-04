@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs::File;
 use std::io::{BufRead, BufReader, ErrorKind, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
@@ -35,8 +35,8 @@ use crate::config::{
     validate_tool_definitions, validate_workflow,
 };
 use crate::environment::{
-    control_capsule, release_environment as release_prepared_environment,
-    resolve_environment_provider,
+    collect_artifacts as collect_environment_artifacts, control_capsule,
+    release_environment as release_prepared_environment, resolve_environment_provider,
 };
 use crate::error::{FabricError, Result};
 
@@ -1447,9 +1447,15 @@ impl RuntimeAdapter for CapsuleAdapter {
             request_id: request.request_id.clone(),
             runtime_id: runtime.runtime_id.clone(),
         };
-        let artifacts = capsule_artifact_manifest(runtime);
-        let adapter_invocation =
-            adapter_invocation(plan, runtime, &invocation, &request, &artifacts, None)?;
+        let capsule_artifacts = capsule_artifact_manifest(runtime);
+        let adapter_invocation = adapter_invocation(
+            plan,
+            runtime,
+            &invocation,
+            &request,
+            &capsule_artifacts,
+            None,
+        )?;
         let lifecycle = AdapterLifecycleRequest::new(AdapterLifecycleRequestKind::Invoke(
             Box::new(adapter_invocation),
         ));
@@ -1478,7 +1484,7 @@ impl RuntimeAdapter for CapsuleAdapter {
             remove_remote_environment(&runtime.environment.environment_id);
         }
         let output = output?;
-        capsule_run_result(plan, runtime, invocation, request, artifacts, output)
+        capsule_run_result(plan, runtime, invocation, request, output)
     }
 
     fn invoke_openai_stream(
@@ -1772,7 +1778,6 @@ fn capsule_run_result(
     runtime: &RuntimeHandle,
     invocation: InvocationHandle,
     request: RunRequest,
-    artifacts: ArtifactManifest,
     output: Value,
 ) -> Result<RunResult> {
     let agent_result: AgentRunResult = serde_json::from_value(output).map_err(|error| {
@@ -1794,15 +1799,7 @@ fn capsule_run_result(
         )
     })?;
     validate_agent_run_result_extensions(&agent_result, plan.adapter_descriptor.as_ref())?;
-    if !agent_result.artifacts.is_empty() {
-        return Err(lifecycle_error(
-            AdapterLifecycleOperation::Invoke,
-            &runtime.runtime_id,
-            "artifact_collection_not_implemented",
-            "OpenShell capsule artifact collection is deferred to Phase 1D",
-            "",
-        ));
-    }
+    let artifacts = collect_capsule_artifacts(plan, runtime, &agent_result.artifacts)?;
     let (status, error) = agent_result_status(&agent_result);
     let mut metadata = BTreeMap::from([
         (
@@ -1849,6 +1846,119 @@ fn capsule_run_result(
         events,
         metadata,
     })
+}
+
+fn collect_capsule_artifacts(
+    plan: &RunPlan,
+    runtime: &RuntimeHandle,
+    declared: &[AgentArtifact],
+) -> Result<ArtifactManifest> {
+    let root = plan
+        .config
+        .runtime
+        .artifacts
+        .as_ref()
+        .map(|path| resolve_path(&plan.base_dir, path));
+    if declared.is_empty() {
+        return Ok(ArtifactManifest {
+            root,
+            artifacts: Vec::new(),
+        });
+    }
+    for artifact in declared {
+        if artifact.path.as_os_str().is_empty()
+            || artifact.path.is_absolute()
+            || artifact
+                .path
+                .components()
+                .any(|component| !matches!(component, Component::Normal(_)))
+        {
+            return Err(lifecycle_error(
+                AdapterLifecycleOperation::Invoke,
+                &runtime.runtime_id,
+                "artifact_path_invalid",
+                "capsule artifact paths must be non-empty, relative, and traversal-free",
+                "",
+            ));
+        }
+    }
+    let root = root.ok_or_else(|| {
+        lifecycle_error(
+            AdapterLifecycleOperation::Invoke,
+            &runtime.runtime_id,
+            "artifact_destination_required",
+            "runtime.artifacts is required when a capsule adapter returns artifacts",
+            "",
+        )
+    })?;
+    std::fs::create_dir_all(&root).map_err(|source| FabricError::Write {
+        path: root.clone(),
+        source,
+    })?;
+    let root = root
+        .canonicalize()
+        .map_err(|source| FabricError::Read { path: root, source })?;
+    let collected = collect_environment_artifacts(&runtime.environment, declared)?;
+    if collected.len() != declared.len() {
+        return Err(lifecycle_error(
+            AdapterLifecycleOperation::Invoke,
+            &runtime.runtime_id,
+            "artifact_correlation_mismatch",
+            "environment provider returned the wrong number of artifacts",
+            "",
+        ));
+    }
+
+    let mut manifest = ArtifactManifest {
+        root: Some(root.clone()),
+        artifacts: Vec::new(),
+    };
+    for (expected, artifact) in declared.iter().zip(collected) {
+        if artifact.path != expected.path {
+            return Err(lifecycle_error(
+                AdapterLifecycleOperation::Invoke,
+                &runtime.runtime_id,
+                "artifact_correlation_mismatch",
+                "environment provider returned an unexpected artifact path",
+                "",
+            ));
+        }
+        let destination = root.join(&artifact.path);
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent).map_err(|source| FabricError::Write {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+            let canonical_parent = parent.canonicalize().map_err(|source| FabricError::Read {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+            if !canonical_parent.starts_with(&root) {
+                return Err(lifecycle_error(
+                    AdapterLifecycleOperation::Invoke,
+                    &runtime.runtime_id,
+                    "artifact_destination_escape",
+                    "local artifact destination resolves outside runtime.artifacts",
+                    "",
+                ));
+            }
+        }
+        if destination.symlink_metadata().is_ok() && destination.is_symlink() {
+            return Err(lifecycle_error(
+                AdapterLifecycleOperation::Invoke,
+                &runtime.runtime_id,
+                "artifact_destination_symlink",
+                "local artifact destination must not be a symbolic link",
+                "",
+            ));
+        }
+        std::fs::write(&destination, artifact.content).map_err(|source| FabricError::Write {
+            path: destination,
+            source,
+        })?;
+    }
+    promote_agent_artifacts_to_manifest(declared, &mut manifest);
+    Ok(manifest)
 }
 
 fn capsule_event_metadata(
@@ -4125,6 +4235,13 @@ if operation == "capsule_control":
                 "invocation_count": state["invocations"],
             },
         }
+        if lifecycle_input == "artifact":
+            lifecycle_output["artifacts"] = [{
+                "name": "delivery-receipt",
+                "kind": "receipt",
+                "path": "delivery-receipt.json",
+                "media_type": "application/json",
+            }]
     elif lifecycle_operation == "stop":
         state = {"runtime_id": None, "invocations": state["invocations"]}
         lifecycle_output = None
@@ -4144,6 +4261,9 @@ if operation == "capsule_control":
             },
         },
     }
+elif operation == "collect_artifacts":
+    content = b'{"status":"delivered"}'
+    output = [{"path": item["path"], "content": list(content)} for item in request["artifacts"]]
 elif operation == "release":
     output = {"released": True, "detached": False}
 else:
@@ -4174,6 +4294,7 @@ json.dump({
             .unwrap_or_else(|error| error.into_inner());
         let (root, mut plan) = local_host_plan("success");
         configure_openshell_environment(&mut plan);
+        plan.config.runtime.artifacts = Some(root.join("collected-artifacts"));
         let (provider, log) = write_fake_capsule_provider(&root);
         let _provider_env = ProviderCommandEnv::set(&provider);
         let environment = EnvironmentHandle {
@@ -4204,11 +4325,20 @@ json.dump({
             .expect("first capsule invocation");
         let second = invoke_runtime(&plan, &runtime, RunRequest::text("second"))
             .expect("second capsule invocation");
+        let artifact = invoke_runtime(&plan, &runtime, RunRequest::text("artifact"))
+            .expect("artifact capsule invocation");
 
         assert_eq!(first.output["echo"], "first");
         assert_eq!(first.output["invocation_count"], 1);
         assert_eq!(second.output["echo"], "second");
         assert_eq!(second.output["invocation_count"], 2);
+        assert_eq!(artifact.output["invocation_count"], 3);
+        assert_eq!(artifact.artifacts.artifacts.len(), 1);
+        assert_eq!(
+            fs::read_to_string(&artifact.artifacts.artifacts[0].path)
+                .expect("read collected artifact"),
+            r#"{"status":"delivered"}"#
+        );
         assert_eq!(first.metadata["adapter_runner"], "openshell_capsule");
 
         let early_release = release_environment(&environment)
@@ -4229,6 +4359,8 @@ json.dump({
                 "capsule_control:start",
                 "capsule_control:invoke",
                 "capsule_control:invoke",
+                "capsule_control:invoke",
+                "collect_artifacts",
                 "capsule_control:stop",
             ]
         );
