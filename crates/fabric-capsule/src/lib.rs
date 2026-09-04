@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::str::FromStr;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
@@ -20,6 +20,8 @@ pub const PROTOCOL_VERSION: &str = "fabric.capsule-control.v1alpha1";
 /// Default Unix socket installed in a Fabric capsule.
 pub const DEFAULT_SOCKET: &str = "/sandbox/.fabric/control/capsule.sock";
 const MAX_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
+/// Maximum size of one artifact exported through capsule control.
+pub const MAX_ARTIFACT_BYTES: u64 = 256 * 1024;
 const CHILD_EXIT_GRACE: Duration = Duration::from_secs(2);
 
 /// One supported capsule lifecycle operation.
@@ -211,6 +213,78 @@ pub fn default_socket_path() -> PathBuf {
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(DEFAULT_SOCKET))
+}
+
+/// One bounded request to read an adapter-declared artifact from the capsule.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactExportRequest {
+    /// Absolute artifact root supplied to the adapter through `RuntimeContext`.
+    pub root: PathBuf,
+    /// Adapter-declared path relative to `root`.
+    pub path: PathBuf,
+    /// Maximum bytes the caller is willing to receive.
+    pub max_bytes: u64,
+}
+
+/// Export one regular file without allowing traversal or symlink escape.
+pub fn export_artifact(mut input: impl Read, mut output: impl Write) -> std::io::Result<()> {
+    let request = read_json::<ArtifactExportRequest>(&mut input)?;
+    if !request.root.is_absolute() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "artifact root must be absolute",
+        ));
+    }
+    if request.path.as_os_str().is_empty()
+        || request.path.is_absolute()
+        || request
+            .path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "artifact path must be a non-empty relative path without traversal",
+        ));
+    }
+    if request.max_bytes == 0 || request.max_bytes > MAX_ARTIFACT_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("artifact max_bytes must be between 1 and {MAX_ARTIFACT_BYTES}"),
+        ));
+    }
+
+    let root = request.root.canonicalize()?;
+    let path = request.root.join(&request.path).canonicalize()?;
+    if !path.starts_with(&root) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "artifact path resolves outside the artifact root",
+        ));
+    }
+    if !path.metadata()?.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "artifact path must resolve to a regular file",
+        ));
+    }
+
+    let mut content = Vec::new();
+    std::fs::File::open(&path)?
+        .take(request.max_bytes + 1)
+        .read_to_end(&mut content)?;
+    if content.len() as u64 > request.max_bytes {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "artifact exceeds the {}-byte request limit",
+                request.max_bytes
+            ),
+        ));
+    }
+    output.write_all(&content)?;
+    output.flush()
 }
 
 #[cfg(unix)]
@@ -632,6 +706,51 @@ fn write_json_line(writer: &mut impl Write, value: &impl Serialize) -> std::io::
 mod tests {
     use super::*;
     use std::os::unix::net::UnixListener;
+
+    #[test]
+    fn artifact_export_is_bounded_and_cannot_escape_its_root() {
+        let root = std::env::temp_dir().join(format!(
+            "fabric-capsule-artifact-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("create artifact root");
+        std::fs::write(root.join("receipt.json"), br#"{"status":"delivered"}"#)
+            .expect("write artifact");
+
+        let request = ArtifactExportRequest {
+            root: root.clone(),
+            path: PathBuf::from("receipt.json"),
+            max_bytes: 1024,
+        };
+        let mut output = Vec::new();
+        export_artifact(
+            serde_json::to_vec(&request)
+                .expect("request JSON")
+                .as_slice(),
+            &mut output,
+        )
+        .expect("export artifact");
+        assert_eq!(output, br#"{"status":"delivered"}"#);
+
+        let traversal = ArtifactExportRequest {
+            path: PathBuf::from("../outside"),
+            ..request
+        };
+        let error = export_artifact(
+            serde_json::to_vec(&traversal)
+                .expect("traversal JSON")
+                .as_slice(),
+            Vec::new(),
+        )
+        .expect_err("traversal must fail");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+
+        std::fs::remove_dir_all(root).expect("remove artifact root");
+    }
 
     fn request(command: CapsuleCommand) -> CapsuleControlRequest {
         CapsuleControlRequest {
