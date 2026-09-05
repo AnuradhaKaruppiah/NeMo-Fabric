@@ -16,7 +16,9 @@ use serde_json::Value;
 use crate::agent_execution::AgentArtifact;
 use crate::config::{ControlLocation, EnvironmentOwnership, EnvironmentPlan, RunPlan};
 use crate::error::{FabricError, Result};
-use crate::runtime::{EnvironmentHandle, absolute_path, new_id, resolve_path};
+use crate::runtime::{
+    EnvironmentHandle, EnvironmentReference, absolute_path, new_id, resolve_path,
+};
 
 const OPEN_SHELL_PROVIDER_ID: &str = "openshell";
 const OPEN_SHELL_PROVIDER_COMMAND: &str = "fabric-environment-openshell";
@@ -32,6 +34,10 @@ const MAX_PROVIDER_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) trait EnvironmentProvider: Sync {
     /// Resolve or prepare the environment represented by a run plan.
     fn prepare(&self, plan: &RunPlan) -> Result<EnvironmentHandle>;
+
+    /// Verify and attach to a caller-owned provider resource.
+    fn attach(&self, plan: &RunPlan, reference: &EnvironmentReference)
+    -> Result<EnvironmentHandle>;
 }
 
 struct LocalEnvironmentProvider;
@@ -110,6 +116,17 @@ impl EnvironmentProvider for LocalEnvironmentProvider {
             metadata,
         })
     }
+
+    fn attach(
+        &self,
+        _plan: &RunPlan,
+        _reference: &EnvironmentReference,
+    ) -> Result<EnvironmentHandle> {
+        Err(FabricError::InvalidConfig {
+            field: "environment_reference.provider".to_string(),
+            reason: "the local provider does not attach external resources".to_string(),
+        })
+    }
 }
 
 impl EnvironmentProvider for OpenShellEnvironmentProvider {
@@ -122,12 +139,49 @@ impl EnvironmentProvider for OpenShellEnvironmentProvider {
                     reason: "the openshell provider requires an explicit environment configuration"
                         .to_string(),
                 })?;
-        validate_open_shell_profile(environment)?;
+        validate_open_shell_profile(environment, EnvironmentOwnership::FabricOwned)?;
 
         let environment_id = new_id("environment");
         let prepared: PreparedEnvironment = self.request(ProviderOperation::Prepare {
             environment_id: &environment_id,
             environment,
+        })?;
+        let mut metadata = prepared.metadata.into_iter().collect::<BTreeMap<_, _>>();
+        metadata.extend(environment.metadata.clone());
+
+        Ok(EnvironmentHandle {
+            environment_id,
+            provider: OPEN_SHELL_PROVIDER_ID.to_string(),
+            control_location: environment.control_location,
+            workspace: prepared.workspace,
+            artifacts: prepared.artifacts,
+            env: environment.env.clone(),
+            ownership: environment.ownership,
+            connection: prepared.connection.into_iter().collect(),
+            metadata,
+        })
+    }
+
+    fn attach(
+        &self,
+        plan: &RunPlan,
+        reference: &EnvironmentReference,
+    ) -> Result<EnvironmentHandle> {
+        let environment =
+            plan.environment_plan
+                .as_ref()
+                .ok_or_else(|| FabricError::InvalidConfig {
+                    field: "environment".to_string(),
+                    reason: "the openshell provider requires an explicit environment configuration"
+                        .to_string(),
+                })?;
+        validate_open_shell_profile(environment, EnvironmentOwnership::CallerOwned)?;
+
+        let environment_id = new_id("environment");
+        let prepared: PreparedEnvironment = self.request(ProviderOperation::Attach {
+            environment_id: &environment_id,
+            environment,
+            reference,
         })?;
         let mut metadata = prepared.metadata.into_iter().collect::<BTreeMap<_, _>>();
         metadata.extend(environment.metadata.clone());
@@ -218,7 +272,10 @@ pub(crate) fn collect_artifacts(
     }
 }
 
-fn validate_open_shell_profile(environment: &EnvironmentPlan) -> Result<()> {
+fn validate_open_shell_profile(
+    environment: &EnvironmentPlan,
+    expected_ownership: EnvironmentOwnership,
+) -> Result<()> {
     if environment.control_location != ControlLocation::InEnvControl {
         return Err(FabricError::InvalidConfig {
             field: "environment.control_location".to_string(),
@@ -226,10 +283,16 @@ fn validate_open_shell_profile(environment: &EnvironmentPlan) -> Result<()> {
                 .to_string(),
         });
     }
-    if environment.ownership != EnvironmentOwnership::FabricOwned {
+    if environment.ownership != expected_ownership {
         return Err(FabricError::InvalidConfig {
             field: "environment.ownership".to_string(),
-            reason: "the experimental openshell provider supports only `fabric_owned`".to_string(),
+            reason: format!(
+                "this operation requires `{}`",
+                match expected_ownership {
+                    EnvironmentOwnership::CallerOwned => "caller_owned",
+                    EnvironmentOwnership::FabricOwned => "fabric_owned",
+                }
+            ),
         });
     }
     Ok(())
@@ -394,6 +457,11 @@ enum ProviderOperation<'a> {
         environment_id: &'a str,
         environment: &'a EnvironmentPlan,
     },
+    Attach {
+        environment_id: &'a str,
+        environment: &'a EnvironmentPlan,
+        reference: &'a EnvironmentReference,
+    },
     CapsuleControl {
         environment: &'a EnvironmentHandle,
         request: &'a CapsuleControlRequest,
@@ -411,6 +479,7 @@ impl ProviderOperation<'_> {
     fn name(&self) -> &'static str {
         match self {
             Self::Prepare { .. } => "prepare",
+            Self::Attach { .. } => "attach",
             Self::CapsuleControl { .. } => "capsule_control",
             Self::CollectArtifacts { .. } => "collect_artifacts",
             Self::Release { .. } => "release",

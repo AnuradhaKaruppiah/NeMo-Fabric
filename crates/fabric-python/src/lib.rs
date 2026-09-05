@@ -10,8 +10,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use nemo_fabric_core::{
-    EnvironmentHandle, FabricConfig, OpenAiStreamTransport, ResolveContext, RunPlan, RunRequest,
-    RuntimeHandle, doctor_plan, resolve_diagnostic_plan_from_config_with_adapter_directories,
+    EnvironmentHandle, EnvironmentReference, FabricConfig, OpenAiStreamTransport, ResolveContext,
+    RunPlan, RunRequest, RuntimeHandle, doctor_plan,
+    resolve_diagnostic_plan_from_config_with_adapter_directories,
     resolve_run_plan_from_config_with_adapter_directories, run_plan,
 };
 use pyo3::exceptions::PyRuntimeError;
@@ -137,6 +138,21 @@ fn prepare_environment(py: Python<'_>, plan_json: String) -> PyResult<String> {
     to_json(&environment)
 }
 
+/// Verify and attach to a caller-owned execution environment.
+#[pyfunction]
+fn attach_environment(
+    py: Python<'_>,
+    plan_json: String,
+    reference_json: String,
+) -> PyResult<String> {
+    let plan = parse_run_plan(plan_json)?;
+    let reference = parse_environment_reference(reference_json)?;
+    let environment = py
+        .detach(|| nemo_fabric_core::attach_environment(&plan, &reference))
+        .map_err(to_py_error)?;
+    to_json(&environment)
+}
+
 /// Start a runtime in an explicitly prepared environment.
 #[pyfunction]
 fn start_runtime_in(
@@ -214,6 +230,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(doctor_config, m)?)?;
     m.add_function(wrap_pyfunction!(run_config, m)?)?;
     m.add_function(wrap_pyfunction!(prepare_environment, m)?)?;
+    m.add_function(wrap_pyfunction!(attach_environment, m)?)?;
     m.add_function(wrap_pyfunction!(start_runtime, m)?)?;
     m.add_function(wrap_pyfunction!(start_runtime_in, m)?)?;
     m.add_function(wrap_pyfunction!(invoke_runtime, m)?)?;
@@ -409,6 +426,10 @@ fn parse_runtime_handle(contents: String) -> PyResult<RuntimeHandle> {
 }
 
 fn parse_environment_handle(contents: String) -> PyResult<EnvironmentHandle> {
+    serde_json::from_str(&contents).map_err(|error| PyRuntimeError::new_err(error.to_string()))
+}
+
+fn parse_environment_reference(contents: String) -> PyResult<EnvironmentReference> {
     serde_json::from_str(&contents).map_err(|error| PyRuntimeError::new_err(error.to_string()))
 }
 
