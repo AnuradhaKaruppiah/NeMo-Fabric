@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Experimental OpenShell environment provider
 
 NVIDIA NeMo Fabric recognizes `environment.provider="openshell"` as an
@@ -39,11 +44,13 @@ environment = EnvironmentConfig(
 )
 ```
 
-The provider rejects caller-owned sandboxes, external control, mutable image
-tags, blank commands, unknown connection/settings fields, and literal token
-fields. `token_env` and `ca_cert_env` name environment variables inherited by
-the provider process; their values are not returned in the normalized
-environment handle.
+The provider accepts two explicit ownership flows: `fabric_owned` preparation
+for development and `caller_owned` attachment for deployment. It rejects an
+ownership/operation mismatch, external control, mutable image tags, blank
+commands, unknown connection/settings fields, and literal token fields.
+`token_env` and `ca_cert_env` name environment variables inherited by the
+provider process; their values are not returned in the normalized environment
+handle.
 
 Phase 1B implements gateway health, create/get/wait-ready, buffered exec with
 bounded published output, identity-checked inspection, delete, and
@@ -86,9 +93,11 @@ capsule profile allows only one active session per OpenShell environment. A
 second bind returns a stable environment-in-use error. Streaming,
 reconnect/resubscribe, and cancellation remain deferred.
 
-The environment lifecycle calls are an optional development convenience. In
-deployment, a consumer or platform can own OpenShell provisioning and hand an
-existing normalized environment to Fabric. See
+Environment creation through Fabric is an optional development convenience. In
+deployment, a consumer or platform owns OpenShell provisioning and deletion,
+then calls `attach_environment(...)` with the sandbox name and immutable ID.
+The provider verifies the existing resource and `release_environment(...)`
+detaches without deleting it. See
 [`examples/langgraph_openshell_poc`](../../examples/langgraph_openshell_poc/)
 for a real gateway/Docker vertical slice with a stateful LangGraph, an L7
 policy-denied preferred route, an allowed fallback, and a collected receipt.
