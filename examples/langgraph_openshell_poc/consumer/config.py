@@ -18,7 +18,9 @@ ADAPTER_ID = "nvidia.fabric.example.langgraph.portable-courier"
 EXAMPLE_ROOT = Path(__file__).parents[1]
 
 
-def courier_config(*, gateway: str, image: str) -> FabricConfig:
+def courier_config(
+    *, gateway: str, image: str, ownership: str, sandbox_name: str | None = None
+) -> FabricConfig:
     """Build the complete OpenShell-backed demo configuration."""
 
     return FabricConfig(
@@ -37,7 +39,7 @@ def courier_config(*, gateway: str, image: str) -> FabricConfig:
         environment=EnvironmentConfig(
             provider="openshell",
             control_location="in_env_control",
-            ownership="fabric_owned",
+            ownership=ownership,
             workspace="/sandbox",
             artifacts="/sandbox/artifacts",
             env={"PYTHONPATH": "/opt/nemo-fabric"},
@@ -51,6 +53,7 @@ def courier_config(*, gateway: str, image: str) -> FabricConfig:
                 "ready_timeout_seconds": 90,
                 "delete_timeout_seconds": 30,
                 "exec_timeout_seconds": 35,
+                **({"sandbox_name": sandbox_name} if sandbox_name else {}),
             },
         ),
     )

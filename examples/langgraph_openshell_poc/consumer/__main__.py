@@ -10,6 +10,7 @@ import asyncio
 import json
 from pathlib import Path
 
+from nemo_fabric import EnvironmentReference
 from nemo_fabric import Fabric
 
 from examples.langgraph_openshell_poc.consumer.config import courier_config
@@ -22,12 +23,39 @@ async def main() -> None:
     )
     parser.add_argument("--gateway", default="http://127.0.0.1:18080")
     parser.add_argument("--base-dir", type=Path, default=Path(".tmp/portable-courier"))
+    parser.add_argument("--sandbox-name")
+    parser.add_argument("--sandbox-id")
+    parser.add_argument("--fabric-sandbox-name")
     args = parser.parse_args()
+    if bool(args.sandbox_name) != bool(args.sandbox_id):
+        parser.error("--sandbox-name and --sandbox-id must be provided together")
+    if args.sandbox_name and args.fabric_sandbox_name:
+        parser.error("caller-owned and Fabric-owned sandbox names are mutually exclusive")
     args.base_dir.mkdir(parents=True, exist_ok=True)
 
     fabric = Fabric()
-    config = courier_config(gateway=args.gateway, image=args.image)
-    environment = await fabric.prepare_environment(config, base_dir=args.base_dir)
+    caller_owned = args.sandbox_name is not None
+    config = courier_config(
+        gateway=args.gateway,
+        image=args.image,
+        ownership="caller_owned" if caller_owned else "fabric_owned",
+        sandbox_name=args.fabric_sandbox_name,
+    )
+    if caller_owned:
+        reference = EnvironmentReference.from_mapping(
+            {
+                "provider": "openshell",
+                "resource": {
+                    "sandbox_name": args.sandbox_name,
+                    "sandbox_id": args.sandbox_id,
+                },
+            }
+        )
+        environment = await fabric.attach_environment(
+            config, reference, base_dir=args.base_dir
+        )
+    else:
+        environment = await fabric.prepare_environment(config, base_dir=args.base_dir)
     runtime = None
     try:
         runtime = await fabric.start_runtime_in(
@@ -71,6 +99,7 @@ async def main() -> None:
         raise RuntimeError("the receipt does not prove the same runtime session")
     summary = {
         "environment": {
+            "ownership": environment.ownership,
             "provider": environment.provider,
             "environment_id": environment.environment_id,
             "sandbox_id": environment.metadata.get("openshell.sandbox_id"),
