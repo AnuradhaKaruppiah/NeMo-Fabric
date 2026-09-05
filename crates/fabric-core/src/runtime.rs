@@ -280,6 +280,17 @@ pub struct FabricEvent {
     pub metadata: BTreeMap<String, Value>,
 }
 
+/// Provider-specific reference to an existing execution environment.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentReference {
+    /// Environment provider that owns the referenced resource.
+    pub provider: String,
+    /// Provider-specific resource identity used to verify and attach.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub resource: BTreeMap<String, Value>,
+}
+
 /// Resolved execution environment context.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -777,7 +788,34 @@ pub fn prepare_environment(plan: &RunPlan) -> Result<EnvironmentHandle> {
     provider.prepare(plan)
 }
 
-/// Release an execution environment previously returned by [`prepare_environment`].
+/// Verify and attach to a caller-owned execution environment.
+///
+/// The provider resolves [`EnvironmentReference`] into a verified [`EnvironmentHandle`]. This
+/// operation never creates the referenced resource and does not grant Fabric deletion authority.
+pub fn attach_environment(
+    plan: &RunPlan,
+    reference: &EnvironmentReference,
+) -> Result<EnvironmentHandle> {
+    let provider_id = planned_environment_provider(plan);
+    if reference.provider != provider_id {
+        return Err(FabricError::InvalidConfig {
+            field: "environment_reference.provider".to_string(),
+            reason: format!(
+                "expected `{provider_id}` from the run plan but received `{}`",
+                reference.provider
+            ),
+        });
+    }
+    let provider = resolve_environment_provider(provider_id).ok_or_else(|| {
+        FabricError::UnsupportedEnvironmentProvider {
+            provider: provider_id.to_string(),
+            adapter_kind: adapter_kind(plan),
+        }
+    })?;
+    provider.attach(plan, reference)
+}
+
+/// Release or detach an environment returned by [`prepare_environment`] or [`attach_environment`].
 ///
 /// Local and externally owned environments are detached without deletion. A provider may delete
 /// a Fabric-owned environment according to its normalized ownership contract.
@@ -799,8 +837,8 @@ pub fn release_environment(environment: &EnvironmentHandle) -> Result<()> {
 /// Start or connect to a harness runtime.
 ///
 /// This compatibility entrypoint prepares the default or explicitly configured local environment.
-/// Non-local providers require the consumer to call [`prepare_environment`] followed by
-/// [`start_runtime_in`].
+/// Non-local providers require the consumer to call [`prepare_environment`] or
+/// [`attach_environment`] followed by [`start_runtime_in`].
 pub fn start_runtime(plan: &RunPlan) -> Result<RuntimeHandle> {
     validate_runtime_start(plan)?;
     let provider = planned_environment_provider(plan);
@@ -813,7 +851,7 @@ pub fn start_runtime(plan: &RunPlan) -> Result<RuntimeHandle> {
     start_runtime_in_validated(plan, &environment)
 }
 
-/// Start or connect to a harness runtime in an explicitly prepared environment.
+/// Start or connect to a harness runtime in an explicitly prepared or attached environment.
 ///
 /// This operation neither prepares nor releases the environment. The consumer retains the
 /// [`EnvironmentHandle`] and remains responsible for calling [`release_environment`] after the
@@ -4264,8 +4302,20 @@ if operation == "capsule_control":
 elif operation == "collect_artifacts":
     content = b'{"status":"delivered"}'
     output = [{"path": item["path"], "content": list(content)} for item in request["artifacts"]]
+elif operation == "attach":
+    reference = request["reference"]["resource"]
+    output = {
+        "workspace": "/sandbox",
+        "artifacts": "/sandbox/artifacts",
+        "connection": {
+            "sandbox_name": reference["sandbox_name"],
+            "sandbox_id": reference["sandbox_id"],
+        },
+        "metadata": {"verified": True},
+    }
 elif operation == "release":
-    output = {"released": True, "detached": False}
+    caller_owned = request["environment"]["ownership"] == "caller_owned"
+    output = {"released": not caller_owned, "detached": caller_owned}
 else:
     output = {}
 
@@ -4368,6 +4418,68 @@ json.dump({
         release_environment(&environment).expect("release after explicit consumer decision");
         let operations = fs::read_to_string(&log).expect("read provider operations");
         assert!(operations.ends_with("release\n"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn caller_owned_openshell_resource_attaches_runs_and_detaches() {
+        let _provider_lock = TEST_PROVIDER_COMMAND_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let (root, mut plan) = local_host_plan("success");
+        configure_openshell_environment(&mut plan);
+        plan.environment_plan
+            .as_mut()
+            .expect("resolved environment plan")
+            .ownership = EnvironmentOwnership::CallerOwned;
+        plan.config
+            .environment
+            .as_mut()
+            .expect("environment config")
+            .ownership = EnvironmentOwnership::CallerOwned;
+        let (provider, log) = write_fake_capsule_provider(&root);
+        let _provider_env = ProviderCommandEnv::set(&provider);
+        let reference = EnvironmentReference {
+            provider: "openshell".to_string(),
+            resource: BTreeMap::from([
+                (
+                    "sandbox_name".to_string(),
+                    serde_json::json!("consumer-sandbox"),
+                ),
+                (
+                    "sandbox_id".to_string(),
+                    serde_json::json!("consumer-sandbox-id"),
+                ),
+            ]),
+        };
+
+        let environment = attach_environment(&plan, &reference).expect("attach environment");
+        assert_eq!(environment.ownership, EnvironmentOwnership::CallerOwned);
+        assert_eq!(environment.workspace, Some(PathBuf::from("/sandbox")));
+        assert_eq!(environment.metadata["verified"], true);
+
+        let runtime = start_runtime_in(&plan, &environment).expect("start attached runtime");
+        let result = invoke_runtime(&plan, &runtime, RunRequest::text("attached"))
+            .expect("invoke attached runtime");
+        assert_eq!(result.output["echo"], "attached");
+        stop_runtime(&plan, &runtime).expect("stop attached runtime");
+        release_environment(&environment).expect("detach attached environment");
+
+        assert_eq!(
+            fs::read_to_string(&log)
+                .expect("read provider operations")
+                .lines()
+                .collect::<Vec<_>>(),
+            [
+                "attach",
+                "capsule_control:start",
+                "capsule_control:invoke",
+                "capsule_control:stop",
+                "release",
+            ]
+        );
 
         let _ = fs::remove_dir_all(root);
     }

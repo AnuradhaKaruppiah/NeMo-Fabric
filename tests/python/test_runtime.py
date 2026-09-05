@@ -15,6 +15,7 @@ import pytest
 
 from nemo_fabric import (
     EnvironmentHandle,
+    EnvironmentReference,
     Fabric,
     FabricConfig,
     FabricConfigError,
@@ -102,6 +103,7 @@ def mock_native_fixture() -> MagicMock:
     mock_native.requests = []
     mock_native.plan_config.side_effect = lambda config_json, base_dir: json.dumps(_plan())
     mock_native.prepare_environment.return_value = json.dumps(_environment())
+    mock_native.attach_environment.return_value = json.dumps(_environment())
     mock_native.start_runtime.return_value = json.dumps(_runtime())
     mock_native.start_runtime_in.return_value = json.dumps(_runtime())
 
@@ -198,6 +200,45 @@ async def test_explicit_environment_lifecycle_is_separate_from_runtime(
     mock_native.release_environment.assert_called_once_with(
         json.dumps(environment.to_mapping())
     )
+
+
+async def test_attach_environment_passes_a_typed_reference_to_native(
+    native_client: Fabric,
+    mock_native: MagicMock,
+):
+    reference = EnvironmentReference.from_mapping(
+        {
+            "provider": "openshell",
+            "resource": {
+                "sandbox_name": "fabric-demo",
+                "sandbox_id": "sandbox-id-1",
+            },
+        }
+    )
+
+    environment = await native_client.attach_environment(
+        _config(), reference, base_dir="."
+    )
+
+    assert isinstance(environment, EnvironmentHandle)
+    plan_json, reference_json = mock_native.attach_environment.call_args.args
+    attached_plan = json.loads(plan_json)
+    assert attached_plan["agent_name"] == "demo"
+    assert attached_plan["adapter"]["adapter_id"] == "test.fabric.shim"
+    assert json.loads(reference_json) == reference.to_mapping()
+
+
+async def test_attach_environment_rejects_raw_reference_mappings(
+    native_client: Fabric,
+    mock_native: MagicMock,
+):
+    with pytest.raises(FabricConfigError, match="EnvironmentReference.from_mapping"):
+        await native_client.attach_environment(
+            _config(),
+            {"provider": "openshell", "resource": {}},  # type: ignore[arg-type]
+        )
+
+    mock_native.attach_environment.assert_not_called()
 
 
 async def test_explicit_environment_methods_reject_raw_mappings(

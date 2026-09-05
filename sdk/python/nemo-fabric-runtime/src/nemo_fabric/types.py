@@ -1611,8 +1611,33 @@ class FabricEvent(FabricMapping):
         return data
 
 
+class EnvironmentReference(FabricMapping):
+    """Provider-specific identity for an existing execution environment.
+
+    Pass this reference to ``Fabric.attach_environment()``. The provider verifies
+    the resource before returning a durable ``EnvironmentHandle`` and never gains
+    deletion authority over the caller-owned resource.
+
+    Attributes:
+        provider: Stable environment-provider identifier.
+        resource: Provider-specific resource identity.
+    """
+
+    provider: str
+    resource: Mapping[str, Any]
+    _fields = frozenset({"provider", "resource"})
+    _json_fields = frozenset({"resource"})
+    _omit_if_empty = frozenset({"resource"})
+
+    @classmethod
+    def _normalize(cls, data: dict[str, Any]) -> dict[str, Any]:
+        data["provider"] = _required_text(data.get("provider"), "provider")
+        data["resource"] = _mapping(data.get("resource", {}), "resource")
+        return data
+
+
 class EnvironmentHandle(FabricMapping):
-    """Durable identity and provider binding for a prepared environment.
+    """Durable identity and provider binding for a prepared or attached environment.
 
     Environment handles are independent of runtime sessions. Applications may
     start one or more runtimes in an environment and decide separately when to

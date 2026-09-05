@@ -19,7 +19,7 @@ Native Python client for resolving and running NVIDIA NeMo Fabric agents.
 
 Primary Python entrypoint for NeMo Fabric.
 
-Every lifecycle method accepts a complete, typed ``FabricConfig`` plus an optional ``base_dir`` used to resolve relative paths. Compose variants in Python before calling the SDK. The ``doctor()``, ``plan()``, and ``run()`` results are typed, read-only mapping models. ``start_runtime()`` returns an active local ``Runtime`` handle. Explicit environment users call ``prepare_environment()``, ``start_runtime_in()``, and ``release_environment()`` separately.
+Every lifecycle method accepts a complete, typed ``FabricConfig`` plus an optional ``base_dir`` used to resolve relative paths. Compose variants in Python before calling the SDK. The ``doctor()``, ``plan()``, and ``run()`` results are typed, read-only mapping models. ``start_runtime()`` returns an active local ``Runtime`` handle. Explicit environment users call either ``prepare_environment()`` or ``attach_environment()``, then ``start_runtime_in()`` and ``release_environment()`` separately.
 
 ``Fabric`` uses the native Rust extension. SDK calls raise ``FabricNativeUnavailableError`` when the native extension is not installed.
 
@@ -27,6 +27,45 @@ See the Getting Started overview for runnable single-invocation, typed-config, a
 
 
 
+
+---
+
+
+### <kbd>method</kbd> `attach_environment`
+
+```python
+async def attach_environment(
+    config: FabricConfig,
+    reference: EnvironmentReference,
+    *,
+    base_dir: str | os.PathLike[str] | None = None,
+) -> EnvironmentHandle
+```
+
+Verify and attach to an existing caller-owned environment.
+
+Attachment does not create the provider resource and does not grant Fabric deletion authority. The returned handle can be passed to ``start_runtime_in()`` and later to ``release_environment()`` to detach.
+
+
+
+**Args:**
+
+ - <b>`config`</b>:  Complete typed ``FabricConfig`` with caller-owned environment settings.
+ - <b>`reference`</b>:  Provider-specific identity of the existing resource.
+ - <b>`base_dir`</b>:  Base directory for resolving relative paths.
+
+
+
+**Returns:**
+ A verified, immutable ``EnvironmentHandle``.
+
+
+
+**Raises:**
+
+ - <b>`FabricConfigError`</b>:  If config, reference, or returned handle is invalid.
+ - <b>`FabricNativeUnavailableError`</b>:  If the native extension is not installed.
+ - <b>`FabricRuntimeError`</b>:  If environment verification or attachment fails.
 
 ---
 
@@ -113,7 +152,7 @@ async def prepare_environment(
 ) -> EnvironmentHandle
 ```
 
-Prepare or attach to an execution environment.
+Prepare an execution environment.
 
 The returned handle is independent of any runtime session. The caller owns the lifecycle decision and must eventually pass it to ``release_environment()``.
 
@@ -154,7 +193,7 @@ Local and externally owned environments detach without deletion. Provider-manage
 
 **Args:**
 
- - <b>`environment`</b>:  Handle returned by ``prepare_environment()``.
+ - <b>`environment`</b>:  Handle returned by ``prepare_environment()`` or  ``attach_environment()``.
 
 
 
@@ -262,7 +301,7 @@ async def start_runtime_in(
 ) -> Runtime
 ```
 
-Start one stateful runtime in an explicitly prepared environment.
+Start one stateful runtime in an explicitly prepared or attached environment.
 
 Starting or stopping the runtime does not release ``environment``. This lets consumers run sequential sessions, or coordinate concurrent sessions, without hiding environment ownership inside a session API.
 
@@ -271,7 +310,7 @@ Starting or stopping the runtime does not release ``environment``. This lets con
 **Args:**
 
  - <b>`config`</b>:  Complete typed ``FabricConfig`` matching the environment.
- - <b>`environment`</b>:  Handle returned by ``prepare_environment()``.
+ - <b>`environment`</b>:  Handle returned by ``prepare_environment()`` or  ``attach_environment()``.
  - <b>`base_dir`</b>:  Base directory for resolving relative paths.
  - <b>`overrides`</b>:  JSON-compatible runtime-scoped invocation overrides.
  - <b>`streaming`</b>:  Whether to provision NeMo Relay ATOF streaming.
