@@ -59,7 +59,7 @@ a stdio MCP tool, or enable NeMo Relay telemetry.
 credential-free vertical slice that runs a stateful LangGraph adapter inside a
 real OpenShell sandbox. It demonstrates a policy-denied route, an allowed
 fallback, ordered multi-turn state, bounded artifact collection, and explicit
-environment release.
+attachment to and detachment from a consumer-owned environment.
 
 ## Harbor
 
