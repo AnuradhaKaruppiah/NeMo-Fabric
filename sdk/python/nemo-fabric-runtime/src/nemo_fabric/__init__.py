@@ -53,6 +53,7 @@ from nemo_fabric.types import DoctorCheck
 from nemo_fabric.types import DoctorReport
 from nemo_fabric.types import ErrorInfo
 from nemo_fabric.types import EnvironmentHandle
+from nemo_fabric.types import EnvironmentReference
 from nemo_fabric.types import FabricEvent
 from nemo_fabric.types import RunOutput
 from nemo_fabric.types import RunPlan
@@ -71,6 +72,7 @@ __all__ = [
     "DiscoveryConfig",
     "EnvironmentConfig",
     "EnvironmentHandle",
+    "EnvironmentReference",
     "ErrorInfo",
     "Fabric",
     "FabricBaseModel",

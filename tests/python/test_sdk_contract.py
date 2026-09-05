@@ -1571,6 +1571,25 @@ def test_environment_handle_is_typed_immutable_and_preserves_extensions():
     assert handle.to_mapping()["workspace"] == "/workspace"
 
 
+def test_environment_reference_is_typed_immutable_and_preserves_extensions():
+    from nemo_fabric import EnvironmentReference
+
+    reference = EnvironmentReference.from_mapping(
+        {
+            "provider": "openshell",
+            "resource": {
+                "sandbox_name": "fabric-demo",
+                "sandbox_id": "sandbox-id-1",
+            },
+            "future_reference_field": "value",
+        }
+    )
+
+    assert reference.provider == "openshell"
+    assert reference.resource["sandbox_id"] == "sandbox-id-1"
+    assert reference.extra_fields == {"future_reference_field": "value"}
+
+
 @pytest.mark.parametrize(
     "field",
     ("environment_id", "provider", "control_location", "ownership"),

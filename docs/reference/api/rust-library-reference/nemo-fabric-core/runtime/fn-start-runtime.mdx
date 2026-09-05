@@ -2,7 +2,7 @@
 title: "Function start_runtime"
 sidebar-title: "start_runtime"
 description: "Start or connect to a harness runtime."
-position: 33
+position: 35
 ---
 {/* SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0 */}
@@ -13,4 +13,4 @@ Generated from `cargo doc --no-deps -p nemo-fabric-core`.
 
 Start or connect to a harness runtime.
 
-This compatibility entrypoint prepares the default or explicitly configured local environment. Non-local providers require the consumer to call [`prepare_environment`](fn-prepare-environment.mdx) followed by [`start_runtime_in`](fn-start-runtime-in.mdx).
+This compatibility entrypoint prepares the default or explicitly configured local environment. Non-local providers require the consumer to call [`prepare_environment`](fn-prepare-environment.mdx) or [`attach_environment`](fn-attach-environment.mdx) followed by [`start_runtime_in`](fn-start-runtime-in.mdx).
