@@ -5,9 +5,11 @@
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::{Arc, LazyLock, Mutex};
+use std::thread;
 
 use nemo_fabric_runtime_control::{RuntimeControlRequest, RuntimeControlResponse};
 use serde::{Deserialize, Serialize};
@@ -26,6 +28,7 @@ const OPEN_SHELL_PROVIDER_COMMAND_ENV: &str = "NEMO_FABRIC_OPEN_SHELL_PROVIDER";
 const PROVIDER_PROTOCOL_VERSION: &str = "fabric.environment-provider.v1alpha1";
 const MAX_PROVIDER_REQUEST_BYTES: usize = 256 * 1024;
 const MAX_PROVIDER_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
+const MAX_PROVIDER_DIAGNOSTIC_BYTES: usize = 64 * 1024;
 
 /// Internal environment preparation contract.
 ///
@@ -45,6 +48,8 @@ struct OpenShellEnvironmentProvider;
 
 static LOCAL_ENVIRONMENT_PROVIDER: LocalEnvironmentProvider = LocalEnvironmentProvider;
 static OPEN_SHELL_ENVIRONMENT_PROVIDER: OpenShellEnvironmentProvider = OpenShellEnvironmentProvider;
+static OPEN_SHELL_PROVIDER_PROCESS: LazyLock<Mutex<Option<ProviderProcess>>> =
+    LazyLock::new(|| Mutex::new(None));
 
 /// Resolve a built-in environment provider by its stable configuration id.
 pub(crate) fn resolve_environment_provider(
@@ -328,80 +333,108 @@ where
     }
     encoded.push(b'\n');
 
-    let mut child = Command::new(&command)
-        .args(["serve", "--stdio"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| FabricError::EnvironmentProviderOperation {
-            provider: OPEN_SHELL_PROVIDER_ID.to_string(),
-            operation: operation_name.to_string(),
-            code: "provider_unavailable".to_string(),
-            message: format!("could not start `{}`: {error}", command.to_string_lossy()),
-        })?;
-    child
+    let mut slot = OPEN_SHELL_PROVIDER_PROCESS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let replace = match slot.as_mut() {
+        Some(process) if process.command != command => true,
+        Some(process) => process.has_exited(operation_name)?,
+        None => false,
+    };
+    if replace && let Some(mut process) = slot.take() {
+        process.shutdown();
+    }
+    if slot.is_none() {
+        *slot = Some(ProviderProcess::spawn(command, operation_name)?);
+    }
+    let process = slot.as_mut().expect("provider process initialized");
+    if let Err(error) = process
         .stdin
-        .take()
-        .ok_or_else(|| FabricError::EnvironmentProviderOperation {
-            provider: OPEN_SHELL_PROVIDER_ID.to_string(),
-            operation: operation_name.to_string(),
-            code: "provider_protocol_error".to_string(),
-            message: "provider stdin was unavailable".to_string(),
-        })?
         .write_all(&encoded)
-        .map_err(|error| FabricError::EnvironmentProviderOperation {
-            provider: OPEN_SHELL_PROVIDER_ID.to_string(),
-            operation: operation_name.to_string(),
-            code: "provider_protocol_error".to_string(),
-            message: format!("could not write provider request: {error}"),
-        })?;
+        .and_then(|()| process.stdin.flush())
+    {
+        let diagnostics = process.diagnostics();
+        process.shutdown();
+        *slot = None;
+        return provider_error(
+            operation_name,
+            "provider_protocol_error",
+            with_provider_diagnostics(
+                format!("could not write provider request: {error}"),
+                diagnostics,
+            ),
+        );
+    }
 
-    let output =
-        child
-            .wait_with_output()
-            .map_err(|error| FabricError::EnvironmentProviderOperation {
-                provider: OPEN_SHELL_PROVIDER_ID.to_string(),
-                operation: operation_name.to_string(),
-                code: "provider_wait_failed".to_string(),
-                message: error.to_string(),
-            })?;
-    if output.stdout.len() > MAX_PROVIDER_RESPONSE_BYTES {
+    let mut output = Vec::new();
+    let read = {
+        let mut bounded = process
+            .stdout
+            .by_ref()
+            .take((MAX_PROVIDER_RESPONSE_BYTES + 1) as u64);
+        bounded.read_until(b'\n', &mut output)
+    };
+    let read = match read {
+        Ok(read) => read,
+        Err(error) => {
+            let diagnostics = process.diagnostics();
+            process.shutdown();
+            *slot = None;
+            return provider_error(
+                operation_name,
+                "provider_protocol_error",
+                with_provider_diagnostics(
+                    format!("could not read provider response: {error}"),
+                    diagnostics,
+                ),
+            );
+        }
+    };
+    if output.len() > MAX_PROVIDER_RESPONSE_BYTES {
+        process.shutdown();
+        *slot = None;
         return provider_error(
             operation_name,
             "response_too_large",
             format!(
                 "response is {} bytes; the limit is {MAX_PROVIDER_RESPONSE_BYTES}",
-                output.stdout.len()
+                output.len()
             ),
         );
     }
-    if !output.status.success() {
-        let diagnostics = String::from_utf8_lossy(&output.stderr);
+    if read == 0 || output.last() != Some(&b'\n') {
+        let status = process.child.try_wait().ok().flatten();
+        let diagnostics = process.diagnostics();
+        process.shutdown();
+        *slot = None;
         return provider_error(
             operation_name,
             "provider_exited",
-            if diagnostics.trim().is_empty() {
-                format!("provider exited with {}", output.status)
-            } else {
-                format!(
-                    "provider exited with {}: {}",
-                    output.status,
-                    diagnostics.trim()
-                )
-            },
+            with_provider_diagnostics(
+                status.map_or_else(
+                    || "provider closed its response stream".to_string(),
+                    |status| format!("provider exited with {status}"),
+                ),
+                diagnostics,
+            ),
         );
     }
 
-    let response: ProviderResponse = serde_json::from_slice(&output.stdout).map_err(|error| {
-        FabricError::EnvironmentProviderOperation {
-            provider: OPEN_SHELL_PROVIDER_ID.to_string(),
-            operation: operation_name.to_string(),
-            code: "provider_protocol_error".to_string(),
-            message: format!("provider returned invalid JSON: {error}"),
+    let response: ProviderResponse = match serde_json::from_slice(&output) {
+        Ok(response) => response,
+        Err(error) => {
+            process.shutdown();
+            *slot = None;
+            return provider_error(
+                operation_name,
+                "provider_protocol_error",
+                format!("provider returned invalid JSON: {error}"),
+            );
         }
-    })?;
+    };
     if response.protocol_version != PROVIDER_PROTOCOL_VERSION {
+        process.shutdown();
+        *slot = None;
         return provider_error(
             operation_name,
             "provider_protocol_mismatch",
@@ -412,6 +445,8 @@ where
         );
     }
     if response.request_id != request_id {
+        process.shutdown();
+        *slot = None;
         return provider_error(
             operation_name,
             "provider_correlation_mismatch",
@@ -430,6 +465,122 @@ where
         ProviderOutcome::Failed { error } => {
             provider_error(operation_name, &error.code, error.message)
         }
+    }
+}
+
+struct ProviderProcess {
+    command: OsString,
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+    diagnostics: Arc<Mutex<Vec<u8>>>,
+    diagnostics_thread: Option<thread::JoinHandle<()>>,
+}
+
+impl ProviderProcess {
+    fn spawn(command: OsString, operation: &str) -> Result<Self> {
+        let mut child = Command::new(&command)
+            .args(["serve", "--stdio"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| FabricError::EnvironmentProviderOperation {
+                provider: OPEN_SHELL_PROVIDER_ID.to_string(),
+                operation: operation.to_string(),
+                code: "provider_unavailable".to_string(),
+                message: format!("could not start `{}`: {error}", command.to_string_lossy()),
+            })?;
+        let stdin =
+            child
+                .stdin
+                .take()
+                .ok_or_else(|| FabricError::EnvironmentProviderOperation {
+                    provider: OPEN_SHELL_PROVIDER_ID.to_string(),
+                    operation: operation.to_string(),
+                    code: "provider_protocol_error".to_string(),
+                    message: "provider stdin was unavailable".to_string(),
+                })?;
+        let stdout =
+            child
+                .stdout
+                .take()
+                .ok_or_else(|| FabricError::EnvironmentProviderOperation {
+                    provider: OPEN_SHELL_PROVIDER_ID.to_string(),
+                    operation: operation.to_string(),
+                    code: "provider_protocol_error".to_string(),
+                    message: "provider stdout was unavailable".to_string(),
+                })?;
+        let mut stderr =
+            child
+                .stderr
+                .take()
+                .ok_or_else(|| FabricError::EnvironmentProviderOperation {
+                    provider: OPEN_SHELL_PROVIDER_ID.to_string(),
+                    operation: operation.to_string(),
+                    code: "provider_protocol_error".to_string(),
+                    message: "provider stderr was unavailable".to_string(),
+                })?;
+        let diagnostics = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&diagnostics);
+        let diagnostics_thread = thread::spawn(move || {
+            let mut chunk = [0_u8; 4096];
+            while let Ok(read) = stderr.read(&mut chunk) {
+                if read == 0 {
+                    break;
+                }
+                let mut buffer = captured.lock().unwrap_or_else(|error| error.into_inner());
+                buffer.extend_from_slice(&chunk[..read]);
+                let excess = buffer.len().saturating_sub(MAX_PROVIDER_DIAGNOSTIC_BYTES);
+                if excess > 0 {
+                    buffer.drain(..excess);
+                }
+            }
+        });
+        Ok(Self {
+            command,
+            child,
+            stdin,
+            stdout: BufReader::new(stdout),
+            diagnostics,
+            diagnostics_thread: Some(diagnostics_thread),
+        })
+    }
+
+    fn has_exited(&mut self, operation: &str) -> Result<bool> {
+        self.child
+            .try_wait()
+            .map(|status| status.is_some())
+            .map_err(|error| FabricError::EnvironmentProviderOperation {
+                provider: OPEN_SHELL_PROVIDER_ID.to_string(),
+                operation: operation.to_string(),
+                code: "provider_wait_failed".to_string(),
+                message: error.to_string(),
+            })
+    }
+
+    fn diagnostics(&self) -> String {
+        let bytes = self
+            .diagnostics
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        String::from_utf8_lossy(&bytes).trim().to_string()
+    }
+
+    fn shutdown(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        if let Some(thread) = self.diagnostics_thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn with_provider_diagnostics(message: String, diagnostics: String) -> String {
+    if diagnostics.is_empty() {
+        message
+    } else {
+        format!("{message}: {diagnostics}")
     }
 }
 

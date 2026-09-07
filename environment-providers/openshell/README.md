@@ -29,7 +29,7 @@ flowchart LR
         direction TB
         C["Consumer application"]
         F["Fabric core"]
-        P["OpenShell environment provider<br/>short-lived process"]
+        P["OpenShell environment provider<br/>lazy, reused process"]
         SDK["OpenShell Rust SDK"]
 
         C --> F
@@ -60,8 +60,14 @@ flowchart LR
 ```
 
 The OpenShell provider links directly to the OpenShell Rust SDK. Fabric starts
-the provider as a child process for each environment or runtime operation. The
-provider exits after returning its typed response.
+the provider lazily on the first OpenShell operation and reuses the child
+process for later operations. Correlated requests and responses use a bounded,
+newline-delimited JSON transport over standard input and output.
+
+The initial transport serializes provider operations within one Fabric
+process. Multiplexing requests for independent runtimes is a product follow-up;
+consumers that need concurrency in the POC can use independent Fabric
+processes.
 
 Inside the sandbox, `fabric-runtime-server` retains one adapter process for the
 runtime session. Each OpenShell exec starts a short-lived `fabric-runtime-ctl`,
@@ -159,6 +165,7 @@ The initial integration supports:
 - caller-owned attach and detach;
 - optional Fabric-owned development creation and deletion;
 - one sequential runtime session per environment;
+- one lazily started provider process reused across lifecycle operations;
 - buffered `start`, `invoke`, and `stop` operations;
 - process and Python adapters; and
 - bounded collection of adapter-declared artifacts.

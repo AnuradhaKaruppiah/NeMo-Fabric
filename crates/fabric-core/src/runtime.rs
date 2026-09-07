@@ -4241,90 +4241,96 @@ import json
 import pathlib
 import sys
 
-request = json.load(sys.stdin)
-operation = request["operation"]
 root = pathlib.Path(__file__).parent
 state_path = root / "runtime-state.json"
 log_path = root / "provider-operations.log"
 with log_path.open("a", encoding="utf-8") as log:
-    log.write(operation)
+    log.write("provider_start\n")
+
+for line in sys.stdin:
+    request = json.loads(line)
+    operation = request["operation"]
+    with log_path.open("a", encoding="utf-8") as log:
+        log.write(operation)
+        if operation == "runtime_control":
+            log.write(":" + request["request"]["operation"])
+        log.write("\n")
+
+    if state_path.exists():
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    else:
+        state = {"runtime_id": None, "invocations": 0}
+
     if operation == "runtime_control":
-        log.write(":" + request["request"]["operation"])
-    log.write("\n")
-
-if state_path.exists():
-    state = json.loads(state_path.read_text(encoding="utf-8"))
-else:
-    state = {"runtime_id": None, "invocations": 0}
-
-if operation == "runtime_control":
-    runtime = request["request"]
-    lifecycle_operation = runtime["operation"]
-    if lifecycle_operation == "start":
-        state = {"runtime_id": runtime["runtime_id"], "invocations": 0}
-        lifecycle_output = None
-    elif lifecycle_operation == "invoke":
-        state["invocations"] += 1
-        lifecycle_input = runtime["lifecycle"]["payload"]["request"]["input"]
-        lifecycle_output = {
+        runtime = request["request"]
+        lifecycle_operation = runtime["operation"]
+        if lifecycle_operation == "start":
+            state = {"runtime_id": runtime["runtime_id"], "invocations": 0}
+            lifecycle_output = None
+        elif lifecycle_operation == "invoke":
+            state["invocations"] += 1
+            lifecycle_input = runtime["lifecycle"]["payload"]["request"]["input"]
+            lifecycle_output = {
+                "status": "succeeded",
+                "output": {
+                    "echo": lifecycle_input,
+                    "invocation_count": state["invocations"],
+                },
+            }
+            if lifecycle_input == "artifact":
+                lifecycle_output["artifacts"] = [{
+                    "name": "delivery-receipt",
+                    "kind": "receipt",
+                    "path": "delivery-receipt.json",
+                    "media_type": "application/json",
+                }]
+        elif lifecycle_operation == "stop":
+            state = {"runtime_id": None, "invocations": state["invocations"]}
+            lifecycle_output = None
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        output = {
+            "protocol_version": runtime["protocol_version"],
+            "operation_id": runtime["operation_id"],
+            "environment_id": runtime["environment_id"],
+            "runtime_id": runtime["runtime_id"],
+            "operation": lifecycle_operation,
             "status": "succeeded",
             "output": {
-                "echo": lifecycle_input,
-                "invocation_count": state["invocations"],
+                "operation": lifecycle_operation,
+                "outcome": {
+                    "status": "succeeded",
+                    "output": lifecycle_output,
+                },
             },
         }
-        if lifecycle_input == "artifact":
-            lifecycle_output["artifacts"] = [{
-                "name": "delivery-receipt",
-                "kind": "receipt",
-                "path": "delivery-receipt.json",
-                "media_type": "application/json",
-            }]
-    elif lifecycle_operation == "stop":
-        state = {"runtime_id": None, "invocations": state["invocations"]}
-        lifecycle_output = None
-    state_path.write_text(json.dumps(state), encoding="utf-8")
-    output = {
-        "protocol_version": runtime["protocol_version"],
-        "operation_id": runtime["operation_id"],
-        "environment_id": runtime["environment_id"],
-        "runtime_id": runtime["runtime_id"],
-        "operation": lifecycle_operation,
-        "status": "succeeded",
-        "output": {
-            "operation": lifecycle_operation,
-            "outcome": {
-                "status": "succeeded",
-                "output": lifecycle_output,
+    elif operation == "collect_artifacts":
+        content = b'{"status":"delivered"}'
+        output = [{"path": item["path"], "content": list(content)} for item in request["artifacts"]]
+    elif operation == "attach":
+        reference = request["reference"]["resource"]
+        output = {
+            "workspace": "/sandbox",
+            "artifacts": "/sandbox/artifacts",
+            "connection": {
+                "sandbox_name": reference["sandbox_name"],
+                "sandbox_id": reference["sandbox_id"],
             },
-        },
-    }
-elif operation == "collect_artifacts":
-    content = b'{"status":"delivered"}'
-    output = [{"path": item["path"], "content": list(content)} for item in request["artifacts"]]
-elif operation == "attach":
-    reference = request["reference"]["resource"]
-    output = {
-        "workspace": "/sandbox",
-        "artifacts": "/sandbox/artifacts",
-        "connection": {
-            "sandbox_name": reference["sandbox_name"],
-            "sandbox_id": reference["sandbox_id"],
-        },
-        "metadata": {"verified": True},
-    }
-elif operation == "release":
-    caller_owned = request["environment"]["ownership"] == "caller_owned"
-    output = {"released": not caller_owned, "detached": caller_owned}
-else:
-    output = {}
+            "metadata": {"verified": True},
+        }
+    elif operation == "release":
+        caller_owned = request["environment"]["ownership"] == "caller_owned"
+        output = {"released": not caller_owned, "detached": caller_owned}
+    else:
+        output = {}
 
-json.dump({
-    "protocol_version": "fabric.environment-provider.v1alpha1",
-    "request_id": request["request_id"],
-    "status": "succeeded",
-    "output": output,
-}, sys.stdout)
+    json.dump({
+        "protocol_version": "fabric.environment-provider.v1alpha1",
+        "request_id": request["request_id"],
+        "status": "succeeded",
+        "output": output,
+    }, sys.stdout)
+    sys.stdout.write("\n")
+    sys.stdout.flush()
 "#,
         )
         .expect("write fake OpenShell provider");
@@ -4406,6 +4412,7 @@ json.dump({
         assert_eq!(
             operations.lines().collect::<Vec<_>>(),
             [
+                "provider_start",
                 "runtime_control:start",
                 "runtime_control:invoke",
                 "runtime_control:invoke",
@@ -4473,6 +4480,7 @@ json.dump({
                 .lines()
                 .collect::<Vec<_>>(),
             [
+                "provider_start",
                 "attach",
                 "runtime_control:start",
                 "runtime_control:invoke",
