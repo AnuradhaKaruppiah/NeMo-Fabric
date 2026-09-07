@@ -73,7 +73,7 @@ def build_courier_graph(
         fallback_outcome = probe(fallback)
         attempts.append({"route": fallback, "outcome": fallback_outcome})
         selected = (
-            fallback if fallback_outcome == "http_200" else "capsule://offline-ledger"
+            fallback if fallback_outcome == "http_200" else "local://offline-ledger"
         )
         return {"attempts": attempts, "selected_route": selected}
 

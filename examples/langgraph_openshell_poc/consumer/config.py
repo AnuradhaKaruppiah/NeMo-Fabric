@@ -26,7 +26,7 @@ def courier_config(
     return FabricConfig(
         metadata=MetadataConfig(
             name="portable-courier",
-            description="Stateful LangGraph running in an OpenShell Fabric capsule.",
+            description="Stateful LangGraph agent running in an OpenShell sandbox.",
         ),
         discovery=DiscoveryConfig(local_paths=[EXAMPLE_ROOT / "adapter"]),
         harness=HarnessConfig(adapter_id=ADAPTER_ID, resolution="image_provided"),
@@ -46,7 +46,7 @@ def courier_config(
             connection={"gateway": gateway},
             settings={
                 "image": image,
-                "command": ["fabric-capsule-runner", "serve"],
+                "command": ["fabric-runtime-server", "serve"],
                 "policy_yaml": (EXAMPLE_ROOT / "policy.yaml").read_text(
                     encoding="utf-8"
                 ),

@@ -19,7 +19,7 @@ from examples.langgraph_openshell_poc.consumer.config import courier_config
 async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--image", required=True, help="Immutable capsule image reference."
+        "--image", required=True, help="Immutable agent runtime image reference."
     )
     parser.add_argument("--gateway", default="http://127.0.0.1:18080")
     parser.add_argument("--base-dir", type=Path, default=Path(".tmp/portable-courier"))
@@ -106,7 +106,7 @@ async def main() -> None:
             "sandbox_resource_version": environment.metadata.get(
                 "openshell.sandbox_resource_version"
             ),
-            "capsule_image": environment.metadata.get("openshell.capsule_image"),
+            "runtime_image": environment.metadata.get("openshell.runtime_image"),
             "policy_attached": environment.metadata.get("openshell.policy_attached"),
         },
         "runtime_id": routed.runtime_id,

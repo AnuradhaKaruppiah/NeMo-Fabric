@@ -15,9 +15,9 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use nemo_fabric_capsule::{
-    CapsuleAdapterProcess, CapsuleCommand, CapsuleControlRequest, CapsuleControlResponse,
-    CapsuleOutcome, PROTOCOL_VERSION as CAPSULE_PROTOCOL_VERSION,
+use nemo_fabric_runtime_control::{
+    PROTOCOL_VERSION as RUNTIME_CONTROL_PROTOCOL_VERSION, RuntimeAdapterProcess,
+    RuntimeControlCommand, RuntimeControlOutcome, RuntimeControlRequest, RuntimeControlResponse,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -35,7 +35,7 @@ use crate::config::{
     validate_tool_definitions, validate_workflow,
 };
 use crate::environment::{
-    collect_artifacts as collect_environment_artifacts, control_capsule,
+    collect_artifacts as collect_environment_artifacts, control_runtime,
     release_environment as release_prepared_environment, resolve_environment_provider,
 };
 use crate::error::{FabricError, Result};
@@ -726,7 +726,7 @@ trait RuntimeAdapter {
 }
 
 struct LocalHostAdapter;
-struct CapsuleAdapter;
+struct InEnvironmentRuntimeAdapter;
 
 #[derive(Debug, Clone)]
 struct RelayRuntimeConfig {
@@ -884,7 +884,7 @@ fn start_runtime_in_validated(
     if uses_local_host(plan) {
         return match environment.provider.as_str() {
             "local" => LocalHostAdapter.start(plan, environment.clone()),
-            "openshell" => CapsuleAdapter.start(plan, environment.clone()),
+            "openshell" => InEnvironmentRuntimeAdapter.start(plan, environment.clone()),
             _ => Err(FabricError::UnsupportedEnvironmentProvider {
                 provider: environment.provider.clone(),
                 adapter_kind: adapter_kind(plan),
@@ -908,7 +908,7 @@ pub fn invoke_runtime(
     if uses_local_host(plan) {
         return match runtime.environment.provider.as_str() {
             "local" => LocalHostAdapter.invoke(plan, runtime, request),
-            "openshell" => CapsuleAdapter.invoke(plan, runtime, request),
+            "openshell" => InEnvironmentRuntimeAdapter.invoke(plan, runtime, request),
             _ => Err(FabricError::UnsupportedEnvironmentProvider {
                 provider: runtime.environment.provider.clone(),
                 adapter_kind: adapter_kind(plan),
@@ -944,7 +944,7 @@ pub fn invoke_openai_stream(
     if runtime.environment.provider == "openshell" {
         return Err(FabricError::UnsupportedRuntimeCapability {
             adapter_id: adapter_id(plan).unwrap_or_else(|| harness(plan)),
-            capability: "streaming in an OpenShell capsule",
+            capability: "streaming in an OpenShell sandbox",
         });
     }
     if uses_local_host(plan) {
@@ -1003,7 +1003,7 @@ pub fn stop_runtime(plan: &RunPlan, runtime: &RuntimeHandle) -> Result<Vec<Fabri
     if uses_local_host(plan) {
         return match runtime.environment.provider.as_str() {
             "local" => LocalHostAdapter.stop(runtime),
-            "openshell" => CapsuleAdapter.stop(runtime),
+            "openshell" => InEnvironmentRuntimeAdapter.stop(runtime),
             _ => Err(FabricError::UnsupportedEnvironmentProvider {
                 provider: runtime.environment.provider.clone(),
                 adapter_kind: runtime.adapter_kind,
@@ -1410,7 +1410,7 @@ impl RuntimeAdapter for LocalHostAdapter {
     }
 }
 
-impl RuntimeAdapter for CapsuleAdapter {
+impl RuntimeAdapter for InEnvironmentRuntimeAdapter {
     fn start(&self, plan: &RunPlan, environment: EnvironmentHandle) -> Result<RuntimeHandle> {
         if environment.provider != "openshell" {
             return Err(FabricError::UnsupportedEnvironmentProvider {
@@ -1446,22 +1446,22 @@ impl RuntimeAdapter for CapsuleAdapter {
                 request_id: new_id("runtime-start-request"),
                 runtime_id: runtime.runtime_id.clone(),
             };
-            let artifacts = capsule_artifact_manifest(&runtime);
+            let artifacts = runtime_artifact_manifest(&runtime);
             let mut start = adapter_lifecycle_start(plan, &runtime, &invocation, &artifacts, None)?;
-            start.base_dir = capsule_workspace(&runtime.environment);
+            start.base_dir = runtime_workspace(&runtime.environment);
             let lifecycle =
                 AdapterLifecycleRequest::new(AdapterLifecycleRequestKind::Start(Box::new(start)));
-            let request = capsule_request(
+            let request = runtime_control_request(
                 &runtime,
                 LOCAL_HOST_START_TIMEOUT,
-                CapsuleCommand::Start {
-                    process: capsule_adapter_process(plan, &runtime)?,
+                RuntimeControlCommand::Start {
+                    process: runtime_adapter_process(plan, &runtime)?,
                     lifecycle: serde_json::to_value(&lifecycle)
                         .map_err(FabricError::SerializeJson)?,
                 },
             );
-            let response = control_capsule(&runtime.environment, &request)?;
-            capsule_lifecycle_output(&request, response, AdapterLifecycleOperation::Start)?;
+            let response = control_runtime(&runtime.environment, &request)?;
+            runtime_lifecycle_output(&request, response, AdapterLifecycleOperation::Start)?;
             Ok(runtime)
         })();
         if start_result.is_err() {
@@ -1485,44 +1485,44 @@ impl RuntimeAdapter for CapsuleAdapter {
             request_id: request.request_id.clone(),
             runtime_id: runtime.runtime_id.clone(),
         };
-        let capsule_artifacts = capsule_artifact_manifest(runtime);
+        let runtime_artifacts = runtime_artifact_manifest(runtime);
         let adapter_invocation = adapter_invocation(
             plan,
             runtime,
             &invocation,
             &request,
-            &capsule_artifacts,
+            &runtime_artifacts,
             None,
         )?;
         let lifecycle = AdapterLifecycleRequest::new(AdapterLifecycleRequestKind::Invoke(
             Box::new(adapter_invocation),
         ));
-        let capsule_request = capsule_request(
+        let runtime_control_request = runtime_control_request(
             runtime,
             local_host_invoke_timeout(plan)?,
-            CapsuleCommand::Invoke {
+            RuntimeControlCommand::Invoke {
                 lifecycle: serde_json::to_value(&lifecycle).map_err(FabricError::SerializeJson)?,
             },
         );
-        let response = control_capsule(&runtime.environment, &capsule_request)?;
-        let terminal_capsule_failure = matches!(
+        let response = control_runtime(&runtime.environment, &runtime_control_request)?;
+        let terminal_runtime_failure = matches!(
             &response.outcome,
-            CapsuleOutcome::Failed { error }
+            RuntimeControlOutcome::Failed { error }
                 if matches!(error.code.as_str(), "adapter_invoke_failed" | "runtime_unavailable")
-        ) && capsule_response_is_correlated(
-            &capsule_request,
+        ) && runtime_response_is_correlated(
+            &runtime_control_request,
             &response,
         );
-        let output = capsule_lifecycle_output(
-            &capsule_request,
+        let output = runtime_lifecycle_output(
+            &runtime_control_request,
             response,
             AdapterLifecycleOperation::Invoke,
         );
-        if terminal_capsule_failure {
+        if terminal_runtime_failure {
             remove_remote_environment(&runtime.environment.environment_id);
         }
         let output = output?;
-        capsule_run_result(plan, runtime, invocation, request, output)
+        runtime_run_result(plan, runtime, invocation, request, output)
     }
 
     fn invoke_openai_stream(
@@ -1534,38 +1534,38 @@ impl RuntimeAdapter for CapsuleAdapter {
     ) -> Result<RunResult> {
         Err(FabricError::UnsupportedRuntimeCapability {
             adapter_id: adapter_id(plan).unwrap_or_else(|| harness(plan)),
-            capability: "streaming in an OpenShell capsule",
+            capability: "streaming in an OpenShell sandbox",
         })
     }
 
     fn stop(&self, runtime: &RuntimeHandle) -> Result<Vec<FabricEvent>> {
         if !remote_environment_is_bound(runtime) {
-            return Ok(vec![capsule_stop_event(runtime, true)]);
+            return Ok(vec![runtime_stop_event(runtime, true)]);
         }
         let lifecycle =
             AdapterLifecycleRequest::new(AdapterLifecycleRequestKind::Stop(AdapterLifecycleStop {
                 runtime_id: runtime.runtime_id.clone(),
             }));
-        let request = capsule_request(
+        let request = runtime_control_request(
             runtime,
             LOCAL_HOST_STOP_TIMEOUT,
-            CapsuleCommand::Stop {
+            RuntimeControlCommand::Stop {
                 lifecycle: serde_json::to_value(&lifecycle).map_err(FabricError::SerializeJson)?,
             },
         );
-        let response = control_capsule(&runtime.environment, &request)?;
-        let correlated = capsule_response_is_correlated(&request, &response);
-        let terminal = matches!(&response.outcome, CapsuleOutcome::Succeeded { .. })
+        let response = control_runtime(&runtime.environment, &request)?;
+        let correlated = runtime_response_is_correlated(&request, &response);
+        let terminal = matches!(&response.outcome, RuntimeControlOutcome::Succeeded { .. })
             || matches!(
                 &response.outcome,
-                CapsuleOutcome::Failed { error }
+                RuntimeControlOutcome::Failed { error }
                     if matches!(error.code.as_str(), "adapter_stop_failed" | "runtime_unavailable")
             );
-        let result = capsule_lifecycle_output(&request, response, AdapterLifecycleOperation::Stop);
+        let result = runtime_lifecycle_output(&request, response, AdapterLifecycleOperation::Stop);
         if correlated && terminal {
             remove_remote_environment(&runtime.environment.environment_id);
         }
-        result.map(|_| vec![capsule_stop_event(runtime, false)])
+        result.map(|_| vec![runtime_stop_event(runtime, false)])
     }
 }
 
@@ -1611,29 +1611,29 @@ fn remove_remote_environment(environment_id: &str) {
         .remove(environment_id);
 }
 
-fn capsule_workspace(environment: &EnvironmentHandle) -> PathBuf {
+fn runtime_workspace(environment: &EnvironmentHandle) -> PathBuf {
     environment
         .workspace
         .clone()
         .unwrap_or_else(|| PathBuf::from("/sandbox"))
 }
 
-fn capsule_artifact_manifest(runtime: &RuntimeHandle) -> ArtifactManifest {
+fn runtime_artifact_manifest(runtime: &RuntimeHandle) -> ArtifactManifest {
     ArtifactManifest {
         root: runtime.environment.artifacts.clone(),
         artifacts: Vec::new(),
     }
 }
 
-fn capsule_adapter_process(
+fn runtime_adapter_process(
     plan: &RunPlan,
     runtime: &RuntimeHandle,
-) -> Result<CapsuleAdapterProcess> {
-    let workspace = capsule_workspace(&runtime.environment);
+) -> Result<RuntimeAdapterProcess> {
+    let workspace = runtime_workspace(&runtime.environment);
     match adapter_kind(plan) {
         AdapterKind::Process => {
             let settings = parse_process_settings(plan)?;
-            let command = resolve_capsule_command(&workspace, Path::new(&settings.command));
+            let command = resolve_runtime_command(&workspace, Path::new(&settings.command));
             let mut args = Vec::new();
             if let Some(script) = settings.script {
                 args.push(
@@ -1645,7 +1645,7 @@ fn capsule_adapter_process(
             args.extend(settings.args);
             let mut env = runtime.environment.env.clone();
             env.extend(settings.env);
-            Ok(CapsuleAdapterProcess {
+            Ok(RuntimeAdapterProcess {
                 command: std::iter::once(command.to_string_lossy().into_owned())
                     .chain(args)
                     .collect(),
@@ -1664,14 +1664,14 @@ fn capsule_adapter_process(
             if settings.python_env.is_some() {
                 return Err(FabricError::InvalidConfig {
                     field: "harness.settings.python_env".to_string(),
-                    reason: "OpenShell capsule execution cannot resolve a host environment variable; set `harness.settings.python` to the interpreter inside the capsule"
+                    reason: "OpenShell sandbox execution cannot resolve a host environment variable; set `harness.settings.python` to the interpreter inside the agent runtime image"
                         .to_string(),
                 });
             }
             let python = settings
                 .python
                 .as_ref()
-                .map(|path| resolve_capsule_command(&workspace, path))
+                .map(|path| resolve_runtime_command(&workspace, path))
                 .unwrap_or_else(|| PathBuf::from(DEFAULT_PYTHON));
             let mut command = vec![
                 python.to_string_lossy().into_owned(),
@@ -1681,7 +1681,7 @@ fn capsule_adapter_process(
             command.extend(settings.args);
             let mut env = runtime.environment.env.clone();
             env.extend(settings.env);
-            Ok(CapsuleAdapterProcess {
+            Ok(RuntimeAdapterProcess {
                 command,
                 cwd: Some(
                     settings
@@ -1700,21 +1700,21 @@ fn capsule_adapter_process(
     }
 }
 
-fn resolve_capsule_command(workspace: &Path, path: &Path) -> PathBuf {
+fn resolve_runtime_command(workspace: &Path, path: &Path) -> PathBuf {
     if path.is_absolute() || path.components().count() == 1 {
         return path.to_path_buf();
     }
     workspace.join(path)
 }
 
-fn capsule_request(
+fn runtime_control_request(
     runtime: &RuntimeHandle,
     timeout: Duration,
-    command: CapsuleCommand,
-) -> CapsuleControlRequest {
-    CapsuleControlRequest {
-        protocol_version: CAPSULE_PROTOCOL_VERSION.to_string(),
-        operation_id: new_id("capsule-operation"),
+    command: RuntimeControlCommand,
+) -> RuntimeControlRequest {
+    RuntimeControlRequest {
+        protocol_version: RUNTIME_CONTROL_PROTOCOL_VERSION.to_string(),
+        operation_id: new_id("runtime-operation"),
         environment_id: runtime.environment.environment_id.clone(),
         runtime_id: runtime.runtime_id.clone(),
         timeout_seconds: timeout
@@ -1725,23 +1725,23 @@ fn capsule_request(
     }
 }
 
-fn capsule_lifecycle_output(
-    request: &CapsuleControlRequest,
-    response: CapsuleControlResponse,
+fn runtime_lifecycle_output(
+    request: &RuntimeControlRequest,
+    response: RuntimeControlResponse,
     operation: AdapterLifecycleOperation,
 ) -> Result<Value> {
-    if !capsule_response_is_correlated(request, &response) {
+    if !runtime_response_is_correlated(request, &response) {
         return Err(lifecycle_error(
             operation,
             &request.runtime_id,
             "protocol_error",
-            "OpenShell capsule returned an uncorrelated control response",
+            "OpenShell runtime control returned an uncorrelated response",
             "",
         ));
     }
     let output = match response.outcome {
-        CapsuleOutcome::Succeeded { output } => output,
-        CapsuleOutcome::Failed { error } => {
+        RuntimeControlOutcome::Succeeded { output } => output,
+        RuntimeControlOutcome::Failed { error } => {
             return Err(lifecycle_error(
                 operation,
                 &request.runtime_id,
@@ -1754,11 +1754,11 @@ fn capsule_lifecycle_output(
     adapter_lifecycle_output(output, operation, &request.runtime_id)
 }
 
-fn capsule_response_is_correlated(
-    request: &CapsuleControlRequest,
-    response: &CapsuleControlResponse,
+fn runtime_response_is_correlated(
+    request: &RuntimeControlRequest,
+    response: &RuntimeControlResponse,
 ) -> bool {
-    response.protocol_version == CAPSULE_PROTOCOL_VERSION
+    response.protocol_version == RUNTIME_CONTROL_PROTOCOL_VERSION
         && response.operation_id == request.operation_id
         && response.environment_id == request.environment_id
         && response.runtime_id == request.runtime_id
@@ -1785,7 +1785,7 @@ fn adapter_lifecycle_output(
             runtime_id,
             "protocol_error",
             format!(
-                "expected `{}` response but capsule adapter returned `{}`",
+                "expected `{}` response but the adapter returned `{}`",
                 operation.as_str(),
                 response.operation.as_str()
             ),
@@ -1811,7 +1811,7 @@ fn adapter_lifecycle_output(
     }
 }
 
-fn capsule_run_result(
+fn runtime_run_result(
     plan: &RunPlan,
     runtime: &RuntimeHandle,
     invocation: InvocationHandle,
@@ -1837,12 +1837,12 @@ fn capsule_run_result(
         )
     })?;
     validate_agent_run_result_extensions(&agent_result, plan.adapter_descriptor.as_ref())?;
-    let artifacts = collect_capsule_artifacts(plan, runtime, &agent_result.artifacts)?;
+    let artifacts = collect_runtime_artifacts(plan, runtime, &agent_result.artifacts)?;
     let (status, error) = agent_result_status(&agent_result);
     let mut metadata = BTreeMap::from([
         (
             "adapter_runner".to_string(),
-            Value::String("openshell_capsule".to_string()),
+            Value::String("in_environment".to_string()),
         ),
         (
             "environment_provider".to_string(),
@@ -1858,13 +1858,13 @@ fn capsule_run_result(
     let events = vec![
         event_with_metadata(
             "invocation_start",
-            format!("invoking OpenShell capsule for {}", harness(plan)),
-            capsule_event_metadata(runtime, &invocation),
+            format!("invoking {} in OpenShell", harness(plan)),
+            runtime_event_metadata(runtime, &invocation),
         ),
         event_with_metadata(
             "invocation_end",
-            format!("OpenShell capsule completed with status {status:?}"),
-            capsule_event_metadata(runtime, &invocation),
+            format!("OpenShell invocation completed with status {status:?}"),
+            runtime_event_metadata(runtime, &invocation),
         ),
     ];
     Ok(RunResult {
@@ -1886,7 +1886,7 @@ fn capsule_run_result(
     })
 }
 
-fn collect_capsule_artifacts(
+fn collect_runtime_artifacts(
     plan: &RunPlan,
     runtime: &RuntimeHandle,
     declared: &[AgentArtifact],
@@ -1915,7 +1915,7 @@ fn collect_capsule_artifacts(
                 AdapterLifecycleOperation::Invoke,
                 &runtime.runtime_id,
                 "artifact_path_invalid",
-                "capsule artifact paths must be non-empty, relative, and traversal-free",
+                "agent artifact paths must be non-empty, relative, and traversal-free",
                 "",
             ));
         }
@@ -1925,7 +1925,7 @@ fn collect_capsule_artifacts(
             AdapterLifecycleOperation::Invoke,
             &runtime.runtime_id,
             "artifact_destination_required",
-            "runtime.artifacts is required when a capsule adapter returns artifacts",
+            "runtime.artifacts is required when an in-environment adapter returns artifacts",
             "",
         )
     })?;
@@ -1999,7 +1999,7 @@ fn collect_capsule_artifacts(
     Ok(manifest)
 }
 
-fn capsule_event_metadata(
+fn runtime_event_metadata(
     runtime: &RuntimeHandle,
     invocation: &InvocationHandle,
 ) -> BTreeMap<String, Value> {
@@ -2019,7 +2019,7 @@ fn capsule_event_metadata(
     ])
 }
 
-fn capsule_stop_event(runtime: &RuntimeHandle, already_stopped: bool) -> FabricEvent {
+fn runtime_stop_event(runtime: &RuntimeHandle, already_stopped: bool) -> FabricEvent {
     event_with_metadata(
         "runtime_stop",
         format!("stopped runtime {}", runtime.runtime_id),
@@ -4229,7 +4229,7 @@ for line in sys.stdin:
     }
 
     #[cfg(unix)]
-    fn write_fake_capsule_provider(root: &Path) -> (PathBuf, PathBuf) {
+    fn write_fake_runtime_provider(root: &Path) -> (PathBuf, PathBuf) {
         use std::os::unix::fs::PermissionsExt;
 
         let provider = root.join("fake-openshell-provider.py");
@@ -4244,11 +4244,11 @@ import sys
 request = json.load(sys.stdin)
 operation = request["operation"]
 root = pathlib.Path(__file__).parent
-state_path = root / "capsule-state.json"
+state_path = root / "runtime-state.json"
 log_path = root / "provider-operations.log"
 with log_path.open("a", encoding="utf-8") as log:
     log.write(operation)
-    if operation == "capsule_control":
+    if operation == "runtime_control":
         log.write(":" + request["request"]["operation"])
     log.write("\n")
 
@@ -4257,15 +4257,15 @@ if state_path.exists():
 else:
     state = {"runtime_id": None, "invocations": 0}
 
-if operation == "capsule_control":
-    capsule = request["request"]
-    lifecycle_operation = capsule["operation"]
+if operation == "runtime_control":
+    runtime = request["request"]
+    lifecycle_operation = runtime["operation"]
     if lifecycle_operation == "start":
-        state = {"runtime_id": capsule["runtime_id"], "invocations": 0}
+        state = {"runtime_id": runtime["runtime_id"], "invocations": 0}
         lifecycle_output = None
     elif lifecycle_operation == "invoke":
         state["invocations"] += 1
-        lifecycle_input = capsule["lifecycle"]["payload"]["request"]["input"]
+        lifecycle_input = runtime["lifecycle"]["payload"]["request"]["input"]
         lifecycle_output = {
             "status": "succeeded",
             "output": {
@@ -4285,10 +4285,10 @@ if operation == "capsule_control":
         lifecycle_output = None
     state_path.write_text(json.dumps(state), encoding="utf-8")
     output = {
-        "protocol_version": capsule["protocol_version"],
-        "operation_id": capsule["operation_id"],
-        "environment_id": capsule["environment_id"],
-        "runtime_id": capsule["runtime_id"],
+        "protocol_version": runtime["protocol_version"],
+        "operation_id": runtime["operation_id"],
+        "environment_id": runtime["environment_id"],
+        "runtime_id": runtime["runtime_id"],
         "operation": lifecycle_operation,
         "status": "succeeded",
         "output": {
@@ -4338,14 +4338,14 @@ json.dump({
 
     #[cfg(unix)]
     #[test]
-    fn openshell_capsule_runs_a_persistent_session_without_releasing_the_environment() {
+    fn openshell_runtime_runs_a_persistent_session_without_releasing_the_environment() {
         let _provider_lock = TEST_PROVIDER_COMMAND_LOCK
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         let (root, mut plan) = local_host_plan("success");
         configure_openshell_environment(&mut plan);
         plan.config.runtime.artifacts = Some(root.join("collected-artifacts"));
-        let (provider, log) = write_fake_capsule_provider(&root);
+        let (provider, log) = write_fake_runtime_provider(&root);
         let _provider_env = ProviderCommandEnv::set(&provider);
         let environment = EnvironmentHandle {
             environment_id: "environment-retained".to_string(),
@@ -4359,7 +4359,7 @@ json.dump({
             metadata: BTreeMap::new(),
         };
 
-        let runtime = start_runtime_in(&plan, &environment).expect("start capsule runtime");
+        let runtime = start_runtime_in(&plan, &environment).expect("start remote runtime");
         let second_start = start_runtime_in(&plan, &environment)
             .expect_err("one environment must hold only one runtime session");
         assert!(matches!(
@@ -4372,11 +4372,11 @@ json.dump({
         ));
 
         let first = invoke_runtime(&plan, &runtime, RunRequest::text("first"))
-            .expect("first capsule invocation");
+            .expect("first runtime invocation");
         let second = invoke_runtime(&plan, &runtime, RunRequest::text("second"))
-            .expect("second capsule invocation");
+            .expect("second runtime invocation");
         let artifact = invoke_runtime(&plan, &runtime, RunRequest::text("artifact"))
-            .expect("artifact capsule invocation");
+            .expect("artifact runtime invocation");
 
         assert_eq!(first.output["echo"], "first");
         assert_eq!(first.output["invocation_count"], 1);
@@ -4389,7 +4389,7 @@ json.dump({
                 .expect("read collected artifact"),
             r#"{"status":"delivered"}"#
         );
-        assert_eq!(first.metadata["adapter_runner"], "openshell_capsule");
+        assert_eq!(first.metadata["adapter_runner"], "in_environment");
 
         let early_release = release_environment(&environment)
             .expect_err("active runtime must retain its environment");
@@ -4398,20 +4398,20 @@ json.dump({
             FabricError::EnvironmentInUse { .. }
         ));
 
-        stop_runtime(&plan, &runtime).expect("stop capsule runtime");
-        let stopped_again = stop_runtime(&plan, &runtime).expect("idempotent capsule stop");
+        stop_runtime(&plan, &runtime).expect("stop remote runtime");
+        let stopped_again = stop_runtime(&plan, &runtime).expect("idempotent runtime stop");
         assert_eq!(stopped_again[0].metadata["already_stopped"], true);
 
         let operations = fs::read_to_string(&log).expect("read provider operations");
         assert_eq!(
             operations.lines().collect::<Vec<_>>(),
             [
-                "capsule_control:start",
-                "capsule_control:invoke",
-                "capsule_control:invoke",
-                "capsule_control:invoke",
+                "runtime_control:start",
+                "runtime_control:invoke",
+                "runtime_control:invoke",
+                "runtime_control:invoke",
                 "collect_artifacts",
-                "capsule_control:stop",
+                "runtime_control:stop",
             ]
         );
 
@@ -4439,7 +4439,7 @@ json.dump({
             .as_mut()
             .expect("environment config")
             .ownership = EnvironmentOwnership::CallerOwned;
-        let (provider, log) = write_fake_capsule_provider(&root);
+        let (provider, log) = write_fake_runtime_provider(&root);
         let _provider_env = ProviderCommandEnv::set(&provider);
         let reference = EnvironmentReference {
             provider: "openshell".to_string(),
@@ -4474,9 +4474,9 @@ json.dump({
                 .collect::<Vec<_>>(),
             [
                 "attach",
-                "capsule_control:start",
-                "capsule_control:invoke",
-                "capsule_control:stop",
+                "runtime_control:start",
+                "runtime_control:invoke",
+                "runtime_control:stop",
                 "release",
             ]
         );
