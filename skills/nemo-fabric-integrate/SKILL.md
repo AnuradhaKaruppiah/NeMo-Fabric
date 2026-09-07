@@ -193,7 +193,7 @@ Pick the smallest lifecycle the consumer needs:
   `start_runtime_in(config, environment)`, stop that runtime, inspect the still
   live environment if needed, and call `release_environment(environment)` only
   when the consumer is done. Runtime start/stop never implicitly prepares or
-  releases this environment. The OpenShell capsule profile supports process and
+  releases this environment. The OpenShell `in_env_control` profile supports process and
   Python adapters with buffered `invoke` and bounded collection of declared
   artifacts; it rejects a second runtime binding and does not yet provide
   streaming.
@@ -266,7 +266,7 @@ async def main() -> None:
             environment,
             base_dir=base,
         ) as runtime:
-            remote_result = await runtime.invoke(input="Inspect in the capsule")
+            remote_result = await runtime.invoke(input="Inspect inside the sandbox")
         # Inspect the retained environment here.
     finally:
         await fabric.release_environment(environment)
@@ -290,7 +290,7 @@ async def main() -> None:
             environment,
             base_dir=base,
         ) as runtime:
-            remote_result = await runtime.invoke(input="Inspect in the capsule")
+            remote_result = await runtime.invoke(input="Inspect inside the sandbox")
     finally:
         # Detaches Fabric; the deployment remains responsible for deletion.
         await fabric.release_environment(environment)

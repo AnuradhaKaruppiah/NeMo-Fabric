@@ -9,7 +9,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-use nemo_fabric_capsule::{CapsuleControlRequest, CapsuleControlResponse};
+use nemo_fabric_runtime_control::{RuntimeControlRequest, RuntimeControlResponse};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -228,14 +228,14 @@ pub(crate) fn release_environment(
     }
 }
 
-/// Send one typed lifecycle operation to the resident controller in an OpenShell capsule.
-pub(crate) fn control_capsule(
+/// Send one typed lifecycle operation to the resident server in an OpenShell sandbox.
+pub(crate) fn control_runtime(
     environment: &EnvironmentHandle,
-    request: &CapsuleControlRequest,
-) -> Result<CapsuleControlResponse> {
+    request: &RuntimeControlRequest,
+) -> Result<RuntimeControlResponse> {
     match environment.provider.as_str() {
         OPEN_SHELL_PROVIDER_ID => {
-            OPEN_SHELL_ENVIRONMENT_PROVIDER.request(ProviderOperation::CapsuleControl {
+            OPEN_SHELL_ENVIRONMENT_PROVIDER.request(ProviderOperation::RuntimeControl {
                 environment,
                 request,
             })
@@ -247,7 +247,7 @@ pub(crate) fn control_capsule(
     }
 }
 
-/// Collect a bounded set of adapter-declared files from an OpenShell capsule.
+/// Collect a bounded set of adapter-declared files from an OpenShell sandbox.
 pub(crate) fn collect_artifacts(
     environment: &EnvironmentHandle,
     artifacts: &[AgentArtifact],
@@ -462,9 +462,9 @@ enum ProviderOperation<'a> {
         environment: &'a EnvironmentPlan,
         reference: &'a EnvironmentReference,
     },
-    CapsuleControl {
+    RuntimeControl {
         environment: &'a EnvironmentHandle,
-        request: &'a CapsuleControlRequest,
+        request: &'a RuntimeControlRequest,
     },
     CollectArtifacts {
         environment: &'a EnvironmentHandle,
@@ -480,7 +480,7 @@ impl ProviderOperation<'_> {
         match self {
             Self::Prepare { .. } => "prepare",
             Self::Attach { .. } => "attach",
-            Self::CapsuleControl { .. } => "capsule_control",
+            Self::RuntimeControl { .. } => "runtime_control",
             Self::CollectArtifacts { .. } => "collect_artifacts",
             Self::Release { .. } => "release",
         }

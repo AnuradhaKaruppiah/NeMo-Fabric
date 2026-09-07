@@ -32,7 +32,7 @@ def test_graph_retains_the_fallback_route_for_the_delivery_turn() -> None:
 
 
 @pytest.mark.asyncio
-async def test_adapter_returns_a_receipt_from_the_capsule_artifact_root(
+async def test_adapter_returns_a_receipt_from_the_runtime_artifact_root(
     tmp_path, monkeypatch
 ) -> None:
     monkeypatch.setattr(

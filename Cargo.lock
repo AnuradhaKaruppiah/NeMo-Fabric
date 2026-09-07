@@ -1260,7 +1260,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
 
 [[package]]
-name = "nemo-fabric-capsule"
+name = "nemo-fabric-runtime-control"
 version = "0.3.0"
 dependencies = [
  "serde",
@@ -1281,7 +1281,7 @@ name = "nemo-fabric-core"
 version = "0.4.0"
 dependencies = [
  "jsonschema",
- "nemo-fabric-capsule",
+ "nemo-fabric-runtime-control",
  "schemars",
  "serde",
  "serde_json",

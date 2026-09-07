@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Versioned control protocol and resident process for a Fabric capsule.
+//! Versioned control protocol and resident server for a Fabric runtime.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -15,19 +15,19 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// Capsule-control wire protocol version.
-pub const PROTOCOL_VERSION: &str = "fabric.capsule-control.v1alpha1";
-/// Default Unix socket installed in a Fabric capsule.
-pub const DEFAULT_SOCKET: &str = "/sandbox/.fabric/control/capsule.sock";
+/// Runtime-control wire protocol version.
+pub const PROTOCOL_VERSION: &str = "fabric.runtime-control.v1alpha1";
+/// Default Unix socket inside the execution environment.
+pub const DEFAULT_SOCKET: &str = "/sandbox/.fabric/control/runtime.sock";
 const MAX_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
-/// Maximum size of one artifact exported through capsule control.
+/// Maximum size of one artifact exported through runtime control.
 pub const MAX_ARTIFACT_BYTES: u64 = 256 * 1024;
 const CHILD_EXIT_GRACE: Duration = Duration::from_secs(2);
 
-/// One supported capsule lifecycle operation.
+/// One supported runtime lifecycle operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CapsuleOperation {
+pub enum RuntimeControlOperation {
     /// Start one adapter runtime.
     Start,
     /// Invoke the active adapter runtime.
@@ -36,7 +36,7 @@ pub enum CapsuleOperation {
     Stop,
 }
 
-impl CapsuleOperation {
+impl RuntimeControlOperation {
     /// Stable wire name.
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -47,7 +47,7 @@ impl CapsuleOperation {
     }
 }
 
-impl FromStr for CapsuleOperation {
+impl FromStr for RuntimeControlOperation {
     type Err = ();
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
@@ -60,13 +60,13 @@ impl FromStr for CapsuleOperation {
     }
 }
 
-/// Exact process to retain behind the capsule control socket.
+/// Exact process to retain behind the runtime control socket.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CapsuleAdapterProcess {
+pub struct RuntimeAdapterProcess {
     /// Executable followed by its arguments. No shell expansion is performed.
     pub command: Vec<String>,
-    /// Working directory inside the capsule.
+    /// Working directory inside the execution environment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<PathBuf>,
     /// Adapter-specific environment values.
@@ -74,14 +74,14 @@ pub struct CapsuleAdapterProcess {
     pub env: BTreeMap<String, String>,
 }
 
-/// Typed payload for one capsule operation.
+/// Typed payload for one runtime operation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
-pub enum CapsuleCommand {
+pub enum RuntimeControlCommand {
     /// Start an adapter process and send its lifecycle start request.
     Start {
-        /// Process installed in the capsule image.
-        process: CapsuleAdapterProcess,
+        /// Process installed in the runtime image.
+        process: RuntimeAdapterProcess,
         /// Adapter lifecycle request forwarded unchanged to the process.
         lifecycle: Value,
     },
@@ -97,13 +97,13 @@ pub enum CapsuleCommand {
     },
 }
 
-impl CapsuleCommand {
+impl RuntimeControlCommand {
     /// Operation represented by this command.
-    pub const fn operation(&self) -> CapsuleOperation {
+    pub const fn operation(&self) -> RuntimeControlOperation {
         match self {
-            Self::Start { .. } => CapsuleOperation::Start,
-            Self::Invoke { .. } => CapsuleOperation::Invoke,
-            Self::Stop { .. } => CapsuleOperation::Stop,
+            Self::Start { .. } => RuntimeControlOperation::Start,
+            Self::Invoke { .. } => RuntimeControlOperation::Invoke,
+            Self::Stop { .. } => RuntimeControlOperation::Stop,
         }
     }
 
@@ -116,9 +116,9 @@ impl CapsuleCommand {
     }
 }
 
-/// One correlated request sent through OpenShell to the capsule controller.
+/// One correlated request sent through an environment provider to the runtime server.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CapsuleControlRequest {
+pub struct RuntimeControlRequest {
     /// Exact protocol version.
     pub protocol_version: String,
     /// Unique operation id used for retry inspection and correlation.
@@ -127,26 +127,26 @@ pub struct CapsuleControlRequest {
     pub environment_id: String,
     /// Fabric runtime id bound to the session.
     pub runtime_id: String,
-    /// Maximum time the runner may wait for the adapter response.
+    /// Maximum time the server may wait for the adapter response.
     pub timeout_seconds: u64,
     /// Typed lifecycle operation.
     #[serde(flatten)]
-    pub command: CapsuleCommand,
+    pub command: RuntimeControlCommand,
 }
 
-/// Stable capsule-control failure.
+/// Stable runtime-control failure.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CapsuleFailure {
+pub struct RuntimeControlFailure {
     /// Machine-readable failure code.
     pub code: String,
     /// Sanitized failure message.
     pub message: String,
 }
 
-/// Result of one correlated capsule-control operation.
+/// Result of one correlated runtime-control operation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CapsuleControlResponse {
+pub struct RuntimeControlResponse {
     /// Exact protocol version.
     pub protocol_version: String,
     /// Request operation id.
@@ -156,49 +156,49 @@ pub struct CapsuleControlResponse {
     /// Request runtime id.
     pub runtime_id: String,
     /// Request operation.
-    pub operation: CapsuleOperation,
+    pub operation: RuntimeControlOperation,
     /// Terminal operation outcome.
     #[serde(flatten)]
-    pub outcome: CapsuleOutcome,
+    pub outcome: RuntimeControlOutcome,
 }
 
-/// Terminal capsule operation outcome.
+/// Terminal runtime operation outcome.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
-pub enum CapsuleOutcome {
+pub enum RuntimeControlOutcome {
     /// The adapter returned a lifecycle response.
     Succeeded {
         /// Raw adapter lifecycle response.
         output: Value,
     },
-    /// Capsule control failed before a valid adapter response was returned.
+    /// Runtime control failed before a valid adapter response was returned.
     Failed {
-        /// Stable capsule failure.
-        error: CapsuleFailure,
+        /// Stable runtime failure.
+        error: RuntimeControlFailure,
     },
 }
 
-impl CapsuleControlResponse {
-    fn succeeded(request: &CapsuleControlRequest, output: Value) -> Self {
+impl RuntimeControlResponse {
+    fn succeeded(request: &RuntimeControlRequest, output: Value) -> Self {
         Self {
             protocol_version: PROTOCOL_VERSION.to_string(),
             operation_id: request.operation_id.clone(),
             environment_id: request.environment_id.clone(),
             runtime_id: request.runtime_id.clone(),
             operation: request.command.operation(),
-            outcome: CapsuleOutcome::Succeeded { output },
+            outcome: RuntimeControlOutcome::Succeeded { output },
         }
     }
 
-    fn failed(request: &CapsuleControlRequest, code: &str, message: impl Into<String>) -> Self {
+    fn failed(request: &RuntimeControlRequest, code: &str, message: impl Into<String>) -> Self {
         Self {
             protocol_version: PROTOCOL_VERSION.to_string(),
             operation_id: request.operation_id.clone(),
             environment_id: request.environment_id.clone(),
             runtime_id: request.runtime_id.clone(),
             operation: request.command.operation(),
-            outcome: CapsuleOutcome::Failed {
-                error: CapsuleFailure {
+            outcome: RuntimeControlOutcome::Failed {
+                error: RuntimeControlFailure {
                     code: code.to_string(),
                     message: message.into(),
                 },
@@ -207,15 +207,15 @@ impl CapsuleControlResponse {
     }
 }
 
-/// Resolve the capsule socket from `FABRIC_CAPSULE_SOCKET` or the stable default.
+/// Resolve the runtime socket from `FABRIC_RUNTIME_CONTROL_SOCKET` or the stable default.
 pub fn default_socket_path() -> PathBuf {
-    std::env::var_os("FABRIC_CAPSULE_SOCKET")
+    std::env::var_os("FABRIC_RUNTIME_CONTROL_SOCKET")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(DEFAULT_SOCKET))
 }
 
-/// One bounded request to read an adapter-declared artifact from the capsule.
+/// One bounded request to read an adapter-declared artifact from the runtime.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArtifactExportRequest {
@@ -301,7 +301,7 @@ impl AdapterHost {
     fn spawn(
         environment_id: &str,
         runtime_id: &str,
-        process: &CapsuleAdapterProcess,
+        process: &RuntimeAdapterProcess,
     ) -> std::io::Result<Self> {
         let Some((program, args)) = process.command.split_first() else {
             return Err(std::io::Error::new(
@@ -343,7 +343,7 @@ impl AdapterHost {
         };
         let (sender, responses) = mpsc::channel();
         if let Err(error) = thread::Builder::new()
-            .name(format!("fabric-capsule-{runtime_id}"))
+            .name(format!("fabric-runtime-{runtime_id}"))
             .spawn(move || {
                 let mut stdout = BufReader::new(stdout);
                 loop {
@@ -424,11 +424,11 @@ impl AdapterHost {
 
 #[cfg(unix)]
 fn handle_request(
-    request: &CapsuleControlRequest,
+    request: &RuntimeControlRequest,
     host: &mut Option<AdapterHost>,
-) -> CapsuleControlResponse {
+) -> RuntimeControlResponse {
     if request.protocol_version != PROTOCOL_VERSION {
-        return CapsuleControlResponse::failed(
+        return RuntimeControlResponse::failed(
             request,
             "protocol_mismatch",
             format!(
@@ -442,7 +442,7 @@ fn handle_request(
         || request.runtime_id.trim().is_empty()
         || request.timeout_seconds == 0
     {
-        return CapsuleControlResponse::failed(
+        return RuntimeControlResponse::failed(
             request,
             "invalid_request",
             "operation, environment, runtime, and timeout fields must be non-empty",
@@ -450,9 +450,9 @@ fn handle_request(
     }
     let timeout = Duration::from_secs(request.timeout_seconds);
     match &request.command {
-        CapsuleCommand::Start { process, lifecycle } => {
+        RuntimeControlCommand::Start { process, lifecycle } => {
             if let Some(active) = host {
-                return CapsuleControlResponse::failed(
+                return RuntimeControlResponse::failed(
                     request,
                     "environment_in_use",
                     format!(
@@ -465,7 +465,7 @@ fn handle_request(
                 match AdapterHost::spawn(&request.environment_id, &request.runtime_id, process) {
                     Ok(started) => started,
                     Err(error) => {
-                        return CapsuleControlResponse::failed(
+                        return RuntimeControlResponse::failed(
                             request,
                             "adapter_start_failed",
                             error.to_string(),
@@ -473,54 +473,56 @@ fn handle_request(
                     }
                 };
             match started.exchange(lifecycle, timeout) {
-                Ok(output) => match validate_adapter_lifecycle(&output, CapsuleOperation::Start) {
-                    Ok(true) => {
-                        *host = Some(started);
-                        CapsuleControlResponse::succeeded(request, output)
+                Ok(output) => {
+                    match validate_adapter_lifecycle(&output, RuntimeControlOperation::Start) {
+                        Ok(true) => {
+                            *host = Some(started);
+                            RuntimeControlResponse::succeeded(request, output)
+                        }
+                        Ok(false) => {
+                            let _ = started.terminate();
+                            RuntimeControlResponse::succeeded(request, output)
+                        }
+                        Err(message) => {
+                            let _ = started.terminate();
+                            RuntimeControlResponse::failed(request, "adapter_start_failed", message)
+                        }
                     }
-                    Ok(false) => {
-                        let _ = started.terminate();
-                        CapsuleControlResponse::succeeded(request, output)
-                    }
-                    Err(message) => {
-                        let _ = started.terminate();
-                        CapsuleControlResponse::failed(request, "adapter_start_failed", message)
-                    }
-                },
+                }
                 Err(message) => {
                     let _ = started.terminate();
-                    CapsuleControlResponse::failed(request, "adapter_start_failed", message)
+                    RuntimeControlResponse::failed(request, "adapter_start_failed", message)
                 }
             }
         }
-        CapsuleCommand::Invoke { .. } | CapsuleCommand::Stop { .. } => {
+        RuntimeControlCommand::Invoke { .. } | RuntimeControlCommand::Stop { .. } => {
             let Some(active) = host.as_mut() else {
-                return CapsuleControlResponse::failed(
+                return RuntimeControlResponse::failed(
                     request,
                     "runtime_unavailable",
-                    "capsule has no active Fabric runtime",
+                    "runtime server has no active adapter session",
                 );
             };
             if active.environment_id != request.environment_id
                 || active.runtime_id != request.runtime_id
             {
-                return CapsuleControlResponse::failed(
+                return RuntimeControlResponse::failed(
                     request,
                     "runtime_mismatch",
-                    format!("capsule is bound to runtime `{}`", active.runtime_id),
+                    format!("runtime server is bound to runtime `{}`", active.runtime_id),
                 );
             }
             let operation = request.command.operation();
             let result = active
                 .exchange(request.command.lifecycle(), timeout)
                 .and_then(|output| validate_adapter_lifecycle(&output, operation).map(|_| output));
-            if operation == CapsuleOperation::Stop || result.is_err() {
+            if operation == RuntimeControlOperation::Stop || result.is_err() {
                 let termination = active.terminate();
                 *host = None;
                 if let Err(error) = termination {
-                    return CapsuleControlResponse::failed(
+                    return RuntimeControlResponse::failed(
                         request,
-                        if operation == CapsuleOperation::Stop {
+                        if operation == RuntimeControlOperation::Stop {
                             "adapter_stop_failed"
                         } else {
                             "adapter_invoke_failed"
@@ -530,10 +532,10 @@ fn handle_request(
                 }
             }
             match result {
-                Ok(output) => CapsuleControlResponse::succeeded(request, output),
-                Err(message) => CapsuleControlResponse::failed(
+                Ok(output) => RuntimeControlResponse::succeeded(request, output),
+                Err(message) => RuntimeControlResponse::failed(
                     request,
-                    if operation == CapsuleOperation::Stop {
+                    if operation == RuntimeControlOperation::Stop {
                         "adapter_stop_failed"
                     } else {
                         "adapter_invoke_failed"
@@ -547,7 +549,7 @@ fn handle_request(
 
 fn validate_adapter_lifecycle(
     output: &Value,
-    expected_operation: CapsuleOperation,
+    expected_operation: RuntimeControlOperation,
 ) -> Result<bool, String> {
     let operation = output
         .get("operation")
@@ -574,7 +576,7 @@ fn validate_adapter_lifecycle(
     }
 }
 
-/// Serve capsule-control requests on a Unix socket until the process is terminated.
+/// Serve runtime-control requests on a Unix socket until the process is terminated.
 #[cfg(unix)]
 pub fn serve(socket: &Path) -> std::io::Result<()> {
     use std::os::unix::net::UnixListener;
@@ -601,31 +603,31 @@ fn serve_connection<T: Read + Write>(
     stream: &mut T,
     host: &mut Option<AdapterHost>,
 ) -> std::io::Result<()> {
-    let request = read_json_line::<CapsuleControlRequest>(&mut BufReader::new(&mut *stream))?;
+    let request = read_json_line::<RuntimeControlRequest>(&mut BufReader::new(&mut *stream))?;
     let response = handle_request(&request, host);
     write_json_line(stream, &response)
 }
 
-/// Report that capsule control requires Unix domain sockets.
+/// Report that runtime control requires Unix domain sockets.
 #[cfg(not(unix))]
 pub fn serve(_socket: &Path) -> std::io::Result<()> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
-        "Fabric capsule control requires a Unix domain socket",
+        "Fabric runtime control requires a Unix domain socket",
     ))
 }
 
-/// Forward one stdin request to the resident capsule runner and write its response.
+/// Forward one stdin request to the resident runtime server and write its response.
 #[cfg(unix)]
 pub fn control(
     socket: &Path,
-    expected_operation: CapsuleOperation,
+    expected_operation: RuntimeControlOperation,
     mut input: impl Read,
     mut output: impl Write,
 ) -> std::io::Result<()> {
     use std::os::unix::net::UnixStream;
 
-    let request = read_json::<CapsuleControlRequest>(&mut input)?;
+    let request = read_json::<RuntimeControlRequest>(&mut input)?;
     if request.command.operation() != expected_operation {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -638,21 +640,21 @@ pub fn control(
     }
     let mut stream = UnixStream::connect(socket)?;
     write_json_line(&mut stream, &request)?;
-    let response = read_json_line::<CapsuleControlResponse>(&mut BufReader::new(&mut stream))?;
+    let response = read_json_line::<RuntimeControlResponse>(&mut BufReader::new(&mut stream))?;
     write_json(&mut output, &response)
 }
 
-/// Report that capsule control requires Unix domain sockets.
+/// Report that runtime control requires Unix domain sockets.
 #[cfg(not(unix))]
 pub fn control(
     _socket: &Path,
-    _expected_operation: CapsuleOperation,
+    _expected_operation: RuntimeControlOperation,
     _input: impl Read,
     _output: impl Write,
 ) -> std::io::Result<()> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
-        "Fabric capsule control requires a Unix domain socket",
+        "Fabric runtime control requires a Unix domain socket",
     ))
 }
 
@@ -664,7 +666,7 @@ fn read_json<T: for<'de> Deserialize<'de>>(reader: &mut impl Read) -> std::io::R
     if bytes.len() > MAX_MESSAGE_BYTES {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            format!("capsule message exceeds {MAX_MESSAGE_BYTES} bytes"),
+            format!("runtime-control message exceeds {MAX_MESSAGE_BYTES} bytes"),
         ));
     }
     serde_json::from_slice(&bytes)
@@ -679,7 +681,7 @@ fn read_json_line<T: for<'de> Deserialize<'de>>(reader: &mut impl BufRead) -> st
     if bytes.len() > MAX_MESSAGE_BYTES {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            format!("capsule message exceeds {MAX_MESSAGE_BYTES} bytes"),
+            format!("runtime-control message exceeds {MAX_MESSAGE_BYTES} bytes"),
         ));
     }
     if bytes.last() == Some(&b'\n') {
@@ -710,7 +712,7 @@ mod tests {
     #[test]
     fn artifact_export_is_bounded_and_cannot_escape_its_root() {
         let root = std::env::temp_dir().join(format!(
-            "fabric-capsule-artifact-{}-{}",
+            "fabric-runtime-artifact-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -752,8 +754,8 @@ mod tests {
         std::fs::remove_dir_all(root).expect("remove artifact root");
     }
 
-    fn request(command: CapsuleCommand) -> CapsuleControlRequest {
-        CapsuleControlRequest {
+    fn request(command: RuntimeControlCommand) -> RuntimeControlRequest {
+        RuntimeControlRequest {
             protocol_version: PROTOCOL_VERSION.to_string(),
             operation_id: format!("operation-{}", command.operation().as_str()),
             environment_id: "environment-1".to_string(),
@@ -780,15 +782,15 @@ while IFS= read -r line; do
   [ "$op" = stop ] && exit 0
 done
 "#;
-        let start = request(CapsuleCommand::Start {
-            process: CapsuleAdapterProcess {
+        let start = request(RuntimeControlCommand::Start {
+            process: RuntimeAdapterProcess {
                 command: vec!["/bin/sh".to_string(), "-c".to_string(), script.to_string()],
                 cwd: None,
                 env: BTreeMap::new(),
             },
             lifecycle: lifecycle("start"),
         });
-        let start: CapsuleControlRequest =
+        let start: RuntimeControlRequest =
             serde_json::from_value(serde_json::to_value(start).expect("serialize start request"))
                 .expect("deserialize start request");
         let mut host = None;
@@ -796,36 +798,45 @@ done
         let started = handle_request(&start, &mut host);
         let second = handle_request(&start, &mut host);
         let invoked = handle_request(
-            &request(CapsuleCommand::Invoke {
+            &request(RuntimeControlCommand::Invoke {
                 lifecycle: lifecycle("invoke"),
             }),
             &mut host,
         );
         let stopped = handle_request(
-            &request(CapsuleCommand::Stop {
+            &request(RuntimeControlCommand::Stop {
                 lifecycle: lifecycle("stop"),
             }),
             &mut host,
         );
 
-        assert!(matches!(started.outcome, CapsuleOutcome::Succeeded { .. }));
-        let _: CapsuleControlResponse = serde_json::from_value(
+        assert!(matches!(
+            started.outcome,
+            RuntimeControlOutcome::Succeeded { .. }
+        ));
+        let _: RuntimeControlResponse = serde_json::from_value(
             serde_json::to_value(&started).expect("serialize start response"),
         )
         .expect("deserialize start response");
         assert!(matches!(
             second.outcome,
-            CapsuleOutcome::Failed { ref error } if error.code == "environment_in_use"
+            RuntimeControlOutcome::Failed { ref error } if error.code == "environment_in_use"
         ));
-        assert!(matches!(invoked.outcome, CapsuleOutcome::Succeeded { .. }));
-        assert!(matches!(stopped.outcome, CapsuleOutcome::Succeeded { .. }));
+        assert!(matches!(
+            invoked.outcome,
+            RuntimeControlOutcome::Succeeded { .. }
+        ));
+        assert!(matches!(
+            stopped.outcome,
+            RuntimeControlOutcome::Succeeded { .. }
+        ));
         assert!(host.is_none());
     }
 
     #[test]
     fn failed_adapter_start_does_not_retain_the_process() {
-        let start = request(CapsuleCommand::Start {
-            process: CapsuleAdapterProcess {
+        let start = request(RuntimeControlCommand::Start {
+            process: RuntimeAdapterProcess {
                 command: vec![
                     "/bin/sh".to_string(),
                     "-c".to_string(),
@@ -841,26 +852,29 @@ done
 
         let response = handle_request(&start, &mut host);
 
-        assert!(matches!(response.outcome, CapsuleOutcome::Succeeded { .. }));
+        assert!(matches!(
+            response.outcome,
+            RuntimeControlOutcome::Succeeded { .. }
+        ));
         assert!(host.is_none());
     }
 
     #[test]
     fn unix_socket_framing_round_trips_the_typed_session() {
         let socket = std::env::temp_dir().join(format!(
-            "fabric-capsule-test-{}-{}.sock",
+            "fabric-runtime-test-{}-{}.sock",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("clock")
                 .as_nanos()
         ));
-        let listener = UnixListener::bind(&socket).expect("bind capsule test socket");
+        let listener = UnixListener::bind(&socket).expect("bind runtime test socket");
         let server = thread::spawn(move || {
             let mut host = None;
             for _ in 0..3 {
-                let (mut stream, _) = listener.accept().expect("accept capsule request");
-                serve_connection(&mut stream, &mut host).expect("serve capsule request");
+                let (mut stream, _) = listener.accept().expect("accept runtime request");
+                serve_connection(&mut stream, &mut host).expect("serve runtime request");
             }
             assert!(host.is_none());
         });
@@ -876,23 +890,23 @@ while IFS= read -r line; do
 done
 "#;
         let requests = [
-            request(CapsuleCommand::Start {
-                process: CapsuleAdapterProcess {
+            request(RuntimeControlCommand::Start {
+                process: RuntimeAdapterProcess {
                     command: vec!["/bin/sh".to_string(), "-c".to_string(), script.to_string()],
                     cwd: None,
                     env: BTreeMap::new(),
                 },
                 lifecycle: lifecycle("start"),
             }),
-            request(CapsuleCommand::Invoke {
+            request(RuntimeControlCommand::Invoke {
                 lifecycle: lifecycle("invoke"),
             }),
-            request(CapsuleCommand::Stop {
+            request(RuntimeControlCommand::Stop {
                 lifecycle: lifecycle("stop"),
             }),
         ];
         for request in requests {
-            let input = serde_json::to_vec(&request).expect("encode capsule request");
+            let input = serde_json::to_vec(&request).expect("encode runtime request");
             let mut output = Vec::new();
             control(
                 &socket,
@@ -900,12 +914,15 @@ done
                 input.as_slice(),
                 &mut output,
             )
-            .expect("control capsule");
-            let response: CapsuleControlResponse =
-                serde_json::from_slice(&output).expect("decode capsule response");
-            assert!(matches!(response.outcome, CapsuleOutcome::Succeeded { .. }));
+            .expect("control runtime");
+            let response: RuntimeControlResponse =
+                serde_json::from_slice(&output).expect("decode runtime response");
+            assert!(matches!(
+                response.outcome,
+                RuntimeControlOutcome::Succeeded { .. }
+            ));
         }
-        server.join().expect("capsule server");
-        std::fs::remove_file(socket).expect("remove capsule test socket");
+        server.join().expect("runtime server");
+        std::fs::remove_file(socket).expect("remove runtime test socket");
     }
 }

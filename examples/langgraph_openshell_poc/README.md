@@ -11,7 +11,7 @@ sandbox without adding OpenShell-specific logic to the agent or its Fabric
 adapter.
 
 For component placement, lifecycle, and ownership, refer to the
-[OpenShell environment provider architecture](../../integrations/openshell/README.md).
+[OpenShell environment provider architecture](../../environment-providers/openshell/README.md).
 
 ## Scenario
 

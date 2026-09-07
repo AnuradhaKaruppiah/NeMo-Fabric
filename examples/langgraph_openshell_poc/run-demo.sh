@@ -58,17 +58,17 @@ gateway_failure() {
 }
 
 cd "${FABRIC_ROOT}"
-cargo build --release -p nemo-fabric-capsule --bins
+cargo build --release -p nemo-fabric-runtime-control --bins
 cargo build -p nemo-fabric-openshell-provider
-cp target/release/fabric-capsule-runner target/release/fabric-capsule-ctl "${STAGE_DIR}/"
+cp target/release/fabric-runtime-server target/release/fabric-runtime-ctl "${STAGE_DIR}/"
 cp -R adapter-contract/python "${STAGE_DIR}/adapter-contract"
 cp -R adapters/python/common "${STAGE_DIR}/adapters-common"
 mkdir -p "${STAGE_DIR}/examples"
 cp examples/__init__.py "${STAGE_DIR}/examples/"
 cp -R "${EXAMPLE_ROOT}" "${STAGE_DIR}/examples/langgraph_openshell_poc"
-cp "${EXAMPLE_ROOT}/capsule.dockerignore" "${STAGE_DIR}/.dockerignore"
-docker build -f "${EXAMPLE_ROOT}/capsule.Dockerfile" -t fabric-portable-courier:poc "${STAGE_DIR}"
-CAPSULE_IMAGE="$(docker image inspect fabric-portable-courier:poc --format '{{.Id}}')"
+cp "${EXAMPLE_ROOT}/runtime-image.dockerignore" "${STAGE_DIR}/.dockerignore"
+docker build -f "${EXAMPLE_ROOT}/runtime-image.Dockerfile" -t fabric-portable-courier:poc "${STAGE_DIR}"
+RUNTIME_IMAGE="$(docker image inspect fabric-portable-courier:poc --format '{{.Id}}')"
 
 mkdir -p "${OPENSHELL_BUILD_DIR}"
 if [[ ! -f "${OPENSHELL_BUILD_DIR}/Cargo.toml" ]]; then
@@ -123,7 +123,7 @@ run_consumer() {
   uv run --isolated --locked --no-default-groups \
     python -m examples.langgraph_openshell_poc.consumer \
     --gateway "http://127.0.0.1:${GATEWAY_PORT}" \
-    --image "${CAPSULE_IMAGE}" \
+    --image "${RUNTIME_IMAGE}" \
     --base-dir "${FABRIC_ROOT}/.tmp/portable-courier" \
     "$@"
 }
@@ -132,12 +132,12 @@ if [[ "${POC_MODE}" == "deployment" || "${POC_MODE}" == "both" ]]; then
   "${OPENSHELL_CLI}" --gateway-endpoint "http://127.0.0.1:${GATEWAY_PORT}" \
     sandbox create \
     --name "${SANDBOX_NAME}" \
-    --from "${CAPSULE_IMAGE}" \
+    --from "${RUNTIME_IMAGE}" \
     --policy "${EXAMPLE_ROOT}/policy.yaml" \
     --env PYTHONPATH=/opt/nemo-fabric \
     --detach \
     --no-tty \
-    -- fabric-capsule-runner serve
+    -- fabric-runtime-server serve
   SANDBOX_CREATED="yes"
   SANDBOX_JSON="$(
     "${OPENSHELL_CLI}" --gateway-endpoint "http://127.0.0.1:${GATEWAY_PORT}" \

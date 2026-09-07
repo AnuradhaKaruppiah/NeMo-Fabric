@@ -18,7 +18,7 @@ use serde_json::{Map, Value, json};
 use thiserror::Error;
 
 const PROTOCOL_VERSION: &str = "fabric.environment-provider.v1alpha1";
-const CAPSULE_PROTOCOL_VERSION: &str = "fabric.capsule-control.v1alpha1";
+const RUNTIME_CONTROL_PROTOCOL_VERSION: &str = "fabric.runtime-control.v1alpha1";
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
 const MAX_EXEC_OUTPUT_BYTES: usize = 3 * 1024 * 1024;
 const MAX_ARTIFACT_BYTES: usize = 256 * 1024;
@@ -154,10 +154,10 @@ where
         ProviderOperation::Inspect { environment } => {
             inspect_environment(environment, factory).await
         }
-        ProviderOperation::CapsuleControl {
+        ProviderOperation::RuntimeControl {
             environment,
             request,
-        } => capsule_control(environment, request, factory).await,
+        } => runtime_control(environment, request, factory).await,
         ProviderOperation::CollectArtifacts {
             environment,
             artifacts,
@@ -280,7 +280,7 @@ where
             "openshell.sandbox_name": ready.name,
             "openshell.sandbox_phase": ready.phase.as_str(),
             "openshell.sandbox_resource_version": ready.resource_version,
-            "openshell.capsule_image": settings.image,
+            "openshell.runtime_image": settings.image,
             "openshell.policy_attached": policy_attached,
         },
     }))
@@ -330,13 +330,13 @@ where
     }
     if sandbox.image.as_deref() != Some(settings.image.as_str()) {
         return Err(ProviderError::contract(
-            "capsule_image_mismatch",
+            "sandbox_image_mismatch",
             "OpenShell sandbox image does not match settings.image",
         ));
     }
     if sandbox.command.as_deref() != Some(settings.command.as_slice()) {
         return Err(ProviderError::contract(
-            "capsule_command_mismatch",
+            "sandbox_command_mismatch",
             "OpenShell sandbox command does not match settings.command",
         ));
     }
@@ -344,7 +344,7 @@ where
         && sandbox.policy.as_ref() != Some(expected_policy)
     {
         return Err(ProviderError::contract(
-            "capsule_policy_mismatch",
+            "sandbox_policy_mismatch",
             "OpenShell sandbox policy does not match settings.policy_yaml",
         ));
     }
@@ -370,7 +370,7 @@ where
             "openshell.sandbox_name": sandbox.name,
             "openshell.sandbox_phase": sandbox.phase.as_str(),
             "openshell.sandbox_resource_version": sandbox.resource_version,
-            "openshell.capsule_image": settings.image,
+            "openshell.runtime_image": settings.image,
             "openshell.policy_attached": sandbox.policy.is_some(),
             "fabric.environment_binding": environment_id,
         },
@@ -466,9 +466,9 @@ where
     }))
 }
 
-async fn capsule_control<F>(
+async fn runtime_control<F>(
     environment: EnvironmentHandle,
-    request: CapsuleControlRequest,
+    request: RuntimeControlRequest,
     factory: &F,
 ) -> Result<Value, ProviderError>
 where
@@ -483,18 +483,21 @@ where
     binding.verify(&sandbox)?;
     let stdin = serde_json::to_vec(&request).map_err(|error| {
         ProviderError::contract(
-            "capsule_protocol_error",
-            format!("could not encode capsule request: {error}"),
+            "runtime_control_protocol_error",
+            format!("could not encode runtime-control request: {error}"),
         )
     })?;
     let timeout = request.timeout_seconds.checked_add(5).ok_or_else(|| {
-        ProviderError::contract("invalid_capsule_request", "capsule timeout is too large")
+        ProviderError::contract(
+            "invalid_runtime_control_request",
+            "runtime-control timeout is too large",
+        )
     })?;
     let result = client
         .exec(
             binding.connection.workspace.as_deref(),
             &binding.name,
-            vec!["fabric-capsule-ctl".to_string(), request.operation.clone()],
+            vec!["fabric-runtime-ctl".to_string(), request.operation.clone()],
             ExecRequest {
                 workdir: environment.workspace,
                 environment: HashMap::new(),
@@ -512,12 +515,12 @@ where
     if result.exit_code != 0 {
         let diagnostics = String::from_utf8_lossy(&result.stderr);
         return Err(ProviderError::contract(
-            "capsule_control_failed",
+            "runtime_control_failed",
             if diagnostics.trim().is_empty() {
-                format!("fabric-capsule-ctl exited with {}", result.exit_code)
+                format!("fabric-runtime-ctl exited with {}", result.exit_code)
             } else {
                 format!(
-                    "fabric-capsule-ctl exited with {}: {}",
+                    "fabric-runtime-ctl exited with {}: {}",
                     result.exit_code,
                     diagnostics.trim()
                 )
@@ -526,15 +529,15 @@ where
     }
     let output: Value = serde_json::from_slice(&result.stdout).map_err(|error| {
         ProviderError::contract(
-            "capsule_protocol_error",
-            format!("fabric-capsule-ctl returned invalid JSON: {error}"),
+            "runtime_control_protocol_error",
+            format!("fabric-runtime-ctl returned invalid JSON: {error}"),
         )
     })?;
-    let identity: CapsuleControlResponseIdentity =
+    let identity: RuntimeControlResponseIdentity =
         serde_json::from_value(output.clone()).map_err(|error| {
             ProviderError::contract(
-                "capsule_protocol_error",
-                format!("capsule response did not match the control contract: {error}"),
+                "runtime_control_protocol_error",
+                format!("runtime-control response did not match the contract: {error}"),
             )
         })?;
     identity.validate(&request)?;
@@ -558,13 +561,13 @@ where
     let root = environment.artifacts.as_deref().ok_or_else(|| {
         ProviderError::contract(
             "artifact_root_unavailable",
-            "environment handle is missing its capsule artifact root",
+            "environment handle is missing its agent artifact root",
         )
     })?;
     if !root.starts_with('/') {
         return Err(ProviderError::contract(
             "invalid_artifact_request",
-            "capsule artifact root must be absolute",
+            "agent artifact root must be absolute",
         ));
     }
     for artifact in &artifacts {
@@ -597,7 +600,7 @@ where
                 binding.connection.workspace.as_deref(),
                 &binding.name,
                 vec![
-                    "fabric-capsule-ctl".to_string(),
+                    "fabric-runtime-ctl".to_string(),
                     "collect-artifact".to_string(),
                 ],
                 ExecRequest {
@@ -617,7 +620,7 @@ where
             return Err(ProviderError::contract(
                 "artifact_export_failed",
                 format!(
-                    "fabric-capsule-ctl could not export declared artifact `{}`",
+                    "fabric-runtime-ctl could not export declared artifact `{}`",
                     artifact.path
                 ),
             ));
@@ -742,7 +745,7 @@ fn validate_profile(
         {
             return Err(ProviderError::contract(
                 "invalid_profile",
-                format!("{field} must be an absolute path inside the capsule"),
+                format!("{field} must be an absolute path inside the sandbox"),
             ));
         }
     }
@@ -772,9 +775,9 @@ enum ProviderOperation {
     Inspect {
         environment: EnvironmentHandle,
     },
-    CapsuleControl {
+    RuntimeControl {
         environment: EnvironmentHandle,
-        request: CapsuleControlRequest,
+        request: RuntimeControlRequest,
     },
     CollectArtifacts {
         environment: EnvironmentHandle,
@@ -871,7 +874,7 @@ struct CollectedArtifact {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct CapsuleControlRequest {
+struct RuntimeControlRequest {
     protocol_version: String,
     operation_id: String,
     environment_id: String,
@@ -882,13 +885,13 @@ struct CapsuleControlRequest {
     payload: Map<String, Value>,
 }
 
-impl CapsuleControlRequest {
+impl RuntimeControlRequest {
     fn validate(&self, environment: &EnvironmentHandle) -> Result<(), ProviderError> {
-        if self.protocol_version != CAPSULE_PROTOCOL_VERSION {
+        if self.protocol_version != RUNTIME_CONTROL_PROTOCOL_VERSION {
             return Err(ProviderError::contract(
-                "capsule_protocol_mismatch",
+                "runtime_control_protocol_mismatch",
                 format!(
-                    "expected `{CAPSULE_PROTOCOL_VERSION}` but received `{}`",
+                    "expected `{RUNTIME_CONTROL_PROTOCOL_VERSION}` but received `{}`",
                     self.protocol_version
                 ),
             ));
@@ -899,20 +902,20 @@ impl CapsuleControlRequest {
             || self.timeout_seconds == 0
         {
             return Err(ProviderError::contract(
-                "invalid_capsule_request",
-                "capsule identity and timeout fields must be non-empty",
+                "invalid_runtime_control_request",
+                "runtime-control identity and timeout fields must be non-empty",
             ));
         }
         if !matches!(self.operation.as_str(), "start" | "invoke" | "stop") {
             return Err(ProviderError::contract(
-                "invalid_capsule_request",
-                format!("unsupported capsule operation `{}`", self.operation),
+                "invalid_runtime_control_request",
+                format!("unsupported runtime-control operation `{}`", self.operation),
             ));
         }
         if self.environment_id != environment.environment_id {
             return Err(ProviderError::contract(
-                "capsule_environment_mismatch",
-                "capsule request environment id does not match the environment handle",
+                "runtime_control_environment_mismatch",
+                "runtime-control request environment id does not match the environment handle",
             ));
         }
         Ok(())
@@ -920,7 +923,7 @@ impl CapsuleControlRequest {
 }
 
 #[derive(Debug, Deserialize)]
-struct CapsuleControlResponseIdentity {
+struct RuntimeControlResponseIdentity {
     protocol_version: String,
     operation_id: String,
     environment_id: String,
@@ -929,12 +932,12 @@ struct CapsuleControlResponseIdentity {
     status: String,
 }
 
-impl CapsuleControlResponseIdentity {
-    fn validate(&self, request: &CapsuleControlRequest) -> Result<(), ProviderError> {
+impl RuntimeControlResponseIdentity {
+    fn validate(&self, request: &RuntimeControlRequest) -> Result<(), ProviderError> {
         for (field, expected, actual) in [
             (
                 "protocol_version",
-                CAPSULE_PROTOCOL_VERSION,
+                RUNTIME_CONTROL_PROTOCOL_VERSION,
                 self.protocol_version.as_str(),
             ),
             ("operation_id", &request.operation_id, &self.operation_id),
@@ -948,15 +951,15 @@ impl CapsuleControlResponseIdentity {
         ] {
             if expected != actual {
                 return Err(ProviderError::contract(
-                    "capsule_correlation_mismatch",
-                    format!("capsule response `{field}` did not match the request"),
+                    "runtime_control_correlation_mismatch",
+                    format!("runtime-control response `{field}` did not match the request"),
                 ));
             }
         }
         if !matches!(self.status.as_str(), "succeeded" | "failed") {
             return Err(ProviderError::contract(
-                "capsule_protocol_error",
-                "capsule response status must be `succeeded` or `failed`",
+                "runtime_control_protocol_error",
+                "runtime-control response status must be `succeeded` or `failed`",
             ));
         }
         Ok(())
@@ -1633,10 +1636,10 @@ mod tests {
     #[test]
     fn settings_require_a_digest_pinned_image() {
         let error = OpenShellSettings::from_map(Map::from_iter([
-            ("image".to_string(), json!("example/capsule:latest")),
+            ("image".to_string(), json!("example/agent-runtime:latest")),
             (
                 "command".to_string(),
-                json!(["fabric-capsule-runner", "serve"]),
+                json!(["fabric-runtime-server", "serve"]),
             ),
         ]))
         .expect_err("mutable image tag must fail");
@@ -1654,7 +1657,7 @@ mod tests {
             ),
             (
                 "command".to_string(),
-                json!(["fabric-capsule-runner", "serve"]),
+                json!(["fabric-runtime-server", "serve"]),
             ),
         ]))
         .expect("immutable local image id");
@@ -1665,11 +1668,11 @@ mod tests {
         let settings = OpenShellSettings::from_map(Map::from_iter([
             (
                 "image".to_string(),
-                json!(format!("example/capsule@sha256:{}", "a".repeat(64))),
+                json!(format!("example/agent-runtime@sha256:{}", "a".repeat(64))),
             ),
             (
                 "command".to_string(),
-                json!(["fabric-capsule-runner", "serve"]),
+                json!(["fabric-runtime-server", "serve"]),
             ),
             (
                 "policy_yaml".to_string(),
@@ -1745,11 +1748,11 @@ mod tests {
             settings: Map::from_iter([
                 (
                     "image".to_string(),
-                    json!(format!("example/capsule@sha256:{}", "a".repeat(64))),
+                    json!(format!("example/agent-runtime@sha256:{}", "a".repeat(64))),
                 ),
                 (
                     "command".to_string(),
-                    json!(["fabric-capsule-runner", "serve"]),
+                    json!(["fabric-runtime-server", "serve"]),
                 ),
                 (
                     "policy_yaml".to_string(),
@@ -1856,7 +1859,7 @@ mod tests {
             .expect("inspect environment");
         let execution = exec_environment(
             environment_handle_fixture(),
-            vec!["fabric-capsule-ctl".to_string(), "inspect".to_string()],
+            vec!["fabric-runtime-ctl".to_string(), "inspect".to_string()],
             Some("/sandbox".to_string()),
             HashMap::new(),
             Some(12),
@@ -1881,7 +1884,7 @@ mod tests {
                 "get:fabric-demo:fabric-sandbox-1",
                 "connect",
                 "get:fabric-demo:fabric-sandbox-1",
-                "exec:fabric-demo:fabric-sandbox-1:fabric-capsule-ctl inspect:12",
+                "exec:fabric-demo:fabric-sandbox-1:fabric-runtime-ctl inspect:12",
                 "connect",
                 "get:fabric-demo:fabric-sandbox-1",
                 "delete:fabric-demo:fabric-sandbox-1",
@@ -1909,14 +1912,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn capsule_control_executes_only_the_typed_correlated_operation() {
+    async fn runtime_control_executes_only_the_typed_correlated_operation() {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let factory = MockFactory {
             calls: Arc::clone(&calls),
             ready_id: "sandbox-id-1",
         };
-        let request = CapsuleControlRequest {
-            protocol_version: CAPSULE_PROTOCOL_VERSION.to_string(),
+        let request = RuntimeControlRequest {
+            protocol_version: RUNTIME_CONTROL_PROTOCOL_VERSION.to_string(),
             operation_id: "operation-1".to_string(),
             environment_id: "environment-1".to_string(),
             runtime_id: "runtime-1".to_string(),
@@ -1925,9 +1928,9 @@ mod tests {
             payload: Map::from_iter([("lifecycle".to_string(), json!({"operation": "invoke"}))]),
         };
 
-        let output = capsule_control(environment_handle_fixture(), request, &factory)
+        let output = runtime_control(environment_handle_fixture(), request, &factory)
             .await
-            .expect("capsule control");
+            .expect("runtime control");
 
         assert_eq!(output["operation_id"], "operation-1");
         assert_eq!(output["environment_id"], "environment-1");
@@ -1939,7 +1942,7 @@ mod tests {
             [
                 "connect",
                 "get:fabric-demo:fabric-sandbox-1",
-                "exec:fabric-demo:fabric-sandbox-1:fabric-capsule-ctl invoke:17",
+                "exec:fabric-demo:fabric-sandbox-1:fabric-runtime-ctl invoke:17",
             ]
         );
     }
@@ -1969,7 +1972,7 @@ mod tests {
             [
                 "connect",
                 "get:fabric-demo:fabric-sandbox-1",
-                "exec:fabric-demo:fabric-sandbox-1:fabric-capsule-ctl collect-artifact:20",
+                "exec:fabric-demo:fabric-sandbox-1:fabric-runtime-ctl collect-artifact:20",
             ]
         );
     }
@@ -1990,9 +1993,9 @@ mod tests {
     }
 
     #[test]
-    fn capsule_control_rejects_an_uncorrelated_response() {
-        let request = CapsuleControlRequest {
-            protocol_version: CAPSULE_PROTOCOL_VERSION.to_string(),
+    fn runtime_control_rejects_an_uncorrelated_response() {
+        let request = RuntimeControlRequest {
+            protocol_version: RUNTIME_CONTROL_PROTOCOL_VERSION.to_string(),
             operation_id: "operation-1".to_string(),
             environment_id: "environment-1".to_string(),
             runtime_id: "runtime-1".to_string(),
@@ -2000,8 +2003,8 @@ mod tests {
             operation: "invoke".to_string(),
             payload: Map::new(),
         };
-        let response = CapsuleControlResponseIdentity {
-            protocol_version: CAPSULE_PROTOCOL_VERSION.to_string(),
+        let response = RuntimeControlResponseIdentity {
+            protocol_version: RUNTIME_CONTROL_PROTOCOL_VERSION.to_string(),
             operation_id: "operation-1".to_string(),
             environment_id: "environment-1".to_string(),
             runtime_id: "another-runtime".to_string(),
@@ -2013,7 +2016,7 @@ mod tests {
             .validate(&request)
             .expect_err("runtime mismatch must fail closed");
 
-        assert_eq!(error.code(), "capsule_correlation_mismatch");
+        assert_eq!(error.code(), "runtime_control_correlation_mismatch");
     }
 
     #[tokio::test]
@@ -2037,11 +2040,11 @@ mod tests {
             settings: Map::from_iter([
                 (
                     "image".to_string(),
-                    json!(format!("example/capsule@sha256:{}", "a".repeat(64))),
+                    json!(format!("example/agent-runtime@sha256:{}", "a".repeat(64))),
                 ),
                 (
                     "command".to_string(),
-                    json!(["fabric-capsule-runner", "serve"]),
+                    json!(["fabric-runtime-server", "serve"]),
                 ),
             ]),
         };
@@ -2112,7 +2115,7 @@ mod tests {
             request: SandboxCreate,
         ) -> Result<SandboxSnapshot, ProviderError> {
             assert_eq!(request.environment["FABRIC_VISIBLE"], "yes");
-            assert_eq!(request.command, ["fabric-capsule-runner", "serve"]);
+            assert_eq!(request.command, ["fabric-runtime-server", "serve"]);
             self.calls.lock().expect("calls").push(format!(
                 "create:{}:{}",
                 workspace.expect("workspace"),
@@ -2168,11 +2171,11 @@ mod tests {
                 Some("start" | "invoke" | "stop")
             ) {
                 let request: Value = serde_json::from_slice(
-                    request.stdin.as_deref().expect("capsule request stdin"),
+                    request.stdin.as_deref().expect("runtime request stdin"),
                 )
-                .expect("capsule request JSON");
+                .expect("runtime request JSON");
                 serde_json::to_vec(&json!({
-                    "protocol_version": CAPSULE_PROTOCOL_VERSION,
+                    "protocol_version": RUNTIME_CONTROL_PROTOCOL_VERSION,
                     "operation_id": request["operation_id"],
                     "environment_id": request["environment_id"],
                     "runtime_id": request["runtime_id"],
@@ -2180,7 +2183,7 @@ mod tests {
                     "status": "succeeded",
                     "output": null,
                 }))
-                .expect("capsule response JSON")
+                .expect("runtime response JSON")
             } else {
                 b"ok".to_vec()
             };
@@ -2230,13 +2233,13 @@ mod tests {
                 (
                     "image".to_string(),
                     json!(format!(
-                        "registry.example/capsule@sha256:{}",
+                        "registry.example/agent-runtime@sha256:{}",
                         "a".repeat(64)
                     )),
                 ),
                 (
                     "command".to_string(),
-                    json!(["fabric-capsule-runner", "serve"]),
+                    json!(["fabric-runtime-server", "serve"]),
                 ),
             ]),
         }
@@ -2269,11 +2272,11 @@ mod tests {
             resource_version: 1,
             exit_code: None,
             image: Some(
-                "registry.example/capsule@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                "registry.example/agent-runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                     .to_string(),
             ),
             command: Some(vec![
-                "fabric-capsule-runner".to_string(),
+                "fabric-runtime-server".to_string(),
                 "serve".to_string(),
             ]),
             policy: Some(
