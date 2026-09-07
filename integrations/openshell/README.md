@@ -3,101 +3,170 @@ SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Experimental OpenShell environment provider
+# OpenShell Environment Provider for NVIDIA NeMo Fabric
 
-NVIDIA NeMo Fabric recognizes `environment.provider="openshell"` as an
-experimental out-of-process provider. Fabric starts
-`fabric-environment-openshell serve --stdio`; the binary is supplied by the
-OpenShell integration and uses the OpenShell Rust SDK. OpenShell is therefore
-not a dependency of `nemo-fabric-core`.
+The OpenShell environment provider runs an existing NeMo Fabric adapter and
+its agent inside an OpenShell sandbox. Agent code does not need an
+OpenShell-specific execution path.
 
-Set `NEMO_FABRIC_OPEN_SHELL_PROVIDER` to an absolute provider-binary path when
-the binary is not on `PATH`. This variable is operator configuration and is not
-serialized into a Fabric plan.
+The deployment consumer creates and manages the sandbox. Fabric verifies the
+sandbox, binds one runtime session to it, and normalizes agent lifecycle
+operations. Fabric-managed sandbox creation is an optional development
+convenience.
 
-The first provider profile uses the existing normalized environment fields:
+> **The runtime-control layer does not redefine how agents integrate with
+> Fabric. It transports the existing Fabric adapter contract across a sandbox
+> boundary while preserving a persistent session.**
 
-```python
-from pathlib import Path
+## Architecture
 
-from nemo_fabric import EnvironmentConfig
+The consumer, Fabric core, and OpenShell provider run on the consumer side.
+The runtime-control processes, adapter, and agent run inside the sandbox.
 
-environment = EnvironmentConfig(
-    provider="openshell",
-    control_location="in_env_control",
-    ownership="fabric_owned",
-    workspace="/sandbox",
-    artifacts="/sandbox/artifacts",
-    connection={
-        "gateway": "https://openshell.example.com",
-        "workspace": "fabric-demo",
-        "token_env": "OPEN_SHELL_TOKEN",
-    },
-    settings={
-        "image": "registry.example/fabric-capsule@sha256:<64-hex-digest>",
-        "command": ["fabric-capsule-runner", "serve"],
-        "policy_yaml": Path("policy.yaml").read_text(encoding="utf-8"),
-        "ready_timeout_seconds": 60,
-        "exec_timeout_seconds": 30,
-        "delete_timeout_seconds": 30,
-    },
-)
+```mermaid
+flowchart LR
+    subgraph HOST["Consumer side (host)"]
+        direction TB
+        C["Consumer application"]
+        F["Fabric core"]
+        P["OpenShell environment provider<br/>short-lived process"]
+        SDK["OpenShell Rust SDK"]
+
+        C --> F
+        F --> P
+        P --> SDK
+    end
+
+    O["OpenShell gateway"]
+
+    subgraph SANDBOX["OpenShell sandbox"]
+        direction TB
+        CTL["fabric-runtime-ctl<br/>short-lived process"]
+        SOCKET["Unix domain socket"]
+        SERVER["fabric-runtime-server<br/>persistent process"]
+        ADAPTER["Fabric adapter<br/>persistent process"]
+        AGENT["Custom agent or harness"]
+        DATA["Workspace and declared artifacts"]
+
+        CTL --> SOCKET
+        SOCKET --> SERVER
+        SERVER --> ADAPTER
+        ADAPTER --> AGENT
+        AGENT --> DATA
+    end
+
+    HOST -->|"OpenShell SDK request"| O
+    O -->|"Execute runtime-control operation"| SANDBOX
 ```
 
-The provider accepts two explicit ownership flows: `fabric_owned` preparation
-for development and `caller_owned` attachment for deployment. It rejects an
-ownership/operation mismatch, external control, mutable image tags, blank
-commands, unknown connection/settings fields, and literal token fields.
-`token_env` and `ca_cert_env` name environment variables inherited by the
-provider process; their values are not returned in the normalized environment
-handle.
+The OpenShell provider links directly to the OpenShell Rust SDK. Fabric starts
+the provider as a child process for each environment or runtime operation. The
+provider exits after returning its typed response.
 
-Phase 1B implements gateway health, create/get/wait-ready, buffered exec with
-bounded published output, identity-checked inspection, delete, and
-wait-deleted. Phase 1C adds a resident, typed capsule-control path for process
-and Python adapters. Phase 1D passes a validated OpenShell policy at sandbox
-creation and collects adapter-declared artifacts through a traversal-safe,
-size-bounded provider operation. Consumers prepare an environment explicitly
-and pass its handle to
-`start_runtime_in(plan, environment_handle)`; `start_runtime(plan)` rejects
-non-local plans without contacting the provider. Fabric routes `start`,
-buffered `invoke`, and `stop` as correlated
-`fabric.capsule-control.v1alpha1` messages. The provider executes only the
-matching `fabric-capsule-ctl` operation; it does not expose generic remote
-shell through Fabric's public API. The capsule image must contain
-`fabric-capsule-runner`, `fabric-capsule-ctl`, and the configured adapter plus
-its target. Runtime stop and start failure do not release the environment; the
-consumer calls `release_environment(environment_handle)` explicitly.
+Inside the sandbox, `fabric-runtime-server` retains one adapter process for the
+runtime session. Each OpenShell exec starts a short-lived `fabric-runtime-ctl`,
+which forwards one request to the server over a local Unix domain socket.
 
-The Python orchestration deliberately keeps the same three lifecycles visible:
+## Lifecycle
 
-```python
-fabric = Fabric()
-environment = await fabric.prepare_environment(config)
-try:
-    runtime = await fabric.start_runtime_in(config, environment)
-    try:
-        first = await runtime.invoke(input="first turn")
-        second = await runtime.invoke(input="second turn")
-    finally:
-        await runtime.stop()
+Environment lifecycle and runtime lifecycle are separate:
 
-    # Inspect the still-live sandbox and its artifacts here.
-finally:
-    await fabric.release_environment(environment)
+```text
+Environment:  prepare or attach --------------------------> release
+Runtime:                         start -> invoke* -> stop
 ```
 
-The consumer may run multiple independent environment/runtime pairs
-concurrently. A single `Runtime` remains one sequential session, and the
-capsule profile allows only one active session per OpenShell environment. A
-second bind returns a stable environment-in-use error. Streaming,
-reconnect/resubscribe, and cancellation remain deferred.
+The following table shows the work performed for each operation.
 
-Environment creation through Fabric is an optional development convenience. In
-deployment, a consumer or platform owns OpenShell provisioning and deletion,
-then calls `attach_environment(...)` with the sandbox name and immutable ID.
-The provider verifies the existing resource and `release_environment(...)`
-detaches without deleting it. See
-[`examples/langgraph_openshell_poc`](../../examples/langgraph_openshell_poc/)
-for a real gateway/Docker vertical slice with a stateful LangGraph, an L7
-policy-denied preferred route, an allowed fallback, and a collected receipt.
+| Fabric Operation | Consumer-Side Work | Sandbox-Side Effect |
+| --- | --- | --- |
+| `attach_environment` | Verify a caller-owned sandbox by immutable identity, readiness, image, command, and expected policy | None |
+| `prepare_environment` | Ask OpenShell to create a Fabric-owned development sandbox and wait for readiness | Start the configured agent runtime image |
+| `start_runtime_in` | Validate the plan, allocate a runtime ID, and reserve the environment | Start and retain one adapter session |
+| `invoke` | Normalize and correlate one request | Send the request to the existing adapter session |
+| `stop` | End the runtime binding | Stop the adapter; keep the sandbox |
+| `release_environment` | Detach from a caller-owned sandbox or delete a Fabric-owned sandbox | Preserve or delete the sandbox according to ownership |
+
+A single runtime accepts ordered invocations. The consumer creates independent
+environment and runtime pairs when it needs concurrency.
+
+## Invocation Path
+
+One user input follows this sequence:
+
+```mermaid
+sequenceDiagram
+    box Consumer side (host)
+        participant C as Consumer application
+        participant F as Fabric and OpenShell provider
+    end
+
+    box OpenShell sandbox
+        participant CTL as Runtime ctl (short-lived)
+        participant S as Runtime server (persistent)
+        participant A as Fabric adapter and agent
+    end
+
+    C->>F: invoke(input)
+    F->>CTL: OpenShell exec with invoke request
+    CTL->>S: Request over Unix socket
+    S->>A: Fabric adapter invoke
+    A-->>S: Fabric adapter result
+    S-->>CTL: Runtime-control response
+    CTL-->>F: Return exec result and exit
+    F-->>C: Normalized run result
+
+    Note over S,A: Session stays alive for the next invoke
+```
+
+Every input creates a new OpenShell exec operation. It does not create a new
+Fabric runtime or agent process.
+
+## Environment Ownership
+
+Production deployments should use caller-owned environments:
+
+1. The consumer or platform provisions the OpenShell sandbox.
+2. The consumer passes its name and immutable ID to `attach_environment`.
+3. Fabric verifies and uses the sandbox without gaining deletion authority.
+4. `release_environment` detaches Fabric; the consumer decides when to delete
+   the sandbox.
+
+For self-contained development, `prepare_environment` can create a
+Fabric-owned sandbox. In that mode, `release_environment` deletes it. Runtime
+start never creates or releases an environment implicitly.
+
+## Agent Runtime Image
+
+An agent runtime image is an OCI-compatible image that contains:
+
+- `fabric-runtime-server` and `fabric-runtime-ctl`;
+- the selected Fabric adapter;
+- the custom agent or harness and its dependencies; and
+- the expected workspace and artifact layout.
+
+The image is not the sandbox. OpenShell instantiates the image as a sandbox and
+applies its filesystem, process, resource, and network controls.
+
+The runtime-control binaries are provider-neutral. Another environment
+provider can reuse them when it offers a persistent Unix environment, a shared
+Unix socket, and a way to execute commands with stdin and stdout.
+
+## Current Capability
+
+The initial integration supports:
+
+- caller-owned attach and detach;
+- optional Fabric-owned development creation and deletion;
+- one sequential runtime session per environment;
+- buffered `start`, `invoke`, and `stop` operations;
+- process and Python adapters; and
+- bounded collection of adapter-declared artifacts.
+
+Streaming, cancellation, and reconnection are not part of this initial
+capability.
+
+## Example
+
+Run the [Portable Courier LangGraph example](../../examples/langgraph_openshell_poc/README.md)
+to exercise the complete integration against an unmodified OpenShell gateway.
