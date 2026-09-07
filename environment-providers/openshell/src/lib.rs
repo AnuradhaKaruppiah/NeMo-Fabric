@@ -4,7 +4,7 @@
 //! Experimental `OpenShell` environment provider for NVIDIA `NeMo` Fabric.
 
 use std::collections::HashMap;
-use std::io::{BufRead, Read, Write};
+use std::io::{BufRead, Write};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -62,20 +62,9 @@ impl ProviderError {
 
 /// Serve newline-delimited provider requests on standard input and output.
 pub async fn serve_stdio() -> Result<(), ProviderError> {
-    let mut input = Vec::new();
-    std::io::stdin()
-        .take((MAX_REQUEST_BYTES + 1) as u64)
-        .read_to_end(&mut input)?;
-    if input.len() > MAX_REQUEST_BYTES {
-        return Err(ProviderError::contract(
-            "request_too_large",
-            format!("request exceeds the {MAX_REQUEST_BYTES}-byte limit"),
-        ));
-    }
-    let mut output = Vec::new();
-    serve(input.as_slice(), &mut output, &SdkGatewayFactory).await?;
-    std::io::stdout().write_all(&output)?;
-    Ok(())
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    serve(stdin.lock(), stdout.lock(), &SdkGatewayFactory).await
 }
 
 async fn serve<R, W, F>(mut reader: R, mut writer: W, factory: &F) -> Result<(), ProviderError>
@@ -1725,6 +1714,28 @@ mod tests {
         assert_eq!(response["request_id"], "unknown");
         assert_eq!(response["status"], "failed");
         assert_eq!(response["error"]["code"], "invalid_request");
+    }
+
+    #[tokio::test]
+    async fn stdio_protocol_handles_multiple_requests_on_one_channel() {
+        let input = b"not-json\nstill-not-json\n".as_slice();
+        let mut output = Vec::new();
+
+        serve(input, &mut output, &NeverConnect)
+            .await
+            .expect("serve requests");
+
+        let responses = output
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| serde_json::from_slice::<Value>(line).expect("response JSON"))
+            .collect::<Vec<_>>();
+        assert_eq!(responses.len(), 2);
+        assert!(
+            responses
+                .iter()
+                .all(|response| response["error"]["code"] == "invalid_request")
+        );
     }
 
     #[tokio::test]
