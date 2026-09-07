@@ -53,11 +53,12 @@ OPENSHELL_POC_MODE=deployment \
 The script performs the following actions:
 
 1. Builds the agent runtime image and OpenShell environment provider.
-2. Starts an unmodified, source-built OpenShell gateway.
-3. Creates a digest-pinned, policy-configured sandbox as the consumer.
-4. Attaches Fabric to the sandbox by name and immutable ID.
-5. Runs the two-turn LangGraph session and collects the receipt.
-6. Stops the Fabric runtime and verifies that Fabric did not delete the
+2. Downloads and verifies pinned, published OpenShell binaries.
+3. Starts the published OpenShell gateway with its Docker driver.
+4. Creates a digest-pinned, policy-configured sandbox as the consumer.
+5. Attaches Fabric to the sandbox by name and immutable ID.
+6. Runs the two-turn LangGraph session and collects the receipt.
+7. Stops the Fabric runtime and verifies that Fabric did not delete the
    caller-owned sandbox.
 
 The script deletes the caller-owned sandbox during its own final cleanup.
@@ -86,19 +87,16 @@ Install the following tools before running the example:
 
 - Docker
 - Rust and Cargo
-- CMake
-- Git
+- `curl`
 - Python 3
-- `rustup`
 - `tar`
 - `uv`
 
-The first run can take several minutes because the script builds the pinned
-OpenShell gateway with its bundled Z3 feature. Later runs reuse the build under
-`.tmp/`.
+The first run downloads the pinned OpenShell release and builds the agent
+runtime image. Later runs reuse the verified release under `.tmp/`.
 
-Set `OPENSHELL_ROOT` if the Fabric and OpenShell repositories are not sibling
-directories. Set `OPENSHELL_POC_PORT` if port `18080` is unavailable.
+Set `OPENSHELL_VERSION` to test another published release. Set
+`OPENSHELL_POC_PORT` if port `18080` is unavailable.
 
 ## Expected Evidence
 
@@ -111,8 +109,8 @@ A successful deployment run demonstrates:
 - a receipt collected below `.tmp/portable-courier/artifacts/`; and
 - a caller-owned sandbox that still exists after Fabric detaches.
 
-The OpenShell gateway log is available at
-`.tmp/openshell-poc/gateway.log`.
+On failure, the script prints the tail of the OpenShell gateway log before
+cleaning up its temporary state.
 
 ## What This Example Proves
 
