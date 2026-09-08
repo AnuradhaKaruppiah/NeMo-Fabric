@@ -1273,7 +1273,6 @@ name = "nemo-fabric-core"
 version = "0.4.0"
 dependencies = [
  "jsonschema",
- "nemo-fabric-runtime-control",
  "schemars",
  "serde",
  "serde_json",
@@ -1282,7 +1281,7 @@ dependencies = [
 
 [[package]]
 name = "nemo-fabric-openshell-provider"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "openshell-policy",
@@ -1295,7 +1294,7 @@ dependencies = [
 
 [[package]]
 name = "nemo-fabric-runtime-control"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",

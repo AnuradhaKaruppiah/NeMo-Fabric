@@ -15,10 +15,6 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use nemo_fabric_runtime_control::{
-    PROTOCOL_VERSION as RUNTIME_CONTROL_PROTOCOL_VERSION, RuntimeAdapterProcess,
-    RuntimeControlCommand, RuntimeControlOutcome, RuntimeControlRequest, RuntimeControlResponse,
-};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -39,6 +35,10 @@ use crate::environment::{
     release_environment as release_prepared_environment, resolve_environment_provider,
 };
 use crate::error::{FabricError, Result};
+use crate::runtime_control_protocol::{
+    PROTOCOL_VERSION as RUNTIME_CONTROL_PROTOCOL_VERSION, RuntimeAdapterProcess,
+    RuntimeControlCommand, RuntimeControlOutcome, RuntimeControlRequest, RuntimeControlResponse,
+};
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 const ADAPTER_PYTHON_ENV: &str = "ADAPTER_PYTHON";

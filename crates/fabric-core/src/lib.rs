@@ -11,6 +11,7 @@ pub mod doctor;
 mod environment;
 pub mod error;
 pub mod runtime;
+mod runtime_control_protocol;
 pub mod schema;
 
 pub use adapter_contract::{ADAPTER_CONTRACT_VERSION, AdapterExtensionPoint};

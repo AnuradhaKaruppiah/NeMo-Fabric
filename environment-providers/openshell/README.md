@@ -76,6 +76,20 @@ Inside the sandbox, `fabric-runtime-server` retains one adapter process for the
 runtime session. Each OpenShell exec starts a short-lived `fabric-runtime-ctl`,
 which forwards one request to the server over a local Unix domain socket.
 
+## API Boundaries
+
+The integration spans three API layers:
+
+| Boundary | Caller → Callee | Operations |
+| --- | --- | --- |
+| Consumer-facing Fabric API | Consumer application → Fabric | `prepare_environment`, `attach_environment`, `start_runtime`, `start_runtime_in`, `Runtime.invoke`, `Runtime.stop`, `release_environment` |
+| Environment-provider protocol | Fabric core → OpenShell provider | `prepare`, `attach`, `runtime_control`, `collect_artifacts`, `release` |
+| Fabric adapter contract | Runtime server → Fabric adapter | `start`, `invoke`, `stop` |
+
+`start_runtime_in` is the explicit-environment counterpart to `start_runtime`.
+Both ultimately send the existing `start` operation to the adapter;
+`start_runtime_in` does not extend the adapter contract.
+
 ## Lifecycle
 
 Environment lifecycle and runtime lifecycle are separate:
@@ -161,6 +175,10 @@ applies its filesystem, process, resource, and network controls.
 The runtime-control binaries are provider-neutral. Another environment
 provider can reuse them when it offers a persistent Unix environment, a shared
 Unix socket, and a way to execute commands with stdin and stdout.
+
+Runtime control remains a private workspace component during this experimental
+stage. The example builds the binaries from source and places them in the agent
+runtime image; NeMo Fabric does not publish a runtime-control crate.
 
 ## Current Capability
 
