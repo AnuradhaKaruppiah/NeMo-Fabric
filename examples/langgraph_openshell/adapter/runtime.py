@@ -18,7 +18,7 @@ from nemo_fabric_adapter_contract.models import AgentRunStatus
 from nemo_fabric_adapter_contract.models import RuntimeContext
 from nemo_fabric_adapters.common import lifecycle
 
-from examples.langgraph_openshell_poc.agent.graph import build_courier_graph
+from examples.langgraph_openshell.agent.graph import build_courier_graph
 
 
 def main() -> None:

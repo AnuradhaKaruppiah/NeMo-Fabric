@@ -241,7 +241,7 @@ pub enum FabricError {
         /// Runtime handle id.
         runtime_id: String,
     },
-    /// An environment provider is not runnable for the selected adapter in this POC.
+    /// An environment provider is not runnable for the selected adapter.
     #[error("environment provider `{provider}` is not implemented for adapter `{adapter_kind:?}`")]
     UnsupportedEnvironmentProvider {
         /// Environment provider.

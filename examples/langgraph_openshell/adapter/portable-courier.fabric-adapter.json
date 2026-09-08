@@ -3,7 +3,7 @@
   "adapter_id": "nvidia.fabric.example.langgraph.portable-courier",
   "adapter_kind": "python",
   "runner": {
-    "module": "examples.langgraph_openshell_poc.adapter.runtime",
+    "module": "examples.langgraph_openshell.adapter.runtime",
     "python": "/usr/local/bin/python"
   },
   "requirements": {},

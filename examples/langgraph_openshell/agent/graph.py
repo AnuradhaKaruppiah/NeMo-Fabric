@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Credential-free stateful LangGraph for the OpenShell POC."""
+"""Credential-free stateful LangGraph for the OpenShell example."""
 
 from __future__ import annotations
 

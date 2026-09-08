@@ -13,7 +13,7 @@ from pathlib import Path
 from nemo_fabric import EnvironmentReference
 from nemo_fabric import Fabric
 
-from examples.langgraph_openshell_poc.consumer.config import courier_config
+from examples.langgraph_openshell.consumer.config import courier_config
 
 
 async def main() -> None:

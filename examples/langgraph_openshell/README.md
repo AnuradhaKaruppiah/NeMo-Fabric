@@ -5,10 +5,10 @@ SPDX-License-Identifier: Apache-2.0
 
 # Run a Stateful LangGraph Agent in OpenShell
 
-Portable Courier is a credential-free end-to-end example for NVIDIA NeMo
-Fabric and OpenShell. It runs a custom LangGraph agent in a real OpenShell
-sandbox without adding OpenShell-specific logic to the agent or its Fabric
-adapter.
+Portable Courier is a credential-free end-to-end example of experimental
+OpenShell provider support in NVIDIA NeMo Fabric. It runs a custom LangGraph
+agent in a real OpenShell sandbox without adding OpenShell-specific logic to
+the agent or its Fabric adapter.
 
 For component placement, lifecycle, and ownership, refer to the
 [OpenShell environment provider architecture](../../environment-providers/openshell/README.md).
@@ -46,8 +46,8 @@ through a traversal-safe, size-bounded operation.
 The primary deployment demonstration uses a caller-owned sandbox:
 
 ```bash
-OPENSHELL_POC_MODE=deployment \
-  bash examples/langgraph_openshell_poc/run-demo.sh
+OPENSHELL_EXAMPLE_MODE=deployment \
+  bash examples/langgraph_openshell/run-demo.sh
 ```
 
 The script performs the following actions:
@@ -67,14 +67,14 @@ To run both deployment and optional Fabric-managed development modes, use the
 default command:
 
 ```bash
-bash examples/langgraph_openshell_poc/run-demo.sh
+bash examples/langgraph_openshell/run-demo.sh
 ```
 
 To run only the development mode, use the following command:
 
 ```bash
-OPENSHELL_POC_MODE=development \
-  bash examples/langgraph_openshell_poc/run-demo.sh
+OPENSHELL_EXAMPLE_MODE=development \
+  bash examples/langgraph_openshell/run-demo.sh
 ```
 
 Development mode uses `prepare_environment` to create the sandbox. It verifies
@@ -96,7 +96,7 @@ The first run downloads the pinned OpenShell release and builds the agent
 runtime image. Later runs reuse the verified release under `.tmp/`.
 
 Set `OPENSHELL_VERSION` to test another published release. Set
-`OPENSHELL_POC_PORT` if port `18080` is unavailable.
+`OPENSHELL_EXAMPLE_PORT` if port `18080` is unavailable.
 
 ## Expected Evidence
 

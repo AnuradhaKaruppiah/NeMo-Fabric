@@ -24,7 +24,7 @@ RUN python -m pip install --no-cache-dir \
 
 COPY --chmod=0755 fabric-runtime-server fabric-runtime-ctl /usr/local/bin/
 COPY examples/__init__.py /opt/nemo-fabric/examples/__init__.py
-COPY examples/langgraph_openshell_poc /opt/nemo-fabric/examples/langgraph_openshell_poc
+COPY examples/langgraph_openshell /opt/nemo-fabric/examples/langgraph_openshell
 
 ENV PYTHONPATH=/opt/nemo-fabric
 WORKDIR /sandbox
