@@ -9,6 +9,9 @@ The OpenShell environment provider runs an existing NeMo Fabric adapter and
 its agent inside an OpenShell sandbox. Agent code does not need an
 OpenShell-specific execution path.
 
+> **Status: Experimental.** The provider interface, packaging, and operational
+> behavior can change as this integration moves toward product support.
+
 The deployment consumer creates and manages the sandbox. Fabric verifies the
 sandbox, binds one runtime session to it, and normalizes agent lifecycle
 operations. Fabric-managed sandbox creation is an optional development
@@ -66,8 +69,8 @@ newline-delimited JSON transport over standard input and output.
 
 The initial transport serializes provider operations within one Fabric
 process. Multiplexing requests for independent runtimes is a product follow-up;
-consumers that need concurrency in the POC can use independent Fabric
-processes.
+consumers that need concurrency during this experimental stage can use
+independent Fabric processes.
 
 Inside the sandbox, `fabric-runtime-server` retains one adapter process for the
 runtime session. Each OpenShell exec starts a short-lived `fabric-runtime-ctl`,
@@ -175,5 +178,5 @@ capability.
 
 ## Example
 
-Run the [Portable Courier LangGraph example](../../examples/langgraph_openshell_poc/README.md)
+Run the [Portable Courier LangGraph example](../../examples/langgraph_openshell/README.md)
 to exercise the complete integration against an unmodified OpenShell gateway.

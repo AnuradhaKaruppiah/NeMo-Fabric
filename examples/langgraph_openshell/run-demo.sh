@@ -9,11 +9,11 @@ EXAMPLE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FABRIC_ROOT="$(cd "${EXAMPLE_ROOT}/../.." && pwd)"
 OPENSHELL_VERSION="${OPENSHELL_VERSION:-v0.0.116}"
 OPENSHELL_RELEASE_URL="https://github.com/NVIDIA/OpenShell/releases/download/${OPENSHELL_VERSION}"
-GATEWAY_PORT="${OPENSHELL_POC_PORT:-18080}"
-GATEWAY_START_TIMEOUT="${OPENSHELL_POC_GATEWAY_START_TIMEOUT:-120}"
-POC_MODE="${OPENSHELL_POC_MODE:-both}"
+GATEWAY_PORT="${OPENSHELL_EXAMPLE_PORT:-18080}"
+GATEWAY_START_TIMEOUT="${OPENSHELL_EXAMPLE_GATEWAY_START_TIMEOUT:-120}"
+EXAMPLE_MODE="${OPENSHELL_EXAMPLE_MODE:-both}"
 export UV_CACHE_DIR="${FABRIC_ROOT}/.tmp/uv-cache"
-DEMO_PYTHON_ENV="${FABRIC_ROOT}/.tmp/langgraph-openshell-poc-venv"
+DEMO_PYTHON_ENV="${FABRIC_ROOT}/.tmp/langgraph-openshell-venv"
 GATEWAY_PID=""
 SANDBOX_NAME="fab-courier-$$"
 FABRIC_SANDBOX_NAME="fab-dev-$$"
@@ -21,12 +21,12 @@ SANDBOX_CREATED=""
 
 for dependency in cargo curl docker python3 tar uv; do
   if ! command -v "${dependency}" >/dev/null 2>&1; then
-    echo "ERROR: ${dependency} is required to run the OpenShell POC" >&2
+    echo "ERROR: ${dependency} is required to run the OpenShell example" >&2
     exit 2
   fi
 done
-if [[ "${POC_MODE}" != "deployment" && "${POC_MODE}" != "development" && "${POC_MODE}" != "both" ]]; then
-  echo "ERROR: OPENSHELL_POC_MODE must be deployment, development, or both" >&2
+if [[ "${EXAMPLE_MODE}" != "deployment" && "${EXAMPLE_MODE}" != "development" && "${EXAMPLE_MODE}" != "both" ]]; then
+  echo "ERROR: OPENSHELL_EXAMPLE_MODE must be deployment, development, or both" >&2
   exit 2
 fi
 
@@ -34,7 +34,7 @@ mkdir -p "${FABRIC_ROOT}/.tmp"
 STAGE_DIR="$(mktemp -d "${FABRIC_ROOT}/.tmp/portable-courier-image.XXXXXX")"
 OPENSHELL_CACHE_DIR="${FABRIC_ROOT}/.tmp/openshell-releases/${OPENSHELL_VERSION}"
 OPENSHELL_BIN_DIR="${OPENSHELL_CACHE_DIR}/bin"
-GATEWAY_STATE_DIR="$(mktemp -d "${FABRIC_ROOT}/.tmp/openshell-poc.XXXXXX")"
+GATEWAY_STATE_DIR="$(mktemp -d "${FABRIC_ROOT}/.tmp/openshell-example.XXXXXX")"
 
 normalize_arch() {
   case "$1" in
@@ -164,10 +164,10 @@ cp -R adapter-contract/python "${STAGE_DIR}/adapter-contract"
 cp -R adapters/python/common "${STAGE_DIR}/adapters-common"
 mkdir -p "${STAGE_DIR}/examples"
 cp examples/__init__.py "${STAGE_DIR}/examples/"
-cp -R "${EXAMPLE_ROOT}" "${STAGE_DIR}/examples/langgraph_openshell_poc"
+cp -R "${EXAMPLE_ROOT}" "${STAGE_DIR}/examples/langgraph_openshell"
 cp "${EXAMPLE_ROOT}/runtime-image.dockerignore" "${STAGE_DIR}/.dockerignore"
-docker build -f "${EXAMPLE_ROOT}/runtime-image.Dockerfile" -t fabric-portable-courier:poc "${STAGE_DIR}"
-RUNTIME_IMAGE="$(docker image inspect fabric-portable-courier:poc --format '{{.Id}}')"
+docker build -f "${EXAMPLE_ROOT}/runtime-image.Dockerfile" -t fabric-portable-courier:example "${STAGE_DIR}"
+RUNTIME_IMAGE="$(docker image inspect fabric-portable-courier:example --format '{{.Id}}')"
 
 install_openshell_release
 "${OPENSHELL_GATEWAY}" generate-certs \
@@ -179,7 +179,7 @@ cat >"${GATEWAY_STATE_DIR}/gateway.toml" <<EOF
 version = 1
 
 [openshell.gateway]
-name = "fabric-poc"
+name = "fabric-example"
 compute_drivers = ["docker"]
 disable_tls = true
 
@@ -190,13 +190,13 @@ allow_unauthenticated_users = true
 signing_key_path = "${GATEWAY_STATE_DIR}/tls/jwt/signing.pem"
 public_key_path = "${GATEWAY_STATE_DIR}/tls/jwt/public.pem"
 kid_path = "${GATEWAY_STATE_DIR}/tls/jwt/kid"
-gateway_id = "fabric-poc"
+gateway_id = "fabric-example"
 ttl_secs = 3600
 
 [openshell.drivers.docker]
 default_image = "${RUNTIME_IMAGE}"
 image_pull_policy = "Never"
-sandbox_namespace = "fabric-poc"
+sandbox_namespace = "fabric-example"
 grpc_endpoint = "http://host.openshell.internal:${GATEWAY_PORT}"
 supervisor_bin = "${OPENSHELL_SUPERVISOR}"
 EOF
@@ -226,14 +226,14 @@ run_consumer() {
   PYTHONPATH="${FABRIC_ROOT}" \
   UV_PROJECT_ENVIRONMENT="${DEMO_PYTHON_ENV}" \
   uv run --no-sync \
-    python -m examples.langgraph_openshell_poc.consumer \
+    python -m examples.langgraph_openshell.consumer \
     --gateway "http://127.0.0.1:${GATEWAY_PORT}" \
     --image "${RUNTIME_IMAGE}" \
     --base-dir "${FABRIC_ROOT}/.tmp/portable-courier" \
     "$@"
 }
 
-if [[ "${POC_MODE}" == "deployment" || "${POC_MODE}" == "both" ]]; then
+if [[ "${EXAMPLE_MODE}" == "deployment" || "${EXAMPLE_MODE}" == "both" ]]; then
   "${OPENSHELL_CLI}" --gateway-endpoint "http://127.0.0.1:${GATEWAY_PORT}" \
     sandbox create \
     --name "${SANDBOX_NAME}" \
@@ -256,7 +256,7 @@ if [[ "${POC_MODE}" == "deployment" || "${POC_MODE}" == "both" ]]; then
   echo "Verified deployment mode: Fabric detached; the caller-owned sandbox still exists."
 fi
 
-if [[ "${POC_MODE}" == "development" || "${POC_MODE}" == "both" ]]; then
+if [[ "${EXAMPLE_MODE}" == "development" || "${EXAMPLE_MODE}" == "both" ]]; then
   run_consumer --fabric-sandbox-name "${FABRIC_SANDBOX_NAME}"
   if "${OPENSHELL_CLI}" --gateway-endpoint "http://127.0.0.1:${GATEWAY_PORT}" \
     sandbox get "${FABRIC_SANDBOX_NAME}" --output json >/dev/null 2>&1; then

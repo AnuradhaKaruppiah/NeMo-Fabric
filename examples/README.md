@@ -55,11 +55,11 @@ a stdio MCP tool, or enable NeMo Relay telemetry.
 
 ## LangGraph in OpenShell
 
-[`langgraph_openshell_poc`](langgraph_openshell_poc/README.md) is a
-credential-free vertical slice that runs a stateful LangGraph adapter inside a
-real OpenShell sandbox. It demonstrates a policy-denied route, an allowed
-fallback, ordered multi-turn state, bounded artifact collection, and explicit
-attachment to and detachment from a consumer-owned environment.
+[`langgraph_openshell`](langgraph_openshell/README.md) demonstrates the
+experimental OpenShell environment provider with a credential-free, stateful
+LangGraph adapter. It demonstrates a policy-denied route, an allowed fallback,
+ordered multi-turn state, bounded artifact collection, and explicit attachment
+to and detachment from a consumer-owned environment.
 
 ## Harbor
 

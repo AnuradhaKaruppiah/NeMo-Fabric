@@ -10,8 +10,8 @@ from nemo_fabric_adapter_contract.models import AgentConfig
 from nemo_fabric_adapter_contract.models import AgentRunRequest
 from nemo_fabric_adapter_contract.models import RuntimeContext
 
-from examples.langgraph_openshell_poc.adapter import runtime as runtime_module
-from examples.langgraph_openshell_poc.agent.graph import build_courier_graph
+from examples.langgraph_openshell.adapter import runtime as runtime_module
+from examples.langgraph_openshell.agent.graph import build_courier_graph
 
 
 def test_graph_retains_the_fallback_route_for_the_delivery_turn() -> None:

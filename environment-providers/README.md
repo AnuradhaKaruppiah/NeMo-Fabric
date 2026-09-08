@@ -15,5 +15,5 @@ environment fleet.
 
 Available providers:
 
-- [OpenShell](openshell/README.md) runs Fabric adapters and custom agents in
-  OpenShell sandboxes.
+- [OpenShell](openshell/README.md) provides experimental support for running
+  Fabric adapters and custom agents in OpenShell sandboxes.
