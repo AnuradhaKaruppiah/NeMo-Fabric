@@ -15,7 +15,6 @@ workspace = true
 
 [dependencies]
 jsonschema.workspace = true
-nemo-fabric-runtime-control.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

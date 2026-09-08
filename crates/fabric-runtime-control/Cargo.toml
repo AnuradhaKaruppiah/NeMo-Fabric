@@ -8,6 +8,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Runtime-control protocol and resident server for NVIDIA NeMo Fabric."
+publish = false
 
 [lib]
 name = "nemo_fabric_runtime_control"

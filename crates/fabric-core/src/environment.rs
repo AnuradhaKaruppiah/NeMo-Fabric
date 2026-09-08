@@ -11,7 +11,6 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
 
-use nemo_fabric_runtime_control::{RuntimeControlRequest, RuntimeControlResponse};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -21,6 +20,7 @@ use crate::error::{FabricError, Result};
 use crate::runtime::{
     EnvironmentHandle, EnvironmentReference, absolute_path, new_id, resolve_path,
 };
+use crate::runtime_control_protocol::{RuntimeControlRequest, RuntimeControlResponse};
 
 const OPEN_SHELL_PROVIDER_ID: &str = "openshell";
 const OPEN_SHELL_PROVIDER_COMMAND: &str = "fabric-environment-openshell";
