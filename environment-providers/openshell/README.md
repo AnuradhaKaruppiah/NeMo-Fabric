@@ -85,12 +85,13 @@ Environment:  prepare or attach --------------------------> release
 Runtime:                         start -> invoke* -> stop
 ```
 
-The following table shows the work performed for each operation.
+The consumer calls each Fabric operation. The following table separates the
+work Fabric performs from the resulting effect inside the sandbox.
 
-| Fabric Operation | Consumer-Side Work | Sandbox-Side Effect |
+| Fabric Operation | What Fabric Does | What Happens in the Sandbox |
 | --- | --- | --- |
 | `attach_environment` | Verify a caller-owned sandbox by immutable identity, readiness, image, command, and expected policy | None |
-| `prepare_environment` | Ask OpenShell to create a Fabric-owned development sandbox and wait for readiness | Start the configured agent runtime image |
+| `prepare_environment` | Ask OpenShell to create a Fabric-owned development sandbox and wait for readiness | Start a sandbox from the configured agent runtime image |
 | `start_runtime_in` | Validate the plan, allocate a runtime ID, and reserve the environment | Start and retain one adapter session |
 | `invoke` | Normalize and correlate one request | Send the request to the existing adapter session |
 | `stop` | End the runtime binding | Stop the adapter; keep the sandbox |
