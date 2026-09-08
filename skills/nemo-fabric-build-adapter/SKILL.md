@@ -203,6 +203,26 @@ Return `AgentRunStatus.FAILED` with an `AgentRunError` when the target completes
 with a failed outcome. Raise an exception when the adapter cannot produce a
 normalized terminal result.
 
+### Support Warm Session Continuation
+
+When later invocations must use earlier conversation state, retain that state
+on the adapter runtime created during `start`. Prefer the target's native live
+session or checkpointer. If the target has no such facility, keep the minimum
+adapter-owned history required to construct its next native request. Do not
+introduce a cold-resume API or durable store for warm continuation.
+
+Keep session state separate from invocation state. Conversation context,
+required artifact references, and live workspace state may persist until
+`stop`; timeout state, counters, terminal markers, result assembly, usage, and
+telemetry scopes reset for each `invoke`. Independent runtime instances must
+never share mutable continuation state.
+
+Test observable continuation rather than merely calling `invoke` twice: make
+the second result depend on the first turn without caller-side replay, then
+prove another runtime cannot observe that context. See the
+[LangGraph custom-agent example](https://github.com/NVIDIA/NeMo-Fabric/tree/main/examples/langgraph_custom_agent)
+for an in-memory checkpointer pattern.
+
 For in-process Relay SDK telemetry where the adapter owns the invocation-level
 Agent scope, wrap that scope with
 `nemo_fabric_adapters.common.utils.relay_request_context(context.request_id)`.

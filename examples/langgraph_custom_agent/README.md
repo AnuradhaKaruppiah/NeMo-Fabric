@@ -82,6 +82,29 @@ A successful terminal output is deliberately small:
 }
 ```
 
+## Warm Session Continuation
+
+The adapter compiles the graph with an in-memory LangGraph checkpointer and
+uses the Fabric runtime ID as its stable thread ID. Sequential invocations on
+one live runtime can therefore use earlier assessment context without the
+caller replaying it:
+
+```python
+async with await fabric.start_runtime(config, base_dir=base_dir) as runtime:
+    first = await runtime.invoke(
+        input="Urgent: verify your password at https://example.invalid."
+    )
+    second = await runtime.invoke(input="Team lunch is at noon.")
+```
+
+The second result includes `previous_classification: "phishing"`, proving that
+it observed the first assessment. Invocation results and telemetry remain
+independent. The checkpointer is owned by the adapter runtime, so another
+runtime cannot see this history and `stop()` ends the continuation window.
+
+This is warm continuation, not durable resume. The example does not serialize
+conversation state or recreate it after the adapter host stops.
+
 ## Configuration Variations
 
 Every variation returns an independent `FabricConfig`:
@@ -174,7 +197,10 @@ Add `--mcp` to include URL inspection before classification. The two optional
 paths compose, so `--mcp --relay` traces the MCP-backed graph node as well as
 the model-backed explanation.
 
+Pass `--follow-up "Team lunch is at noon."` to run two ordered invocations on
+one live runtime and inspect the retained assessment context.
+
 The example intentionally omits generic workflow loading, named tools, skills,
-checkpointing, cancellation, resume, updates, and native streaming. The stdio
-MCP path is kept optional so the required adapter lifecycle remains easy to
-identify.
+durable checkpointing, cancellation, cold resume, updates, and native
+streaming. The stdio MCP path is kept optional so the required adapter
+lifecycle remains easy to identify.

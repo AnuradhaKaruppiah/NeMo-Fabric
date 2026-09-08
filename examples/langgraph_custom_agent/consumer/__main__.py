@@ -42,6 +42,10 @@ async def main() -> None:
             "https://example.invalid."
         ),
     )
+    parser.add_argument(
+        "--follow-up",
+        help="Run a second invocation on the same live Fabric runtime.",
+    )
     args = parser.parse_args()
 
     config_factory = frontier_config if args.variant == "frontier" else public_config
@@ -59,12 +63,23 @@ async def main() -> None:
     if args.relay:
         config = with_relay(config)
     fabric = Fabric()
-    output = (
-        fabric.plan(config, base_dir=args.base_dir)
-        if args.plan
-        else await fabric.run(config, base_dir=args.base_dir, input=args.input)
-    )
-    print(json.dumps(output.to_mapping(), indent=2))
+    if args.plan:
+        output = fabric.plan(config, base_dir=args.base_dir).to_mapping()
+    elif args.follow_up is None:
+        output = (
+            await fabric.run(config, base_dir=args.base_dir, input=args.input)
+        ).to_mapping()
+    else:
+        async with await fabric.start_runtime(
+            config,
+            base_dir=args.base_dir,
+        ) as runtime:
+            first = await runtime.invoke(input=args.input)
+            second = await runtime.invoke(input=args.follow_up)
+        output = {
+            "invocations": [first.to_mapping(), second.to_mapping()],
+        }
+    print(json.dumps(output, indent=2))
 
 
 if __name__ == "__main__":

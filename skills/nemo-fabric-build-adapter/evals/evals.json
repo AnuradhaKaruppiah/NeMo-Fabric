@@ -94,5 +94,22 @@
       "Does not claim the same behavior for external gateways or isolated upstream scope boundaries",
       "Tests UUID and non-UUID correlation plus scope cleanup"
     ]
+  },
+  {
+    "id": "nemo-fabric-build-adapter-007-warm-session-continuation",
+    "question": "Our custom-agent harness has no durable resume support, but sequential invocations on one live Fabric runtime must retain conversation context. Add warm continuation without inventing a cold-resume API or a shared transcript service. What state belongs where, and how should we test it?",
+    "expected_skill": "nemo-fabric-build-adapter",
+    "expected_script": null,
+    "ground_truth": "The adapter creates and retains native session state, a framework checkpointer, or the minimum adapter-owned history on its per-runtime instance during start. Each invoke appends the new request to that live state while resetting invocation-only timeout, counters, results, usage, and telemetry. Stop discards the state, and independent runtimes never share it. The implementation does not add durable resume, a Fabric-owned transcript store, or generic adapter-common history utilities. Tests require a second result that depends on the first turn without caller replay and a separate-runtime isolation case.",
+    "expected_behavior": [
+      "Routes to nemo-fabric-build-adapter",
+      "Uses the existing start, ordered invoke, and stop lifecycle",
+      "Retains native, framework, or adapter-owned context on the per-runtime instance",
+      "Separates retained session state from invocation-only state",
+      "Does not introduce cold resume, durable storage, or a new resume method",
+      "Does not put framework-specific conversation history in adapter-common",
+      "Tests a context-dependent second invocation without caller replay",
+      "Tests isolation between independent runtimes and cleanup at stop"
+    ]
   }
 ]
