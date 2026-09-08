@@ -18,7 +18,6 @@ from typing import TypedDict
 from langchain_core.language_models import BaseChatModel
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
-from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END
 from langgraph.graph import START
 from langgraph.graph import StateGraph
@@ -130,8 +129,6 @@ def build_email_phishing_graph(
     model: BaseChatModel,
     system_instruction: str,
     url_inspector: BaseTool | None = None,
-    *,
-    checkpointer: BaseCheckpointSaver | None = None,
 ) -> CompiledStateGraph:
     """Build the custom agent from native LangChain dependencies."""
 
@@ -164,14 +161,14 @@ def build_email_phishing_graph(
         signals = ", ".join(state["signals"]) or "none"
         link_inspections = state.get("link_inspections", [])
         history = state.get("assessment_history", [])
-        previous = json.dumps(history[-1]) if history else "none"
+        prior_assessments = json.dumps(history) if history else "none"
         response = await model.ainvoke(
             [
                 ("system", system_instruction),
                 (
                     "user",
                     "Explain this fixed email-risk assessment concisely.\n"
-                    f"Previous assessment: {previous}\n"
+                    f"Prior assessments: {prior_assessments}\n"
                     f"Classification: {state['classification']}\n"
                     f"Signals: {signals}\n"
                     f"Link inspections: {json.dumps(link_inspections)}\n"
@@ -213,4 +210,4 @@ def build_email_phishing_graph(
     builder.add_edge("classify_risk", "explain_assessment")
     builder.add_edge("explain_assessment", "record_assessment")
     builder.add_edge("record_assessment", END)
-    return builder.compile(checkpointer=checkpointer)
+    return builder.compile()

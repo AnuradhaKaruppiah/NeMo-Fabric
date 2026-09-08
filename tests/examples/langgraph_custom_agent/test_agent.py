@@ -13,7 +13,6 @@ from pathlib import Path
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_core.tools import tool
-from langgraph.checkpoint.memory import InMemorySaver
 
 from examples.langgraph_custom_agent.agent import graph as graph_module
 from examples.langgraph_custom_agent.agent.graph import _inspection
@@ -74,24 +73,37 @@ def test_graph_keeps_classification_deterministic_and_uses_model_for_explanation
     )
 
 
-def test_graph_continues_assessment_history_within_one_thread():
+def test_graph_accepts_prior_assessment_history():
     graph = build_email_phishing_graph(
-        FakeListChatModel(responses=["First explanation.", "Second explanation."]),
+        FakeListChatModel(
+            responses=[
+                "First explanation.",
+                "Second explanation.",
+                "Third explanation.",
+            ]
+        ),
         "Explain the fixed assessment.",
-        checkpointer=InMemorySaver(),
     )
-    config = {"configurable": {"thread_id": "runtime-1"}}
 
     first = asyncio.run(
         graph.ainvoke(
             {"email": "Urgent: verify your password immediately."},
-            config=config,
         )
     )
     second = asyncio.run(
         graph.ainvoke(
-            {"email": "Team lunch is at noon."},
-            config=config,
+            {
+                "email": "Team lunch is at noon.",
+                "assessment_history": first["assessment_history"],
+            },
+        )
+    )
+    third = asyncio.run(
+        graph.ainvoke(
+            {
+                "email": "Act now and sign in to avoid suspension.",
+                "assessment_history": second["assessment_history"],
+            },
         )
     )
 
@@ -101,25 +113,28 @@ def test_graph_continues_assessment_history_within_one_thread():
         "phishing",
         "benign",
     ]
+    assert third["previous_classification"] == "benign"
+    assert [item["classification"] for item in third["assessment_history"]] == [
+        "phishing",
+        "benign",
+        "phishing",
+    ]
 
 
-def test_graph_keeps_independent_threads_isolated():
+def test_graph_does_not_retain_implicit_history_between_invocations():
     graph = build_email_phishing_graph(
         FakeListChatModel(responses=["First explanation.", "Isolated explanation."]),
         "Explain the fixed assessment.",
-        checkpointer=InMemorySaver(),
     )
 
     asyncio.run(
         graph.ainvoke(
             {"email": "Urgent: verify your password immediately."},
-            config={"configurable": {"thread_id": "runtime-1"}},
         )
     )
     isolated = asyncio.run(
         graph.ainvoke(
             {"email": "Team lunch is at noon."},
-            config={"configurable": {"thread_id": "runtime-2"}},
         )
     )
 

@@ -84,10 +84,10 @@ A successful terminal output is deliberately small:
 
 ## Warm Session Continuation
 
-The adapter compiles the graph with an in-memory LangGraph checkpointer and
-uses the Fabric runtime ID as its stable thread ID. Sequential invocations on
-one live runtime can therefore use earlier assessment context without the
-caller replaying it:
+The adapter retains the full completed-assessment history on its NeMo Fabric
+runtime and passes that history into an otherwise stateless graph. Sequential
+invocations on one live runtime can therefore use earlier assessment context
+without the caller replaying it:
 
 ```python
 async with await fabric.start_runtime(config, base_dir=base_dir) as runtime:
@@ -99,11 +99,14 @@ async with await fabric.start_runtime(config, base_dir=base_dir) as runtime:
 
 The second result includes `previous_classification: "phishing"`, proving that
 it observed the first assessment. Invocation results and telemetry remain
-independent. The checkpointer is owned by the adapter runtime, so another
-runtime cannot see this history and `stop()` ends the continuation window.
+independent. The history is owned by the adapter runtime, so another runtime
+cannot see it and `stop()` ends the continuation window.
 
 This is warm continuation, not durable resume. The example does not serialize
-conversation state or recreate it after the adapter host stops.
+conversation state or recreate it after the adapter host stops. It also avoids
+LangGraph's `InMemorySaver`, which LangGraph reserves for development and
+testing rather than production use. History grows with the live session; the
+consumer releases it by stopping the runtime.
 
 ## Configuration Variations
 

@@ -8,7 +8,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph.state import CompiledStateGraph
 from nemo_fabric_adapter_contract.models import AgentConfig
 from nemo_fabric_adapter_contract.models import AgentRunRequest
@@ -22,6 +21,7 @@ from examples.langgraph_custom_agent.adapter.configuration import (
 )
 from examples.langgraph_custom_agent.adapter.mcp import resolve_url_inspector
 from examples.langgraph_custom_agent.adapter.telemetry import observe_invocation
+from examples.langgraph_custom_agent.agent.graph import Assessment
 from examples.langgraph_custom_agent.agent.graph import build_email_phishing_graph
 
 
@@ -53,7 +53,7 @@ class EmailPhishingRuntime:
         self._base_dir: Path | None = None
         self._agent_name: str | None = None
         self._model_name: str | None = None
-        self._thread_id: str | None = None
+        self._assessment_history: list[Assessment] = []
         self._graph: CompiledStateGraph | None = None
 
     async def start(self, payload: dict[str, Any]) -> None:
@@ -78,13 +78,12 @@ class EmailPhishingRuntime:
             dependencies.model,
             dependencies.system_instruction,
             url_inspector,
-            checkpointer=InMemorySaver(),
         )
         self._runtime_id = context.runtime_id
         self._base_dir = Path(payload.get("base_dir") or ".").resolve()
         self._agent_name = str(payload.get("agent_name") or "email-phishing-agent")
         self._model_name = agent_config.models["default"].model
-        self._thread_id = context.runtime_id
+        self._assessment_history = []
         self._graph = graph
 
     async def invoke(
@@ -100,7 +99,6 @@ class EmailPhishingRuntime:
             or self._base_dir is None
             or self._agent_name is None
             or self._model_name is None
-            or self._thread_id is None
         ):
             raise lifecycle.LifecycleError(
                 "email_phishing_runtime_not_started",
@@ -124,14 +122,14 @@ class EmailPhishingRuntime:
             agent_name=self._agent_name,
             model_name=self._model_name,
         ) as telemetry:
-            runnable_config = dict(telemetry.runnable_config or {})
-            configurable = dict(runnable_config.get("configurable") or {})
-            configurable["thread_id"] = self._thread_id
-            runnable_config["configurable"] = configurable
             result = await self._graph.ainvoke(
-                {"email": email},
-                config=runnable_config,
+                {
+                    "email": email,
+                    "assessment_history": list(self._assessment_history),
+                },
+                config=telemetry.runnable_config,
             )
+        self._assessment_history = list(result["assessment_history"])
         output = {
             "response": result["explanation"],
             "classification": result["classification"],
@@ -153,7 +151,7 @@ class EmailPhishingRuntime:
         self._base_dir = None
         self._agent_name = None
         self._model_name = None
-        self._thread_id = None
+        self._assessment_history = []
         self._graph = None
 
 

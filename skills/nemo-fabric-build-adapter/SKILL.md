@@ -206,8 +206,10 @@ normalized terminal result.
 ### Support Warm Session Continuation
 
 When later invocations must use earlier conversation state, retain that state
-on the adapter runtime created during `start`. Prefer the target's native live
-session or checkpointer. If the target has no such facility, keep the minimum
+on the adapter runtime created during `start`. Prefer a target-native live
+session whose lifetime and retention behavior are suitable for the deployment.
+Do not substitute a framework's development-only in-memory checkpointer in a
+production adapter. If the target has no suitable facility, retain the
 adapter-owned history required to construct its next native request. Do not
 introduce a cold-resume API or durable store for warm continuation.
 
@@ -219,9 +221,9 @@ never share mutable continuation state.
 
 Test observable continuation rather than merely calling `invoke` twice: make
 the second result depend on the first turn without caller-side replay, then
-prove another runtime cannot observe that context. See the
+prove another runtime cannot observe that context. Refer to the
 [LangGraph custom-agent example](https://github.com/NVIDIA/NeMo-Fabric/tree/main/examples/langgraph_custom_agent)
-for an in-memory checkpointer pattern.
+for an adapter-owned history pattern.
 
 For in-process Relay SDK telemetry where the adapter owns the invocation-level
 Agent scope, wrap that scope with
