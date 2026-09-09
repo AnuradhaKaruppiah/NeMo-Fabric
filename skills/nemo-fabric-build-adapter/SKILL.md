@@ -210,8 +210,7 @@ on the adapter runtime created during `start`. Prefer a target-native live
 session whose lifetime and retention behavior are suitable for the deployment.
 Do not substitute a framework's development-only in-memory checkpointer in a
 production adapter. If the target has no suitable facility, retain the
-adapter-owned history required to construct its next native request. Do not
-introduce a cold-resume API or durable store for warm continuation.
+adapter-owned history required to construct its next native request.
 
 Bound retained history so a live runtime cannot grow memory or model input
 without limit. When consumers need control, publish a typed adapter-wide

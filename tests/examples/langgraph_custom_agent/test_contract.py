@@ -10,8 +10,10 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
 from nemo_fabric import Fabric
 from nemo_fabric import FabricConfig
+from nemo_fabric import FabricConfigError
 from nemo_fabric import DiscoveryConfig
 from nemo_fabric import HarnessConfig
 from nemo_fabric import InstructionConfig
@@ -159,6 +161,21 @@ def test_plan_projects_continuation_history_limit(tmp_path: Path):
     assert plan.config.harness.settings == {
         "continuation": {"max_history_entries": 7}
     }
+
+
+@pytest.mark.parametrize("limit", [True, 0, 1001, "20"])
+def test_plan_rejects_invalid_continuation_history_limit(
+    tmp_path: Path,
+    limit: object,
+):
+    with pytest.raises(
+        FabricConfigError,
+        match=r"harness\.settings\.continuation\.max_history_entries",
+    ):
+        Fabric().plan(
+            with_continuation_history_limit(public_config(), limit),
+            base_dir=tmp_path,
+        )
 
 
 def test_plan_projects_optional_stdio_mcp_to_agent_config(tmp_path: Path):

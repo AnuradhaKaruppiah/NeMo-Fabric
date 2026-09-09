@@ -85,9 +85,9 @@ A successful terminal output is deliberately small:
 ## Warm Session Continuation
 
 The adapter retains a rolling completed-assessment history on its NeMo Fabric
-runtime and passes that history into an otherwise stateless graph. Sequential
-invocations on one live runtime can therefore use earlier assessment context
-without the caller replaying it:
+runtime and passes that history into an otherwise stateless graph. The following
+example runs two ordered invocations on one live runtime without requiring
+caller-side replay.
 
 ```python
 async with await fabric.start_runtime(config, base_dir=base_dir) as runtime:
@@ -109,9 +109,7 @@ the oldest entry when the window is full. Consumers can set
 assessments included in later model prompts.
 
 This is warm continuation, not durable resume. The example does not serialize
-conversation state or recreate it after the adapter host stops. It also avoids
-LangGraph's `InMemorySaver`, which LangGraph reserves for development and
-testing rather than production use.
+conversation state or recreate it after the adapter host stops.
 
 ## Configuration Variations
 

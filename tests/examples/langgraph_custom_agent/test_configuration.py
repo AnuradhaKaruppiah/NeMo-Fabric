@@ -20,9 +20,6 @@ from examples.langgraph_custom_agent.adapter.configuration import (
     DEFAULT_MAX_HISTORY_ENTRIES,
 )
 from examples.langgraph_custom_agent.adapter.configuration import (
-    MAX_HISTORY_ENTRIES,
-)
-from examples.langgraph_custom_agent.adapter.configuration import (
     MODEL_REQUEST_TIMEOUT_SECONDS,
 )
 from examples.langgraph_custom_agent.adapter.configuration import (
@@ -76,25 +73,6 @@ def test_resolver_applies_continuation_history_limit(monkeypatch):
     dependencies = resolve_agent_dependencies(AgentConfig.from_mapping(mapping))
 
     assert dependencies.max_history_entries == 7
-
-
-@pytest.mark.parametrize(
-    "value",
-    [True, 0, MAX_HISTORY_ENTRIES + 1, "20"],
-)
-def test_resolver_rejects_invalid_continuation_history_limit(monkeypatch, value):
-    monkeypatch.setenv("TEST_NVIDIA_API_KEY", "test-key")
-    mapping = _config_mapping()
-    mapping["harness"] = {
-        "settings": {"continuation": {"max_history_entries": value}}
-    }
-
-    with pytest.raises(lifecycle.LifecycleError) as error:
-        resolve_agent_dependencies(AgentConfig.from_mapping(mapping))
-
-    assert error.value.metadata == {
-        "field": "harness.settings.continuation.max_history_entries"
-    }
 
 
 def test_resolver_appends_to_the_agent_default_instruction():
