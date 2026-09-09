@@ -23,6 +23,8 @@ OPENAI_COMPATIBLE_PROVIDERS = frozenset(
     {"nvidia", "openai", "openai-compatible"}
 )
 MODEL_REQUEST_TIMEOUT_SECONDS = 60
+DEFAULT_MAX_HISTORY_ENTRIES = 20
+MAX_HISTORY_ENTRIES = 1000
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +33,7 @@ class AgentDependencies:
 
     model: BaseChatModel
     system_instruction: str
+    max_history_entries: int = DEFAULT_MAX_HISTORY_ENTRIES
 
 
 def _config_error(field: str, message: str) -> lifecycle.LifecycleError:
@@ -39,6 +42,46 @@ def _config_error(field: str, message: str) -> lifecycle.LifecycleError:
         message,
         metadata={"field": field},
     )
+
+
+def _max_history_entries(agent_config: AgentConfig) -> int:
+    settings = agent_config.harness.settings if agent_config.harness else {}
+    unknown_settings = sorted(set(settings) - {"continuation"})
+    if unknown_settings:
+        field = f"harness.settings.{unknown_settings[0]}"
+        raise _config_error(field, f"Unsupported adapter setting {field!r}")
+
+    continuation = settings.get("continuation", {})
+    if not isinstance(continuation, dict):
+        raise _config_error(
+            "harness.settings.continuation",
+            "The continuation setting must be an object",
+        )
+    unknown_continuation = sorted(
+        set(continuation) - {"max_history_entries"}
+    )
+    if unknown_continuation:
+        field = (
+            "harness.settings.continuation."
+            f"{unknown_continuation[0]}"
+        )
+        raise _config_error(field, f"Unsupported continuation setting {field!r}")
+
+    value = continuation.get(
+        "max_history_entries",
+        DEFAULT_MAX_HISTORY_ENTRIES,
+    )
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not 1 <= value <= MAX_HISTORY_ENTRIES
+    ):
+        raise _config_error(
+            "harness.settings.continuation.max_history_entries",
+            "The maximum history entries must be an integer from 1 through "
+            f"{MAX_HISTORY_ENTRIES}",
+        )
+    return value
 
 
 def resolve_agent_dependencies(agent_config: AgentConfig) -> AgentDependencies:
@@ -107,4 +150,5 @@ def resolve_agent_dependencies(agent_config: AgentConfig) -> AgentDependencies:
     return AgentDependencies(
         model=ChatOpenAI(**chat_model_options),
         system_instruction=system_instruction,
+        max_history_entries=_max_history_entries(agent_config),
     )

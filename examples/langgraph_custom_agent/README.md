@@ -84,7 +84,7 @@ A successful terminal output is deliberately small:
 
 ## Warm Session Continuation
 
-The adapter retains the full completed-assessment history on its NeMo Fabric
+The adapter retains a rolling completed-assessment history on its NeMo Fabric
 runtime and passes that history into an otherwise stateless graph. Sequential
 invocations on one live runtime can therefore use earlier assessment context
 without the caller replaying it:
@@ -102,11 +102,16 @@ it observed the first assessment. Invocation results and telemetry remain
 independent. The history is owned by the adapter runtime, so another runtime
 cannot see it and `stop()` ends the continuation window.
 
+By default, the runtime retains the 20 most recent assessments and discards
+the oldest entry when the window is full. Consumers can set
+`harness.settings.continuation.max_history_entries` to a value from 1 through
+1000. This adapter-specific setting bounds both retained memory and the prior
+assessments included in later model prompts.
+
 This is warm continuation, not durable resume. The example does not serialize
 conversation state or recreate it after the adapter host stops. It also avoids
 LangGraph's `InMemorySaver`, which LangGraph reserves for development and
-testing rather than production use. History grows with the live session; the
-consumer releases it by stopping the runtime.
+testing rather than production use.
 
 ## Configuration Variations
 
@@ -117,6 +122,7 @@ Every variation returns an independent `FabricConfig`:
 | Model | `--model` | `models.default.model` |
 | Instruction | `with_system_instruction(..., mode=...)`, `--system-instruction`, and `--system-instruction-mode` | `instructions.system` with `replace` or `append` |
 | Temperature | `with_temperature(...)` or `--temperature` | `models.default.temperature` |
+| Continuation history | `with_continuation_history_limit(...)` or `--max-history-entries` | `harness.settings.continuation.max_history_entries` |
 | stdio MCP | `with_url_inspector_mcp(...)` or `--mcp` | `mcp.servers` and per-server tool policy |
 
 The descriptor bounds variation. Unsupported providers, extra model roles,
@@ -201,7 +207,8 @@ paths compose, so `--mcp --relay` traces the MCP-backed graph node as well as
 the model-backed explanation.
 
 Pass `--follow-up "Team lunch is at noon."` to run two ordered invocations on
-one live runtime and inspect the retained assessment context.
+one live runtime and inspect the retained assessment context. Add
+`--max-history-entries 10` to select the runtime's rolling history window.
 
 The example intentionally omits generic workflow loading, named tools, skills,
 durable checkpointing, cancellation, cold resume, updates, and native

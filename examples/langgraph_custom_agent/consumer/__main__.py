@@ -14,6 +14,9 @@ from nemo_fabric import Fabric
 
 from examples.langgraph_custom_agent.consumer.config import frontier_config
 from examples.langgraph_custom_agent.consumer.config import public_config
+from examples.langgraph_custom_agent.consumer.config import (
+    with_continuation_history_limit,
+)
 from examples.langgraph_custom_agent.consumer.config import with_relay
 from examples.langgraph_custom_agent.consumer.config import with_system_instruction
 from examples.langgraph_custom_agent.consumer.config import with_temperature
@@ -31,6 +34,11 @@ async def main() -> None:
         default="replace",
     )
     parser.add_argument("--temperature", type=float)
+    parser.add_argument(
+        "--max-history-entries",
+        type=int,
+        help="Maximum completed assessments retained by the live runtime.",
+    )
     parser.add_argument("--mcp", action="store_true")
     parser.add_argument("--relay", action="store_true")
     parser.add_argument("--base-dir", type=Path, default=Path.cwd())
@@ -58,6 +66,11 @@ async def main() -> None:
         )
     if args.temperature is not None:
         config = with_temperature(config, args.temperature)
+    if args.max_history_entries is not None:
+        config = with_continuation_history_limit(
+            config,
+            args.max_history_entries,
+        )
     if args.mcp:
         config = with_url_inspector_mcp(config)
     if args.relay:

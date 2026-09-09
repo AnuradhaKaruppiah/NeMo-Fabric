@@ -203,6 +203,61 @@ def test_stop_discards_runtime_continuation_state(
     asyncio.run(runtime.stop())
 
 
+def test_runtime_bounds_continuation_history(
+    monkeypatch,
+    runtime_context_factory,
+    agent_config_mapping,
+):
+    model = FakeListChatModel(
+        responses=["first explanation", "second explanation", "third explanation"]
+    )
+    monkeypatch.setattr(
+        runtime_module,
+        "resolve_agent_dependencies",
+        lambda _config: AgentDependencies(
+            model,
+            "Explain the assessment.",
+            max_history_entries=2,
+        ),
+    )
+    runtime = runtime_module.EmailPhishingRuntime()
+    asyncio.run(
+        runtime.start(
+            {
+                "config": AgentConfig.from_mapping(agent_config_mapping),
+                "runtime_context": runtime_context_factory(
+                    "runtime-1", "runtime-start"
+                ),
+            }
+        )
+    )
+
+    for number, email in enumerate(
+        (
+            "Urgent: verify your password immediately.",
+            "Team lunch is at noon.",
+            "Act now and sign in to avoid suspension.",
+        ),
+        start=1,
+    ):
+        asyncio.run(
+            runtime.invoke(
+                *invocation(
+                    runtime_context_factory(
+                        "runtime-1", f"invocation-{number}"
+                    ),
+                    email,
+                )
+            )
+        )
+
+    assert [
+        assessment["classification"]
+        for assessment in runtime._assessment_history
+    ] == ["benign", "phishing"]
+    asyncio.run(runtime.stop())
+
+
 def test_invocation_failure_propagates_to_lifecycle_host(
     monkeypatch,
     runtime_context_factory,

@@ -17,6 +17,9 @@ from nemo_fabric_adapter_contract.models import RuntimeContext
 from nemo_fabric_adapters.common import lifecycle
 
 from examples.langgraph_custom_agent.adapter.configuration import (
+    DEFAULT_MAX_HISTORY_ENTRIES,
+)
+from examples.langgraph_custom_agent.adapter.configuration import (
     resolve_agent_dependencies,
 )
 from examples.langgraph_custom_agent.adapter.mcp import resolve_url_inspector
@@ -53,6 +56,7 @@ class EmailPhishingRuntime:
         self._base_dir: Path | None = None
         self._agent_name: str | None = None
         self._model_name: str | None = None
+        self._max_history_entries = DEFAULT_MAX_HISTORY_ENTRIES
         self._assessment_history: list[Assessment] = []
         self._graph: CompiledStateGraph | None = None
 
@@ -83,6 +87,7 @@ class EmailPhishingRuntime:
         self._base_dir = Path(payload.get("base_dir") or ".").resolve()
         self._agent_name = str(payload.get("agent_name") or "email-phishing-agent")
         self._model_name = agent_config.models["default"].model
+        self._max_history_entries = dependencies.max_history_entries
         self._assessment_history = []
         self._graph = graph
 
@@ -129,7 +134,9 @@ class EmailPhishingRuntime:
                 },
                 config=telemetry.runnable_config,
             )
-        self._assessment_history = list(result["assessment_history"])
+        self._assessment_history = list(
+            result["assessment_history"][-self._max_history_entries :]
+        )
         output = {
             "response": result["explanation"],
             "classification": result["classification"],
@@ -151,6 +158,7 @@ class EmailPhishingRuntime:
         self._base_dir = None
         self._agent_name = None
         self._model_name = None
+        self._max_history_entries = DEFAULT_MAX_HISTORY_ENTRIES
         self._assessment_history = []
         self._graph = None
 

@@ -213,6 +213,12 @@ production adapter. If the target has no suitable facility, retain the
 adapter-owned history required to construct its next native request. Do not
 introduce a cold-resume API or durable store for warm continuation.
 
+Bound retained history so a live runtime cannot grow memory or model input
+without limit. When consumers need control, publish a typed adapter-wide
+`harness.settings` or target-specific `workflow.settings` field with explicit
+units, defaults, validation bounds, and overflow behavior. Do not overload
+`runtime.max_turns`, which limits one invocation's agent loop.
+
 Keep session state separate from invocation state. Conversation context,
 required artifact references, and live workspace state may persist until
 `stop`; timeout state, counters, terminal markers, result assembly, usage, and
