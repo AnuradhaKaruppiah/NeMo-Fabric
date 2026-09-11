@@ -1162,22 +1162,21 @@ async def _invoke_thread(
 
     handle = None
     try:
-        async with asyncio.timeout(timeout_seconds()):
-            handle = await thread.turn(
-                request_prompt(request),
-                effort=_reasoning_effort(config),
-                output_schema=_output_schema(config),
-            )
-            result = await handle.run()
-            return (
-                normalize_result(
-                    config, context, base_dir, thread_id=thread.id, result=result
-                ),
-                True,
-            )
-    except TimeoutError as error:
+        handle = await thread.turn(
+            request_prompt(request),
+            effort=_reasoning_effort(config),
+            output_schema=_output_schema(config),
+        )
+        result = await handle.run()
+        return (
+            normalize_result(
+                config, context, base_dir, thread_id=thread.id, result=result
+            ),
+            True,
+        )
+    except asyncio.CancelledError:
         await _interrupt_turn(handle)
-        return sdk_failure(error), False
+        raise
     except CodexAdapterError:
         raise
     except (CodexError, RuntimeError, OSError) as error:

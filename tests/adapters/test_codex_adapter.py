@@ -1652,23 +1652,22 @@ def test_native_telemetry_requires_mapping(codex_payload):
         adapter.native_codex_telemetry_config(runtime_input(codex_payload)[1])
 
 
-def test_timeout_interrupts_native_turn_and_closes_sdk(
+def test_native_turn_relies_on_fabric_runtime_timeout(
     codex_payload, mock_codex, monkeypatch
 ):
-    mock_blocking_thread = mock_thread("thread-timeout")
-
-    async def block():
-        await asyncio.sleep(60)
-
-    mock_blocking_thread.handle.run.side_effect = block
-    mock_codex.next_thread = mock_blocking_thread
-    monkeypatch.setattr(adapter, "timeout_seconds", lambda: 0.01)
+    mock_sdk_thread = mock_thread("thread-fabric-timeout")
+    mock_codex.next_thread = mock_sdk_thread
+    monkeypatch.setattr(
+        adapter.asyncio,
+        "timeout",
+        MagicMock(side_effect=AssertionError("adapter applied its own timeout")),
+    )
 
     output = invoke_once(codex_payload)
 
     client = mock_codex.instances[0]
-    assert output["error"]["code"] == "codex_timed_out"
-    assert client.thread.handle.interrupted is True
+    assert output["completed"] is True
+    assert client.thread.handle.interrupted is False
     assert client.closed is True
 
 

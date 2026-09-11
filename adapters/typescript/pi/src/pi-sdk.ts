@@ -14,6 +14,7 @@ import type {
   ExtensionCommandContextActions,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import type { AssistantMessageEvent, Context, Message, Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai";
 import { createJiti } from "jiti/static";
 import type { AgentConfig, AgentModelConfig, AgentToolDefinition, JsonObject } from "nemo-fabric-adapter-contract";
 import { LifecycleError, type AdapterStartInput } from "nemo-fabric-adapters-common";
@@ -30,6 +31,53 @@ interface PiToolFactoryContext {
   workspace: string;
 }
 
+export function withCustomBaseUrl<T extends { api: string; baseUrl: string; compat?: object }>(
+  catalogModel: T,
+  baseUrl: string | null | undefined,
+): T {
+  if (!baseUrl) {
+    return catalogModel;
+  }
+  if (catalogModel.api !== "openai-completions") {
+    return { ...catalogModel, baseUrl };
+  }
+  return {
+    ...catalogModel,
+    baseUrl,
+    // Generic OpenAI-compatible proxies may reject provider-specific
+    // reasoning_content fields when Pi replays an assistant tool call.
+    compat: { ...catalogModel.compat, requiresThinkingAsText: true },
+  };
+}
+
+export function modelAwareCompactionReserveTokens(
+  configuredReserveTokens: number,
+  maxOutputTokens: number,
+): number {
+  return Math.max(configuredReserveTokens, maxOutputTokens);
+}
+
+const OPAQUE_PROXY_OVERFLOW_MARGIN_TOKENS = 16_384;
+const OPAQUE_PROXY_SERVER_ERROR = /^500 status code \(no body\)$/iu;
+
+export function classifyOpaqueProxyContextOverflow(
+  errorMessage: string | undefined,
+  estimatedContextTokens: number,
+  contextWindow: number,
+  maxOutputTokens: number,
+): string | undefined {
+  const threshold = contextWindow - maxOutputTokens - OPAQUE_PROXY_OVERFLOW_MARGIN_TOKENS;
+  if (
+    errorMessage === undefined ||
+    contextWindow <= 0 ||
+    !OPAQUE_PROXY_SERVER_ERROR.test(errorMessage) ||
+    estimatedContextTokens < threshold
+  ) {
+    return errorMessage;
+  }
+  return `maximum context length is ${contextWindow} tokens (${errorMessage} from the configured model proxy)`;
+}
+
 type PiToolFactory = (context: PiToolFactoryContext) => ToolDefinition | Promise<ToolDefinition>;
 
 const PI_BUILTIN_TOOL_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
@@ -39,8 +87,11 @@ const PI_HARNESS_INSTALL_COMMAND =
 
 interface PiSdkModules {
   InMemoryCredentialStore: typeof import("@earendil-works/pi-ai").InMemoryCredentialStore;
+  calculateContextTokens: typeof import("@earendil-works/pi-coding-agent").calculateContextTokens;
+  createAssistantMessageEventStream: typeof import("@earendil-works/pi-ai").createAssistantMessageEventStream;
   createAgentSession: typeof import("@earendil-works/pi-coding-agent").createAgentSession;
   DefaultResourceLoader: typeof import("@earendil-works/pi-coding-agent").DefaultResourceLoader;
+  estimateTokens: typeof import("@earendil-works/pi-coding-agent").estimateTokens;
   ModelRuntime: typeof import("@earendil-works/pi-coding-agent").ModelRuntime;
   SessionManager: typeof import("@earendil-works/pi-coding-agent").SessionManager;
   SettingsManager: typeof import("@earendil-works/pi-coding-agent").SettingsManager;
@@ -75,8 +126,11 @@ async function loadPiSdk(): Promise<PiSdkModules> {
 
   if (
     typeof ai.InMemoryCredentialStore !== "function" ||
+    typeof codingAgent.calculateContextTokens !== "function" ||
+    typeof ai.createAssistantMessageEventStream !== "function" ||
     typeof codingAgent.createAgentSession !== "function" ||
     typeof codingAgent.DefaultResourceLoader !== "function" ||
+    typeof codingAgent.estimateTokens !== "function" ||
     typeof codingAgent.ModelRuntime !== "function" ||
     typeof codingAgent.SessionManager !== "function" ||
     typeof codingAgent.SettingsManager !== "function"
@@ -89,11 +143,99 @@ async function loadPiSdk(): Promise<PiSdkModules> {
 
   return {
     InMemoryCredentialStore: ai.InMemoryCredentialStore,
+    calculateContextTokens: codingAgent.calculateContextTokens,
+    createAssistantMessageEventStream: ai.createAssistantMessageEventStream,
     createAgentSession: codingAgent.createAgentSession,
     DefaultResourceLoader: codingAgent.DefaultResourceLoader,
+    estimateTokens: codingAgent.estimateTokens,
     ModelRuntime: codingAgent.ModelRuntime,
     SessionManager: codingAgent.SessionManager,
     SettingsManager: codingAgent.SettingsManager,
+  };
+}
+
+function estimateProviderContextTokens(messages: Message[], pi: PiSdkModules): number {
+  let usageIndex = -1;
+  let usage: Usage | undefined;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (
+      message?.role === "assistant" &&
+      message.stopReason !== "aborted" &&
+      message.stopReason !== "error" &&
+      pi.calculateContextTokens(message.usage) > 0
+    ) {
+      usageIndex = index;
+      usage = message.usage;
+      break;
+    }
+  }
+  const startIndex = usage === undefined ? 0 : usageIndex + 1;
+  let tokens = usage === undefined ? 0 : pi.calculateContextTokens(usage);
+  for (let index = startIndex; index < messages.length; index += 1) {
+    tokens += pi.estimateTokens(messages[index] as Parameters<PiSdkModules["estimateTokens"]>[0]);
+  }
+  return tokens;
+}
+
+function streamFailure(model: Model<any>, error: unknown): AssistantMessageEvent {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  return {
+    type: "error",
+    reason: "error",
+    error: {
+      role: "assistant",
+      content: [],
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "error",
+      errorMessage,
+      timestamp: Date.now(),
+    },
+  };
+}
+
+function installOpaqueProxyOverflowRecovery(session: AgentSession, pi: PiSdkModules): void {
+  const originalStream = session.agent.streamFunction.bind(session.agent);
+  session.agent.streamFunction = async (
+    model: Model<any>,
+    context: Context,
+    options?: SimpleStreamOptions,
+  ) => {
+    const source = await originalStream(model, context, options);
+    const estimatedContextTokens = estimateProviderContextTokens(context.messages, pi);
+    const target = pi.createAssistantMessageEventStream();
+    void (async () => {
+      try {
+        for await (const event of source) {
+          if (event.type !== "error") {
+            target.push(event);
+            continue;
+          }
+          const errorMessage = classifyOpaqueProxyContextOverflow(
+            event.error.errorMessage,
+            estimatedContextTokens,
+            model.contextWindow,
+            model.maxTokens,
+          );
+          target.push({ ...event, error: { ...event.error, errorMessage } });
+        }
+        target.end();
+      } catch (error) {
+        target.push(streamFailure(model, error));
+        target.end();
+      }
+    })();
+    return target;
   };
 }
 
@@ -491,7 +633,15 @@ export class PiSdkSessionFactory implements PiSessionFactory {
     if (catalogModel === undefined) {
       throw new LifecycleError("pi_model_unknown", "The selected provider and model are not present in Pi's catalog");
     }
-    const model = selected.base_url ? { ...catalogModel, baseUrl: selected.base_url } : catalogModel;
+    const model = withCustomBaseUrl(catalogModel, selected.base_url);
+    settings.applyOverrides({
+      compaction: {
+        reserveTokens: modelAwareCompactionReserveTokens(
+          settings.getCompactionReserveTokens(),
+          model.maxTokens,
+        ),
+      },
+    });
     const enabled = input.config.tools?.enabled;
     const blocked = input.config.tools?.blocked ?? [];
     const state = { shutdownRequested: false };
@@ -507,6 +657,9 @@ export class PiSdkSessionFactory implements PiSessionFactory {
       tools: enabled === null ? undefined : enabled,
       excludeTools: blocked,
     });
+    if (selected.base_url !== undefined && selected.base_url !== null) {
+      installOpaqueProxyOverflowRecovery(session, pi);
+    }
     const handle = new PiSdkSessionHandle(session, state);
     try {
       const blockedNames = new Set(blocked);
