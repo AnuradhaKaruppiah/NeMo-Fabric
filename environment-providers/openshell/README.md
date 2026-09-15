@@ -23,33 +23,42 @@ convenience.
 
 ## Architecture
 
-The consumer, Fabric core, and OpenShell provider run on the consumer side.
-The runtime-control processes, adapter, and agent run inside the sandbox.
+The consumer application and NVIDIA NeMo Fabric SDK run in one process. The
+SDK contains the Python API and its in-process Rust runtime coordinator. The
+coordinator starts the OpenShell provider as a separate child process. The
+runtime-control processes, adapter, and agent run inside the sandbox.
 
 ```mermaid
-flowchart LR
-    subgraph HOST["Consumer side (host)"]
-        direction TB
-        C["Consumer application"]
-        F["Fabric core"]
-        P["OpenShell environment provider<br/>lazy, reused process"]
-        SDK["OpenShell Rust SDK"]
+flowchart TB
+    subgraph HOST["Consumer side"]
+        direction LR
+        subgraph APP["Consumer application process"]
+            direction LR
+            C["Consumer application"]
+            F["NVIDIA NeMo Fabric SDK<br/>Python API + in-process Rust core"]
+            C --> F
+        end
 
-        C --> F
-        F --> P
-        P --> SDK
+        subgraph CHILD["Child process<br/>lazy and reused"]
+            direction TB
+            P["OpenShell environment provider"]
+            OSSDK["OpenShell Rust SDK<br/>(linked library)"]
+            P --> OSSDK
+        end
+
+        F -->|"Fabric provider IPC<br/>JSON over stdio"| P
     end
 
-    O["OpenShell gateway"]
+    GATEWAY["OpenShell gateway<br/>unmodified"]
 
-    subgraph SANDBOX["OpenShell sandbox"]
-        direction TB
+    subgraph SANDBOX["OpenShell sandbox — isolation and policy boundary"]
+        direction LR
         CTL["fabric-runtime-ctl<br/>short-lived process"]
         SOCKET["Unix domain socket"]
         SERVER["fabric-runtime-server<br/>persistent process"]
         ADAPTER["Fabric adapter<br/>persistent process"]
         AGENT["Custom agent or harness"]
-        DATA["Workspace and declared artifacts"]
+        DATA["Sandbox filesystem<br/>workspace + declared artifact files"]
 
         CTL --> SOCKET
         SOCKET --> SERVER
@@ -58,14 +67,25 @@ flowchart LR
         AGENT --> DATA
     end
 
-    HOST -->|"OpenShell SDK request"| O
-    O -->|"Execute runtime-control operation"| SANDBOX
+    OSSDK -->|"OpenShell API<br/>health, lifecycle, inspection, exec"| GATEWAY
+    GATEWAY -->|"Generic exec request<br/>run fabric-runtime-ctl"| CTL
+
+    classDef fabricComponent fill:#dff3df,stroke:#3f4a54,color:#111827
+    class F,P,CTL,SERVER,ADAPTER fabricComponent
 ```
 
-The OpenShell provider links directly to the OpenShell Rust SDK. Fabric starts
-the provider lazily on the first OpenShell operation and reuses the child
-process for later operations. Correlated requests and responses use a bounded,
-newline-delimited JSON transport over standard input and output.
+**Legend:** Green boxes are Fabric components.
+
+The OpenShell provider translates Fabric environment and runtime operations
+into OpenShell SDK calls. The SDK supplies the typed, authenticated client for
+gateway operations such as inspecting, creating, executing in, and deleting a
+sandbox. The gateway does not interpret Fabric lifecycle operations. For a
+runtime operation, the provider uses the SDK's generic exec API to run
+`fabric-runtime-ctl` with the Fabric request on standard input.
+
+Fabric starts the provider lazily on the first OpenShell operation and reuses
+the child process for later operations. Correlated requests and responses use
+a bounded, newline-delimited JSON transport over standard input and output.
 
 The initial transport serializes provider operations within one Fabric
 process. Multiplexing requests for independent runtimes is a product follow-up;
@@ -83,7 +103,7 @@ The integration spans three API layers:
 | Boundary | Caller → Callee | Operations |
 | --- | --- | --- |
 | Consumer-facing Fabric API | Consumer application → Fabric | `prepare_environment`, `attach_environment`, `start_runtime`, `start_runtime_in`, `Runtime.invoke`, `Runtime.stop`, `release_environment` |
-| Environment-provider protocol | Fabric core → OpenShell provider | `prepare`, `attach`, `runtime_control`, `collect_artifacts`, `release` |
+| Environment-provider protocol | Fabric SDK Rust core → OpenShell provider | `prepare`, `attach`, `runtime_control`, `collect_artifacts`, `release` |
 | Fabric adapter contract | Runtime server → Fabric adapter | `start`, `invoke`, `stop` |
 
 `start_runtime_in` is the explicit-environment counterpart to `start_runtime`.
@@ -120,10 +140,13 @@ One user input follows this sequence:
 
 ```mermaid
 sequenceDiagram
-    box Consumer side (host)
+    box Consumer side
         participant C as Consumer application
-        participant F as Fabric and OpenShell provider
+        participant F as Fabric SDK
+        participant P as OpenShell provider
     end
+
+    participant G as OpenShell gateway
 
     box OpenShell sandbox
         participant CTL as Runtime ctl (short-lived)
@@ -132,12 +155,16 @@ sequenceDiagram
     end
 
     C->>F: invoke(input)
-    F->>CTL: OpenShell exec with invoke request
+    F->>P: Runtime-control request over stdio
+    P->>G: SDK exec(run fabric-runtime-ctl)
+    G->>CTL: Start generic command
     CTL->>S: Request over Unix socket
     S->>A: Fabric adapter invoke
     A-->>S: Fabric adapter result
     S-->>CTL: Runtime-control response
-    CTL-->>F: Return exec result and exit
+    CTL-->>G: Command output and exit
+    G-->>P: OpenShell exec result
+    P-->>F: Runtime-control response
     F-->>C: Normalized run result
 
     Note over S,A: Session stays alive for the next invoke
