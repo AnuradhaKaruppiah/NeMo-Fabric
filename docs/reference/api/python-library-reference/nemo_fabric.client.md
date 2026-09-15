@@ -19,7 +19,7 @@ Native Python client for resolving and running NVIDIA NeMo Fabric agents.
 
 Primary Python entrypoint for NeMo Fabric.
 
-Every lifecycle method accepts a complete, typed ``FabricConfig`` plus an optional ``base_dir`` used to resolve relative paths. Compose variants in Python before calling the SDK. The ``doctor()``, ``plan()``, and ``run()`` results are typed, read-only mapping models. ``start_runtime()`` returns an active local ``Runtime`` handle. Explicit environment users call either ``prepare_environment()`` or ``attach_environment()``, then ``start_runtime_in()`` and ``release_environment()`` separately.
+Every config-dependent lifecycle method accepts a complete, typed ``FabricConfig`` plus an optional ``base_dir`` used to resolve relative paths. Compose variants in Python before calling the SDK. The ``doctor()``, ``plan()``, and ``run()`` results are typed, read-only mapping models. ``start_runtime()`` returns an active local ``Runtime`` handle. Explicit environment users call either ``prepare_environment()`` or ``attach_environment()``, then ``start_runtime_in()`` and ``release_environment()`` separately.
 
 ``Fabric`` uses the native Rust extension. SDK calls raise ``FabricNativeUnavailableError`` when the native extension is not installed.
 
@@ -316,7 +316,7 @@ async def start_runtime_in(
 
 Start one stateful runtime in an explicitly prepared or attached environment.
 
-Starting or stopping the runtime does not release ``environment``. This lets consumers run sequential sessions, or coordinate concurrent sessions, without hiding environment ownership inside a session API.
+Starting or stopping the runtime does not release ``environment``. One runtime session can be active in an environment at a time. After it stops, the consumer can start another session or release the environment.
 
 
 

@@ -205,6 +205,22 @@ impl RuntimeControlResponse {
             },
         }
     }
+
+    fn invalid_request(message: impl Into<String>) -> Self {
+        Self {
+            protocol_version: PROTOCOL_VERSION.to_string(),
+            operation_id: "unknown".to_string(),
+            environment_id: "unknown".to_string(),
+            runtime_id: "unknown".to_string(),
+            operation: RuntimeControlOperation::Invoke,
+            outcome: RuntimeControlOutcome::Failed {
+                error: RuntimeControlFailure {
+                    code: "invalid_request".to_string(),
+                    message: message.into(),
+                },
+            },
+        }
+    }
 }
 
 /// Resolve the runtime socket from `FABRIC_RUNTIME_CONTROL_SOCKET` or the stable default.
@@ -593,9 +609,22 @@ pub fn serve(socket: &Path) -> std::io::Result<()> {
     let mut host = None;
     for stream in listener.incoming() {
         let mut stream = stream?;
-        serve_connection(&mut stream, &mut host)?;
+        serve_connection_resilient(&mut stream, &mut host);
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn serve_connection_resilient<T: Read + Write>(stream: &mut T, host: &mut Option<AdapterHost>) {
+    if let Err(error) = serve_connection(stream, host) {
+        if let Some(mut active) = host.take() {
+            let _ = active.terminate();
+        }
+        let response = RuntimeControlResponse::invalid_request(format!(
+            "runtime-control request was invalid: {error}"
+        ));
+        let _ = write_json_line(stream, &response);
+    }
 }
 
 #[cfg(unix)]
@@ -639,6 +668,9 @@ pub fn control(
         ));
     }
     let mut stream = UnixStream::connect(socket)?;
+    let timeout = Duration::from_secs(request.timeout_seconds);
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
     write_json_line(&mut stream, &request)?;
     let response = read_json_line::<RuntimeControlResponse>(&mut BufReader::new(&mut stream))?;
     write_json(&mut output, &response)
@@ -707,7 +739,39 @@ fn write_json_line(writer: &mut impl Write, value: &impl Serialize) -> std::io::
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use std::io::Cursor;
     use std::os::unix::net::UnixListener;
+
+    struct MemoryStream {
+        input: Cursor<Vec<u8>>,
+        output: Vec<u8>,
+    }
+
+    impl MemoryStream {
+        fn new(input: Vec<u8>) -> Self {
+            Self {
+                input: Cursor::new(input),
+                output: Vec::new(),
+            }
+        }
+    }
+
+    impl Read for MemoryStream {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            self.input.read(buffer)
+        }
+    }
+
+    impl Write for MemoryStream {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.output.extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn artifact_export_is_bounded_and_cannot_escape_its_root() {
@@ -854,6 +918,64 @@ done
 
         assert!(matches!(
             response.outcome,
+            RuntimeControlOutcome::Succeeded { .. }
+        ));
+        assert!(host.is_none());
+    }
+
+    #[test]
+    fn malformed_connection_drops_the_session_and_server_remains_usable() {
+        let script = r#"
+while IFS= read -r line; do
+  case "$line" in
+    *\"operation\":\"start\"*) op=start ;;
+    *\"operation\":\"stop\"*) op=stop ;;
+  esac
+  printf '{"operation":"%s","outcome":{"status":"succeeded","output":{}}}\n' "$op"
+  [ "$op" = stop ] && exit 0
+done
+"#;
+        let start = request(RuntimeControlCommand::Start {
+            process: RuntimeAdapterProcess {
+                command: vec!["/bin/sh".to_string(), "-c".to_string(), script.to_string()],
+                cwd: None,
+                env: BTreeMap::new(),
+            },
+            lifecycle: lifecycle("start"),
+        });
+        let mut host = None;
+        assert!(matches!(
+            handle_request(&start, &mut host).outcome,
+            RuntimeControlOutcome::Succeeded { .. }
+        ));
+
+        let mut malformed = MemoryStream::new(b"not-json\n".to_vec());
+        serve_connection_resilient(&mut malformed, &mut host);
+        let failure: RuntimeControlResponse =
+            serde_json::from_slice(&malformed.output).expect("failure response");
+        assert!(matches!(
+            failure.outcome,
+            RuntimeControlOutcome::Failed { ref error } if error.code == "invalid_request"
+        ));
+        assert!(host.is_none());
+
+        let mut encoded = serde_json::to_vec(&start).expect("start request");
+        encoded.push(b'\n');
+        let mut valid = MemoryStream::new(encoded);
+        serve_connection_resilient(&mut valid, &mut host);
+        let response: RuntimeControlResponse =
+            serde_json::from_slice(&valid.output).expect("start response");
+        assert!(matches!(
+            response.outcome,
+            RuntimeControlOutcome::Succeeded { .. }
+        ));
+
+        let stop = request(RuntimeControlCommand::Stop {
+            lifecycle: lifecycle("stop"),
+        });
+        let stopped = handle_request(&stop, &mut host);
+        assert!(matches!(
+            stopped.outcome,
             RuntimeControlOutcome::Succeeded { .. }
         ));
         assert!(host.is_none());

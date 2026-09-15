@@ -77,8 +77,14 @@ const DEFAULT_PYTHON: &str = "python.exe";
 static TEST_STOPPED_AGENTS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static LOCAL_HOSTS: LazyLock<Mutex<BTreeMap<String, Arc<Mutex<LocalAdapterHost>>>>> =
     LazyLock::new(|| Mutex::new(BTreeMap::new()));
-static REMOTE_ENVIRONMENTS: LazyLock<Mutex<BTreeMap<String, String>>> =
+static REMOTE_ENVIRONMENTS: LazyLock<Mutex<BTreeMap<String, RemoteEnvironmentState>>> =
     LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RemoteEnvironmentState {
+    Active { runtime_id: String },
+    Releasing,
+}
 
 /// A request passed to a NeMo Fabric-managed harness runtime.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Default)]
@@ -820,18 +826,36 @@ pub fn attach_environment(
 /// Local and externally owned environments are detached without deletion. A provider may delete
 /// a Fabric-owned environment according to its normalized ownership contract.
 pub fn release_environment(environment: &EnvironmentHandle) -> Result<()> {
-    if let Some(runtime_id) = REMOTE_ENVIRONMENTS
+    {
+        let mut environments = REMOTE_ENVIRONMENTS
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        match environments.get(&environment.environment_id) {
+            Some(RemoteEnvironmentState::Active { runtime_id }) => {
+                return Err(FabricError::EnvironmentInUse {
+                    environment_id: environment.environment_id.clone(),
+                    runtime_id: runtime_id.clone(),
+                });
+            }
+            Some(RemoteEnvironmentState::Releasing) => {
+                return Err(FabricError::EnvironmentReleaseInProgress {
+                    environment_id: environment.environment_id.clone(),
+                });
+            }
+            None => {
+                environments.insert(
+                    environment.environment_id.clone(),
+                    RemoteEnvironmentState::Releasing,
+                );
+            }
+        }
+    }
+    let result = release_prepared_environment(environment).map(|_| ());
+    REMOTE_ENVIRONMENTS
         .lock()
         .unwrap_or_else(|error| error.into_inner())
-        .get(&environment.environment_id)
-        .cloned()
-    {
-        return Err(FabricError::EnvironmentInUse {
-            environment_id: environment.environment_id.clone(),
-            runtime_id,
-        });
-    }
-    release_prepared_environment(environment).map(|_| ())
+        .remove(&environment.environment_id);
+    result
 }
 
 /// Start or connect to a harness runtime.
@@ -1448,7 +1472,7 @@ impl RuntimeAdapter for InEnvironmentRuntimeAdapter {
             };
             let artifacts = runtime_artifact_manifest(&runtime);
             let mut start = adapter_lifecycle_start(plan, &runtime, &invocation, &artifacts, None)?;
-            start.base_dir = runtime_workspace(&runtime.environment);
+            start.base_dir = runtime_workspace(&runtime.environment)?;
             let lifecycle =
                 AdapterLifecycleRequest::new(AdapterLifecycleRequestKind::Start(Box::new(start)));
             let request = runtime_control_request(
@@ -1573,13 +1597,28 @@ fn reserve_remote_environment(environment_id: &str, runtime_id: &str) -> Result<
     let mut environments = REMOTE_ENVIRONMENTS
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    if let Some(active_runtime) = environments.get(environment_id) {
-        return Err(FabricError::EnvironmentInUse {
-            environment_id: environment_id.to_string(),
-            runtime_id: active_runtime.clone(),
-        });
+    match environments.get(environment_id) {
+        Some(RemoteEnvironmentState::Active {
+            runtime_id: active_runtime,
+        }) => {
+            return Err(FabricError::EnvironmentInUse {
+                environment_id: environment_id.to_string(),
+                runtime_id: active_runtime.clone(),
+            });
+        }
+        Some(RemoteEnvironmentState::Releasing) => {
+            return Err(FabricError::EnvironmentReleaseInProgress {
+                environment_id: environment_id.to_string(),
+            });
+        }
+        None => {}
     }
-    environments.insert(environment_id.to_string(), runtime_id.to_string());
+    environments.insert(
+        environment_id.to_string(),
+        RemoteEnvironmentState::Active {
+            runtime_id: runtime_id.to_string(),
+        },
+    );
     Ok(())
 }
 
@@ -1601,21 +1640,37 @@ fn remote_environment_is_bound(runtime: &RuntimeHandle) -> bool {
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .get(&runtime.environment.environment_id)
-        .is_some_and(|runtime_id| runtime_id == &runtime.runtime_id)
+        .is_some_and(|state| {
+            matches!(
+                state,
+                RemoteEnvironmentState::Active { runtime_id }
+                    if runtime_id == &runtime.runtime_id
+            )
+        })
 }
 
 fn remove_remote_environment(environment_id: &str) {
-    REMOTE_ENVIRONMENTS
+    let mut environments = REMOTE_ENVIRONMENTS
         .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .remove(environment_id);
+        .unwrap_or_else(|error| error.into_inner());
+    if matches!(
+        environments.get(environment_id),
+        Some(RemoteEnvironmentState::Active { .. })
+    ) {
+        environments.remove(environment_id);
+    }
 }
 
-fn runtime_workspace(environment: &EnvironmentHandle) -> PathBuf {
+fn runtime_workspace(environment: &EnvironmentHandle) -> Result<PathBuf> {
     environment
         .workspace
         .clone()
-        .unwrap_or_else(|| PathBuf::from("/sandbox"))
+        .ok_or_else(|| FabricError::EnvironmentHandleMismatch {
+            field: "workspace",
+            expected: "an absolute sandbox path".to_string(),
+            actual: "missing".to_string(),
+            environment_id: environment.environment_id.clone(),
+        })
 }
 
 fn runtime_artifact_manifest(runtime: &RuntimeHandle) -> ArtifactManifest {
@@ -1629,7 +1684,7 @@ fn runtime_adapter_process(
     plan: &RunPlan,
     runtime: &RuntimeHandle,
 ) -> Result<RuntimeAdapterProcess> {
-    let workspace = runtime_workspace(&runtime.environment);
+    let workspace = runtime_workspace(&runtime.environment)?;
     match adapter_kind(plan) {
         AdapterKind::Process => {
             let settings = parse_process_settings(plan)?;
@@ -1643,8 +1698,8 @@ fn runtime_adapter_process(
                 );
             }
             args.extend(settings.args);
-            let mut env = runtime.environment.env.clone();
-            env.extend(settings.env);
+            let mut env = settings.env;
+            env.extend(runtime.environment.env.clone());
             Ok(RuntimeAdapterProcess {
                 command: std::iter::once(command.to_string_lossy().into_owned())
                     .chain(args)
@@ -1679,8 +1734,8 @@ fn runtime_adapter_process(
                 settings.module,
             ];
             command.extend(settings.args);
-            let mut env = runtime.environment.env.clone();
-            env.extend(settings.env);
+            let mut env = settings.env;
+            env.extend(runtime.environment.env.clone());
             Ok(RuntimeAdapterProcess {
                 command,
                 cwd: Some(
@@ -4160,6 +4215,8 @@ for line in sys.stdin:
         environment_plan.provider = "openshell".to_string();
         environment_plan.control_location = ControlLocation::InEnvControl;
         environment_plan.ownership = EnvironmentOwnership::FabricOwned;
+        environment_plan.workspace = Some(PathBuf::from("/sandbox"));
+        environment_plan.artifacts = Some(PathBuf::from("/sandbox/artifacts"));
 
         let environment_config = plan
             .config
@@ -4184,6 +4241,74 @@ for line in sys.stdin:
                 if provider == "openshell"
         ));
 
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn remote_environment_rejects_a_runtime_while_release_is_in_progress() {
+        let environment_id = new_id("environment-releasing-test");
+        REMOTE_ENVIRONMENTS
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .insert(environment_id.clone(), RemoteEnvironmentState::Releasing);
+
+        let error = reserve_remote_environment(&environment_id, "runtime-new")
+            .expect_err("release must retain the environment slot");
+
+        assert!(matches!(
+            error,
+            FabricError::EnvironmentReleaseInProgress {
+                environment_id: active_id,
+            } if active_id == environment_id
+        ));
+        REMOTE_ENVIRONMENTS
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .remove(&environment_id);
+    }
+
+    #[test]
+    fn sandbox_adapter_uses_local_host_environment_precedence() {
+        let (root, mut plan) = local_host_plan("success");
+        configure_openshell_environment(&mut plan);
+        plan.config
+            .harness
+            .as_mut()
+            .expect("harness config")
+            .settings
+            .insert(
+                "env".to_string(),
+                serde_json::json!({"SHARED": "adapter", "ADAPTER_ONLY": "yes"}),
+            );
+        let environment = EnvironmentHandle {
+            environment_id: "environment-precedence".to_string(),
+            provider: "openshell".to_string(),
+            control_location: ControlLocation::InEnvControl,
+            workspace: Some(PathBuf::from("/sandbox")),
+            artifacts: None,
+            env: BTreeMap::from([
+                ("SHARED".to_string(), "environment".to_string()),
+                ("ENVIRONMENT_ONLY".to_string(), "yes".to_string()),
+            ]),
+            ownership: EnvironmentOwnership::FabricOwned,
+            connection: BTreeMap::new(),
+            metadata: BTreeMap::new(),
+        };
+        let runtime = RuntimeHandle {
+            runtime_id: "runtime-precedence".to_string(),
+            runtime_binding: "binding".to_string(),
+            agent_name: plan.agent_name.clone(),
+            harness: harness(&plan),
+            adapter_kind: adapter_kind(&plan),
+            adapter_id: adapter_id(&plan),
+            environment,
+        };
+
+        let process = runtime_adapter_process(&plan, &runtime).expect("adapter process");
+
+        assert_eq!(process.env["SHARED"], "environment");
+        assert_eq!(process.env["ADAPTER_ONLY"], "yes");
+        assert_eq!(process.env["ENVIRONMENT_ONLY"], "yes");
         let _ = fs::remove_dir_all(root);
     }
 

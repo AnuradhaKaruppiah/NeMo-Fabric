@@ -293,6 +293,14 @@ pub enum FabricError {
         /// Active runtime holding the slot.
         runtime_id: String,
     },
+    /// An environment release is already in progress.
+    #[error(
+        "environment `{environment_id}` is being released; wait for release_environment() to finish before starting another session"
+    )]
+    EnvironmentReleaseInProgress {
+        /// Environment whose lifecycle is being released or detached.
+        environment_id: String,
+    },
     /// Process adapter settings were invalid.
     #[error("invalid process adapter settings for {path}: {source}")]
     InvalidProcessSettings {

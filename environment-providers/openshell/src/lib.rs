@@ -73,19 +73,24 @@ where
     W: Write,
     F: GatewayFactory,
 {
-    let mut line = Vec::new();
     loop {
-        line.clear();
-        let read = reader.read_until(b'\n', &mut line)?;
-        if read == 0 {
-            return Ok(());
-        }
-        if line.len() > MAX_REQUEST_BYTES {
-            return Err(ProviderError::contract(
-                "request_too_large",
-                format!("request exceeds the {MAX_REQUEST_BYTES}-byte limit"),
-            ));
-        }
+        let line = match read_request_frame(&mut reader)? {
+            RequestFrame::EndOfInput => return Ok(()),
+            RequestFrame::Oversized => {
+                let response = ProviderResponse::failed(
+                    "unknown",
+                    "request_too_large",
+                    format!("request exceeds the {MAX_REQUEST_BYTES}-byte limit"),
+                );
+                serde_json::to_writer(&mut writer, &response).map_err(|error| {
+                    ProviderError::contract("response_serialization", error.to_string())
+                })?;
+                writer.write_all(b"\n")?;
+                writer.flush()?;
+                continue;
+            }
+            RequestFrame::Data(line) => line,
+        };
         let response = match serde_json::from_slice::<ProviderRequest>(&line) {
             Ok(request) => handle_request(request, factory).await,
             Err(error) => ProviderResponse::failed(
@@ -99,6 +104,47 @@ where
         })?;
         writer.write_all(b"\n")?;
         writer.flush()?;
+    }
+}
+
+enum RequestFrame {
+    EndOfInput,
+    Data(Vec<u8>),
+    Oversized,
+}
+
+fn read_request_frame(reader: &mut impl BufRead) -> std::io::Result<RequestFrame> {
+    let mut line = Vec::new();
+    let mut oversized = false;
+    loop {
+        let (consumed, terminated) = {
+            let available = reader.fill_buf()?;
+            if available.is_empty() {
+                return if line.is_empty() {
+                    Ok(RequestFrame::EndOfInput)
+                } else if oversized {
+                    Ok(RequestFrame::Oversized)
+                } else {
+                    Ok(RequestFrame::Data(line))
+                };
+            }
+            let newline = available.iter().position(|byte| *byte == b'\n');
+            let consumed = newline.map_or(available.len(), |position| position + 1);
+            if !oversized {
+                let remaining = (MAX_REQUEST_BYTES + 1).saturating_sub(line.len());
+                line.extend_from_slice(&available[..consumed.min(remaining)]);
+                oversized = line.len() > MAX_REQUEST_BYTES;
+            }
+            (consumed, newline.is_some())
+        };
+        reader.consume(consumed);
+        if terminated {
+            return if oversized {
+                Ok(RequestFrame::Oversized)
+            } else {
+                Ok(RequestFrame::Data(line))
+            };
+        }
     }
 }
 
@@ -725,6 +771,12 @@ fn validate_profile(
             format!("environment.ownership must be `{expected_ownership}`"),
         ));
     }
+    if environment.workspace.is_none() {
+        return Err(ProviderError::contract(
+            "invalid_profile",
+            "environment.workspace must be an absolute path inside the sandbox",
+        ));
+    }
     for (field, path) in [
         ("environment.workspace", environment.workspace.as_deref()),
         ("environment.artifacts", environment.artifacts.as_deref()),
@@ -1069,6 +1121,14 @@ impl OpenShellConnection {
     }
 
     fn client_config(&self) -> Result<ClientConfig, ProviderError> {
+        if self.token_env.is_some()
+            && (self.insecure_skip_verify || !self.gateway.starts_with("https://"))
+        {
+            return Err(ProviderError::contract(
+                "invalid_connection",
+                "connection.token_env requires an HTTPS gateway with certificate verification enabled",
+            ));
+        }
         let mut config = ClientConfig::new(&self.gateway);
         config.insecure_skip_verify = self.insecure_skip_verify;
         if let Some(name) = &self.ca_cert_env {
@@ -1440,7 +1500,10 @@ impl Gateway for SdkGateway {
             .create_sandbox(request)
             .await
             .map_err(|error| {
-                ProviderError::contract("sdk_rpc", format!("OpenShell create failed: {error}"))
+                ProviderError::contract(
+                    grpc_error_code(error.code()),
+                    format!("OpenShell create failed: {error}"),
+                )
             })?
             .into_inner();
         let sandbox = response.sandbox.ok_or_else(|| {
@@ -1466,7 +1529,10 @@ impl Gateway for SdkGateway {
             })
             .await
             .map_err(|error| {
-                ProviderError::contract("sdk_rpc", format!("OpenShell get failed: {error}"))
+                ProviderError::contract(
+                    grpc_error_code(error.code()),
+                    format!("OpenShell get failed: {error}"),
+                )
             })?
             .into_inner();
         let sandbox = response.sandbox.ok_or_else(|| {
@@ -1617,6 +1683,15 @@ fn map_sdk_error(error: SdkError) -> ProviderError {
     ProviderError::contract(error.code(), error.to_string())
 }
 
+fn grpc_error_code(code: tonic::Code) -> &'static str {
+    match code {
+        tonic::Code::NotFound => "not_found",
+        tonic::Code::AlreadyExists => "already_exists",
+        tonic::Code::Unauthenticated | tonic::Code::PermissionDenied => "auth",
+        _ => "rpc",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1674,6 +1749,18 @@ mod tests {
     }
 
     #[test]
+    fn openshell_profile_requires_a_sandbox_workspace() {
+        let mut environment = environment_plan_fixture();
+        environment.workspace = None;
+
+        let error =
+            validate_profile(&environment, "fabric_owned").expect_err("workspace must be explicit");
+
+        assert_eq!(error.code(), "invalid_profile");
+        assert!(error.to_string().contains("environment.workspace"));
+    }
+
+    #[test]
     fn connection_rejects_literal_unknown_credential_fields() {
         let error = OpenShellConnection::from_map(&Map::from_iter([
             ("gateway".to_string(), json!("https://gateway.example")),
@@ -1698,6 +1785,42 @@ mod tests {
 
         assert_eq!(safe["token_env"], json!("OPEN_SHELL_TOKEN"));
         assert!(!safe.contains_key("token"));
+    }
+
+    #[test]
+    fn credentialed_connections_require_verified_https() {
+        for (gateway, insecure_skip_verify) in [
+            ("http://gateway.example", false),
+            ("https://gateway.example", true),
+        ] {
+            let connection = OpenShellConnection::from_map(&Map::from_iter([
+                ("gateway".to_string(), json!(gateway)),
+                ("token_env".to_string(), json!("OPEN_SHELL_TOKEN")),
+                (
+                    "insecure_skip_verify".to_string(),
+                    json!(insecure_skip_verify),
+                ),
+            ]))
+            .expect("connection shape");
+
+            let Err(error) = connection.client_config() else {
+                panic!("credential transport must fail closed");
+            };
+            assert_eq!(error.code(), "invalid_connection");
+            assert!(error.to_string().contains("HTTPS"));
+        }
+    }
+
+    #[test]
+    fn grpc_statuses_map_to_stable_provider_codes() {
+        assert_eq!(grpc_error_code(tonic::Code::NotFound), "not_found");
+        assert_eq!(
+            grpc_error_code(tonic::Code::AlreadyExists),
+            "already_exists"
+        );
+        assert_eq!(grpc_error_code(tonic::Code::Unauthenticated), "auth");
+        assert_eq!(grpc_error_code(tonic::Code::PermissionDenied), "auth");
+        assert_eq!(grpc_error_code(tonic::Code::Unavailable), "rpc");
     }
 
     #[tokio::test]
@@ -1736,6 +1859,26 @@ mod tests {
                 .iter()
                 .all(|response| response["error"]["code"] == "invalid_request")
         );
+    }
+
+    #[tokio::test]
+    async fn oversized_request_is_drained_before_the_next_frame() {
+        let mut input = vec![b'x'; MAX_REQUEST_BYTES + 1];
+        input.extend_from_slice(b"\nnot-json\n");
+        let mut output = Vec::new();
+
+        serve(input.as_slice(), &mut output, &NeverConnect)
+            .await
+            .expect("serve requests");
+
+        let responses = output
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| serde_json::from_slice::<Value>(line).expect("response JSON"))
+            .collect::<Vec<_>>();
+        assert_eq!(responses.len(), 2);
+        assert_eq!(responses[0]["error"]["code"], "request_too_large");
+        assert_eq!(responses[1]["error"]["code"], "invalid_request");
     }
 
     #[tokio::test]

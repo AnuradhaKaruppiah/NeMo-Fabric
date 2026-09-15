@@ -50,13 +50,14 @@ except ImportError:
 class Fabric:
     """Primary Python entrypoint for NeMo Fabric.
 
-    Every lifecycle method accepts a complete, typed ``FabricConfig`` plus an
-    optional ``base_dir`` used to resolve relative paths. Compose variants in
-    Python before calling the SDK. The ``doctor()``, ``plan()``, and ``run()``
-    results are typed, read-only mapping models. ``start_runtime()`` returns an
-    active local ``Runtime`` handle. Explicit environment users call either
-    ``prepare_environment()`` or ``attach_environment()``, then
-    ``start_runtime_in()`` and ``release_environment()`` separately.
+    Every config-dependent lifecycle method accepts a complete, typed
+    ``FabricConfig`` plus an optional ``base_dir`` used to resolve relative
+    paths. Compose variants in Python before calling the SDK. The ``doctor()``,
+    ``plan()``, and ``run()`` results are typed, read-only mapping models.
+    ``start_runtime()`` returns an active local ``Runtime`` handle. Explicit
+    environment users call either ``prepare_environment()`` or
+    ``attach_environment()``, then ``start_runtime_in()`` and
+    ``release_environment()`` separately.
 
     ``Fabric`` uses the native Rust extension. SDK calls raise
     ``FabricNativeUnavailableError`` when the native extension is not
@@ -240,6 +241,7 @@ class Fabric:
             base_dir=base_dir,
             overrides=overrides,
             streaming=streaming,
+            launch_collector=launch_collector,
         )
 
     async def prepare_environment(
@@ -332,9 +334,9 @@ class Fabric:
     ) -> Runtime:
         """Start one stateful runtime in an explicitly prepared or attached environment.
 
-        Starting or stopping the runtime does not release ``environment``. This
-        lets consumers run sequential sessions, or coordinate concurrent
-        sessions, without hiding environment ownership inside a session API.
+        Starting or stopping the runtime does not release ``environment``. One
+        runtime session can be active in an environment at a time. After it
+        stops, the consumer can start another session or release the environment.
 
         Args:
             config: Complete typed ``FabricConfig`` matching the environment.
@@ -396,6 +398,7 @@ class Fabric:
         base_dir: str | os.PathLike[str] | None = None,
         overrides: Mapping[str, Any] | None = None,
         streaming: bool = False,
+        launch_collector: bool | None = None,
     ) -> Runtime:
         runtime_overrides = _json_mapping(overrides, "runtime overrides")
         collector: AsyncExitStack | None = None

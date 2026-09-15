@@ -925,7 +925,7 @@ Return a detached, JSON-compatible mapping for serialization.
 
 Durable identity and provider binding for a prepared or attached environment.
 
-Environment handles are independent of runtime sessions. Applications may start one or more runtimes in an environment and decide separately when to release or detach it.
+Environment handles are independent of runtime sessions. One runtime session can be active in an environment at a time. After it stops, the application can start another session or release the environment.
 
 
 

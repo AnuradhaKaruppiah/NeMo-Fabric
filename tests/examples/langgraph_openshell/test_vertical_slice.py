@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
 from nemo_fabric_adapter_contract.models import AgentConfig
 from nemo_fabric_adapter_contract.models import AgentRunRequest
 from nemo_fabric_adapter_contract.models import RuntimeContext
@@ -31,7 +30,6 @@ def test_graph_retains_the_fallback_route_for_the_delivery_turn() -> None:
     assert delivered["delivery_status"] == "delivered"
 
 
-@pytest.mark.asyncio
 async def test_adapter_returns_a_receipt_from_the_runtime_artifact_root(
     tmp_path, monkeypatch
 ) -> None:

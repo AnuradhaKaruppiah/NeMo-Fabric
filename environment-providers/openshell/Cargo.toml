@@ -6,6 +6,7 @@ name = "nemo-fabric-openshell-provider"
 description = "OpenShell environment provider for NVIDIA NeMo Fabric"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish = false
@@ -22,6 +23,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { version = "1.43", features = ["macros", "rt-multi-thread"] }
+tonic = "0.14"
 
 [lints]
 workspace = true

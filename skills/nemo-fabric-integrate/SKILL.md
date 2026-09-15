@@ -188,8 +188,8 @@ Pick the smallest lifecycle the consumer needs:
   create the environment with `prepare_environment(...)`. In a deployment flow,
   keep provisioning with the consumer and call
   `attach_environment(config, EnvironmentReference(...))` to verify and bind the
-  existing caller-owned resource without giving Fabric deletion authority. Then
-  bind exactly one sequential session with
+  existing caller-owned resource without giving NeMo Fabric deletion authority.
+  Then bind exactly one sequential session with
   `start_runtime_in(config, environment)`, stop that runtime, inspect the still
   live environment if needed, and call `release_environment(environment)` only
   when the consumer is done. Runtime start/stop never implicitly prepares or
@@ -238,8 +238,9 @@ a runtime failure. Stop the failed runtime and explicitly start a new one
 according to the application's retry policy.
 
 The lifecycle fragment below shows the available forms. It assumes the caller
-has already set `config = to_fabric_config(job)` and chosen `base`, as described
-in the configuration example above:
+has already set `config = to_fabric_config(job)`, `deployment_config`,
+`deployment.sandbox_name`, and `deployment.sandbox_id`, and has chosen `base`,
+as described in the configuration example above:
 
 ```python
 import asyncio
@@ -292,7 +293,7 @@ async def main() -> None:
         ) as runtime:
             remote_result = await runtime.invoke(input="Inspect inside the sandbox")
     finally:
-        # Detaches Fabric; the deployment remains responsible for deletion.
+        # Detaches NeMo Fabric; the deployment remains responsible for deletion.
         await fabric.release_environment(environment)
 
     # Adapter-native OpenAI Chat Completions chunks

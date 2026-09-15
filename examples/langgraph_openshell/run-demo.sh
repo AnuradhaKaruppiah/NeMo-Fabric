@@ -202,6 +202,7 @@ supervisor_bin = "${OPENSHELL_SUPERVISOR}"
 EOF
 "${OPENSHELL_GATEWAY}" \
   --config "${GATEWAY_STATE_DIR}/gateway.toml" \
+  --bind-address 127.0.0.1 \
   --port "${GATEWAY_PORT}" \
   --drivers docker \
   --disable-tls \

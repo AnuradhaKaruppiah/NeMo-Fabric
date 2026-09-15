@@ -103,7 +103,7 @@ The integration spans three API layers:
 | Boundary | Caller → Callee | Operations |
 | --- | --- | --- |
 | Consumer-facing Fabric API | Consumer application → Fabric | `prepare_environment`, `attach_environment`, `start_runtime`, `start_runtime_in`, `Runtime.invoke`, `Runtime.stop`, `release_environment` |
-| Environment-provider protocol | Fabric SDK Rust core → OpenShell provider | `prepare`, `attach`, `runtime_control`, `collect_artifacts`, `release` |
+| Fabric provider IPC (JSON over stdio) | Fabric SDK Rust core → OpenShell provider | `prepare`, `attach`, `runtime_control`, `collect_artifacts`, `release` |
 | Fabric adapter contract | Runtime server → Fabric adapter | `start`, `invoke`, `stop` |
 
 `start_runtime_in` is the explicit-environment counterpart to `start_runtime`.

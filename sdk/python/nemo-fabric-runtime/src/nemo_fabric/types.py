@@ -1631,6 +1631,12 @@ class EnvironmentReference(FabricMapping):
 
     @classmethod
     def _normalize(cls, data: dict[str, Any]) -> dict[str, Any]:
+        unknown = set(data).difference(cls._fields)
+        if unknown:
+            raise FabricConfigError(
+                "EnvironmentReference contains unknown fields: "
+                + ", ".join(sorted(unknown))
+            )
         data["provider"] = _required_text(data.get("provider"), "provider")
         data["resource"] = _mapping(data.get("resource", {}), "resource")
         return data
@@ -1639,9 +1645,9 @@ class EnvironmentReference(FabricMapping):
 class EnvironmentHandle(FabricMapping):
     """Durable identity and provider binding for a prepared or attached environment.
 
-    Environment handles are independent of runtime sessions. Applications may
-    start one or more runtimes in an environment and decide separately when to
-    release or detach it.
+    Environment handles are independent of runtime sessions. One runtime session
+    can be active in an environment at a time. After it stops, the application
+    can start another session or release the environment.
 
     Attributes:
         environment_id: Unique identifier for the prepared environment.

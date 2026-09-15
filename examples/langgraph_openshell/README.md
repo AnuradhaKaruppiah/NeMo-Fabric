@@ -15,7 +15,7 @@ For component placement, lifecycle, and ownership, refer to the
 
 ## Scenario
 
-The example sends two inputs to one Fabric runtime:
+The example sends two inputs to one NeMo Fabric runtime:
 
 ```mermaid
 flowchart TB
@@ -38,8 +38,8 @@ The first turn tries `GET /priority-lane`. The OpenShell L7 policy permits only
 `GET /`, so the agent observes the denial and selects the allowed fallback.
 
 The second turn uses the retained LangGraph state to write
-`delivery-receipt.json`. The adapter declares the file, and Fabric collects it
-through a traversal-safe, size-bounded operation.
+`delivery-receipt.json`. The adapter declares the file, and NeMo Fabric
+collects it through a traversal-safe, size-bounded operation.
 
 ## Run the Example
 
@@ -56,9 +56,9 @@ The script performs the following actions:
 2. Downloads and verifies pinned, published OpenShell binaries.
 3. Starts the published OpenShell gateway with its Docker driver.
 4. Creates a digest-pinned, policy-configured sandbox as the consumer.
-5. Attaches Fabric to the sandbox by name and immutable ID.
+5. Attaches NeMo Fabric to the sandbox by name and immutable ID.
 6. Runs the two-turn LangGraph session and collects the receipt.
-7. Stops the Fabric runtime and verifies that Fabric did not delete the
+7. Stops the NeMo Fabric runtime and verifies that NeMo Fabric did not delete the
    caller-owned sandbox.
 
 The script deletes the caller-owned sandbox during its own final cleanup.
@@ -102,12 +102,12 @@ Set `OPENSHELL_VERSION` to test another published release. Set
 
 A successful deployment run demonstrates:
 
-- the same Fabric runtime ID for both turns;
+- the same NeMo Fabric runtime ID for both turns;
 - an HTTP 403 response for the preferred route;
 - an HTTP 200 response for the allowed fallback;
 - retained LangGraph state during the delivery turn;
 - a receipt collected below `.tmp/portable-courier/artifacts/`; and
-- a caller-owned sandbox that still exists after Fabric detaches.
+- a caller-owned sandbox that still exists after NeMo Fabric detaches.
 
 On failure, the script prints the tail of the OpenShell gateway log before
 cleaning up its temporary state.
@@ -115,8 +115,8 @@ cleaning up its temporary state.
 ## What This Example Proves
 
 - A custom agent and its Fabric adapter can run unchanged inside OpenShell.
-- One Fabric runtime preserves one ordered, stateful agent session.
-- OpenShell, not Fabric, enforces the sandbox policy.
+- One NeMo Fabric runtime preserves one ordered, stateful agent session.
+- OpenShell, not NeMo Fabric, enforces the sandbox policy.
 - The deployment consumer retains sandbox lifecycle and concurrency control.
-- Fabric normalizes invocation results and declared artifacts across the
+- NeMo Fabric normalizes invocation results and declared artifacts across the
   sandbox boundary.

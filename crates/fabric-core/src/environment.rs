@@ -7,9 +7,11 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -29,6 +31,8 @@ const PROVIDER_PROTOCOL_VERSION: &str = "fabric.environment-provider.v1alpha1";
 const MAX_PROVIDER_REQUEST_BYTES: usize = 256 * 1024;
 const MAX_PROVIDER_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_PROVIDER_DIAGNOSTIC_BYTES: usize = 64 * 1024;
+const DEFAULT_PROVIDER_OPERATION_TIMEOUT_SECONDS: u64 = 30;
+const PROVIDER_RESPONSE_GRACE_SECONDS: u64 = 15;
 
 /// Internal environment preparation contract.
 ///
@@ -151,6 +155,16 @@ impl EnvironmentProvider for OpenShellEnvironmentProvider {
             environment_id: &environment_id,
             environment,
         })?;
+        let workspace =
+            prepared
+                .workspace
+                .ok_or_else(|| FabricError::EnvironmentProviderOperation {
+                    provider: OPEN_SHELL_PROVIDER_ID.to_string(),
+                    operation: "prepare".to_string(),
+                    code: "workspace_unavailable".to_string(),
+                    message: "OpenShell provider response omitted the sandbox workspace"
+                        .to_string(),
+                })?;
         let mut metadata = prepared.metadata.into_iter().collect::<BTreeMap<_, _>>();
         metadata.extend(environment.metadata.clone());
 
@@ -158,7 +172,7 @@ impl EnvironmentProvider for OpenShellEnvironmentProvider {
             environment_id,
             provider: OPEN_SHELL_PROVIDER_ID.to_string(),
             control_location: environment.control_location,
-            workspace: prepared.workspace,
+            workspace: Some(workspace),
             artifacts: prepared.artifacts,
             env: environment.env.clone(),
             ownership: environment.ownership,
@@ -188,6 +202,16 @@ impl EnvironmentProvider for OpenShellEnvironmentProvider {
             environment,
             reference,
         })?;
+        let workspace =
+            prepared
+                .workspace
+                .ok_or_else(|| FabricError::EnvironmentProviderOperation {
+                    provider: OPEN_SHELL_PROVIDER_ID.to_string(),
+                    operation: "attach".to_string(),
+                    code: "workspace_unavailable".to_string(),
+                    message: "OpenShell provider response omitted the sandbox workspace"
+                        .to_string(),
+                })?;
         let mut metadata = prepared.metadata.into_iter().collect::<BTreeMap<_, _>>();
         metadata.extend(environment.metadata.clone());
 
@@ -195,7 +219,7 @@ impl EnvironmentProvider for OpenShellEnvironmentProvider {
             environment_id,
             provider: OPEN_SHELL_PROVIDER_ID.to_string(),
             control_location: environment.control_location,
-            workspace: prepared.workspace,
+            workspace: Some(workspace),
             artifacts: prepared.artifacts,
             env: environment.env.clone(),
             ownership: environment.ownership,
@@ -300,6 +324,13 @@ fn validate_open_shell_profile(
             ),
         });
     }
+    if environment.workspace.is_none() {
+        return Err(FabricError::InvalidConfig {
+            field: "environment.workspace".to_string(),
+            reason: "the experimental openshell provider requires an absolute sandbox workspace"
+                .to_string(),
+        });
+    }
     Ok(())
 }
 
@@ -314,6 +345,7 @@ where
     T: for<'de> Deserialize<'de>,
 {
     let operation_name = operation.name();
+    let response_timeout = operation.response_timeout();
     let request_id = new_id("environment-provider-request");
     let request = ProviderRequest {
         protocol_version: PROVIDER_PROTOCOL_VERSION,
@@ -366,17 +398,9 @@ where
         );
     }
 
-    let mut output = Vec::new();
-    let read = {
-        let mut bounded = process
-            .stdout
-            .by_ref()
-            .take((MAX_PROVIDER_RESPONSE_BYTES + 1) as u64);
-        bounded.read_until(b'\n', &mut output)
-    };
-    let read = match read {
-        Ok(read) => read,
-        Err(error) => {
+    let output = match process.responses.recv_timeout(response_timeout) {
+        Ok(Ok(output)) => output,
+        Ok(Err(error)) => {
             let diagnostics = process.diagnostics();
             process.shutdown();
             *slot = None;
@@ -385,6 +409,39 @@ where
                 "provider_protocol_error",
                 with_provider_diagnostics(
                     format!("could not read provider response: {error}"),
+                    diagnostics,
+                ),
+            );
+        }
+        Err(RecvTimeoutError::Timeout) => {
+            let diagnostics = process.diagnostics();
+            process.shutdown();
+            *slot = None;
+            return provider_error(
+                operation_name,
+                "provider_protocol_error",
+                with_provider_diagnostics(
+                    format!(
+                        "provider did not respond within {} seconds",
+                        response_timeout.as_secs()
+                    ),
+                    diagnostics,
+                ),
+            );
+        }
+        Err(RecvTimeoutError::Disconnected) => {
+            let status = process.child.try_wait().ok().flatten();
+            let diagnostics = process.diagnostics();
+            process.shutdown();
+            *slot = None;
+            return provider_error(
+                operation_name,
+                "provider_exited",
+                with_provider_diagnostics(
+                    status.map_or_else(
+                        || "provider closed its response stream".to_string(),
+                        |status| format!("provider exited with {status}"),
+                    ),
                     diagnostics,
                 ),
             );
@@ -402,7 +459,7 @@ where
             ),
         );
     }
-    if read == 0 || output.last() != Some(&b'\n') {
+    if output.is_empty() || output.last() != Some(&b'\n') {
         let status = process.child.try_wait().ok().flatten();
         let diagnostics = process.diagnostics();
         process.shutdown();
@@ -472,7 +529,8 @@ struct ProviderProcess {
     command: OsString,
     child: Child,
     stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    responses: Receiver<std::io::Result<Vec<u8>>>,
+    responses_thread: Option<thread::JoinHandle<()>>,
     diagnostics: Arc<Mutex<Vec<u8>>>,
     diagnostics_thread: Option<thread::JoinHandle<()>>,
 }
@@ -511,6 +569,31 @@ impl ProviderProcess {
                     code: "provider_protocol_error".to_string(),
                     message: "provider stdout was unavailable".to_string(),
                 })?;
+        let (response_sender, responses) = mpsc::channel();
+        let responses_thread = thread::spawn(move || {
+            let mut stdout = BufReader::new(stdout);
+            loop {
+                let mut output = Vec::new();
+                let read = {
+                    let mut bounded = stdout
+                        .by_ref()
+                        .take((MAX_PROVIDER_RESPONSE_BYTES + 1) as u64);
+                    bounded.read_until(b'\n', &mut output)
+                };
+                match read {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        if response_sender.send(Ok(output)).is_err() {
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        let _ = response_sender.send(Err(error));
+                        break;
+                    }
+                }
+            }
+        });
         let mut stderr =
             child
                 .stderr
@@ -541,7 +624,8 @@ impl ProviderProcess {
             command,
             child,
             stdin,
-            stdout: BufReader::new(stdout),
+            responses,
+            responses_thread: Some(responses_thread),
             diagnostics,
             diagnostics_thread: Some(diagnostics_thread),
         })
@@ -570,6 +654,9 @@ impl ProviderProcess {
     fn shutdown(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        if let Some(thread) = self.responses_thread.take() {
+            let _ = thread.join();
+        }
         if let Some(thread) = self.diagnostics_thread.take() {
             let _ = thread.join();
         }
@@ -636,6 +723,42 @@ impl ProviderOperation<'_> {
             Self::Release { .. } => "release",
         }
     }
+
+    fn response_timeout(&self) -> Duration {
+        let operation_seconds = match self {
+            Self::Prepare { environment, .. } => {
+                setting_seconds(&environment.settings, "ready_timeout_seconds", 60)
+            }
+            Self::Attach { .. } => DEFAULT_PROVIDER_OPERATION_TIMEOUT_SECONDS,
+            Self::RuntimeControl { request, .. } => request.timeout_seconds,
+            Self::CollectArtifacts {
+                environment,
+                artifacts,
+            } => connection_seconds(
+                &environment.connection,
+                "exec_timeout_seconds",
+                DEFAULT_PROVIDER_OPERATION_TIMEOUT_SECONDS,
+            )
+            .saturating_mul(artifacts.len().max(1) as u64),
+            Self::Release { environment } => connection_seconds(
+                &environment.connection,
+                "delete_timeout_seconds",
+                DEFAULT_PROVIDER_OPERATION_TIMEOUT_SECONDS,
+            ),
+        };
+        Duration::from_secs(operation_seconds.saturating_add(PROVIDER_RESPONSE_GRACE_SECONDS))
+    }
+}
+
+fn setting_seconds(settings: &serde_json::Map<String, Value>, key: &str, default: u64) -> u64 {
+    settings.get(key).and_then(Value::as_u64).unwrap_or(default)
+}
+
+fn connection_seconds(connection: &BTreeMap<String, Value>, key: &str, default: u64) -> u64 {
+    connection
+        .get(key)
+        .and_then(Value::as_u64)
+        .unwrap_or(default)
 }
 
 #[derive(Deserialize)]
