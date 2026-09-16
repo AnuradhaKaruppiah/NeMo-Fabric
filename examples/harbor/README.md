@@ -100,6 +100,7 @@ container boundary:
 | `--mcp-config` | `mcp.servers` |
 | `--ak fabric_telemetry=relay` | `telemetry.providers.relay` and `relay.observability` |
 | `--ak fabric_model_base_url=<url>` | `models.default.base_url` |
+| `--ak fabric_model_api_key_env=<name>` | `models.default.api_key_env` |
 | `--ak fabric_system_instruction=<text>` | `instructions.system` |
 | `--ak fabric_max_turns=<count>` | `runtime.max_turns` |
 | `--ak fabric_runtime_timeout_seconds=<seconds>` | `runtime.timeout_seconds` |
@@ -107,6 +108,12 @@ container boundary:
 | `--ak fabric_blocked_tools='[...]'` | `tools.blocked` |
 | `--ak fabric_enabled_tools='[...]'` | `tools.enabled` |
 | `--ak fabric_harness_settings='{...}'` | Merged into `harness.settings`; planning rejects non-empty settings when the selected descriptor does not declare `settings_schema` |
+
+`fabric_model_api_key_env` names the environment variable the harness reads the
+model API key from inside the task container; pair it with Harbor's
+`--ae <NAME>=<value>` so the variable is present there. Adapters that require an
+explicit credential name for non-OpenAI providers (deepagents, for example) need it
+whenever `--model` is not an `openai/` model.
 
 The result is the complete `FabricConfig` uploaded with the `RunRequest` and
 task-local `base_dir`. The container-side runner deserializes that payload and
