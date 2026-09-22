@@ -379,19 +379,47 @@ def test_openclaw_uses_provider_local_model_id(tmp_path: Path):
     ]
 
 
-def test_openclaw_prepared_service_configures_runtime_and_telegram(
+def test_openclaw_prepared_service_passes_through_native_channel_config(
     mock_openclaw: Path, tmp_path: Path
 ):
     config = _config(mock_openclaw)
     assert config.harness is not None
     config.harness.settings.update(
         {
-            "agent_runtime": "codex",
-            "telegram": {
-                "bot_token_env": "TELEGRAM_BOT_TOKEN",
-                "api_root": "http://127.0.0.1:19090",
-                "dm_policy": "open",
-                "allow_from": ["*"],
+            "agent_id": "reviewer",
+            "channel_config": {
+                "channels": {
+                    "telegram": {
+                        "defaultAccount": "support",
+                        "accounts": {
+                            "support": {
+                                "botToken": {
+                                    "source": "env",
+                                    "provider": "default",
+                                    "id": "TELEGRAM_SUPPORT_BOT_TOKEN",
+                                },
+                                "apiRoot": "http://127.0.0.1:19090",
+                                "dmPolicy": "open",
+                                "allowFrom": ["*"],
+                            },
+                            "alerts": {
+                                "botToken": {
+                                    "source": "env",
+                                    "provider": "default",
+                                    "id": "TELEGRAM_ALERTS_BOT_TOKEN",
+                                },
+                                "dmPolicy": "allowlist",
+                                "allowFrom": ["tg:123456789"],
+                            },
+                        },
+                    }
+                },
+                "bindings": [
+                    {
+                        "agentId": "reviewer",
+                        "match": {"channel": "telegram", "accountId": "*"},
+                    }
+                ],
             },
         }
     )
@@ -406,24 +434,33 @@ def test_openclaw_prepared_service_configures_runtime_and_telegram(
     )
 
     model = generated["agents"]["defaults"]["models"]["test/fabric-echo"]
-    assert model["agentRuntime"] == {"id": "codex"}
-    assert generated["channels"]["telegram"] == {
-        "enabled": True,
-        "botToken": {
-            "source": "env",
-            "provider": "default",
-            "id": "TELEGRAM_BOT_TOKEN",
-        },
-        "apiRoot": "http://127.0.0.1:19090",
-        "dmPolicy": "open",
-        "allowFrom": ["*"],
-    }
+    assert model["agentRuntime"] == {"id": "openclaw"}
+    assert generated["agents"]["entries"] == {"reviewer": {"default": True}}
+    assert (
+        generated["channels"] == config.harness.settings["channel_config"]["channels"]
+    )
+    assert generated["bindings"] == [
+        {
+            "agentId": "reviewer",
+            "match": {"channel": "telegram", "accountId": "*"},
+        }
+    ]
 
 
-def test_openclaw_managed_runtime_rejects_telegram(mock_openclaw: Path, tmp_path: Path):
+def test_openclaw_managed_runtime_rejects_channel_config(
+    mock_openclaw: Path, tmp_path: Path
+):
     config = _config(mock_openclaw)
     assert config.harness is not None
-    config.harness.settings["telegram"] = {"bot_token_env": "TELEGRAM_BOT_TOKEN"}
+    config.harness.settings["channel_config"] = {
+        "channels": {"telegram": {"enabled": True}},
+        "bindings": [
+            {
+                "agentId": "default",
+                "match": {"channel": "telegram", "accountId": "*"},
+            }
+        ],
+    }
 
     with pytest.raises(adapter.lifecycle.LifecycleError) as caught:
         adapter._openclaw_config(
@@ -437,12 +474,98 @@ def test_openclaw_managed_runtime_rejects_telegram(mock_openclaw: Path, tmp_path
     assert caught.value.code == "openclaw_channels_require_service"
 
 
+def test_openclaw_channel_binding_must_target_configured_agent(
+    mock_openclaw: Path, tmp_path: Path
+):
+    config = _config(mock_openclaw)
+    assert config.harness is not None
+    config.harness.settings["channel_config"] = {
+        "channels": {"telegram": {"enabled": True}},
+        "bindings": [
+            {
+                "agentId": "another-agent",
+                "match": {"channel": "telegram", "accountId": "*"},
+            }
+        ],
+    }
+
+    with pytest.raises(adapter.lifecycle.LifecycleError) as caught:
+        adapter._openclaw_config(
+            config,
+            _context(tmp_path),
+            base_dir=tmp_path,
+            port=20_000,
+            token_env="OPENCLAW_GATEWAY_TOKEN",
+            service_mode=True,
+        )
+
+    assert caught.value.code == "openclaw_invalid_configuration"
+    assert caught.value.metadata["field"] == (
+        "harness.settings.channel_config.bindings[0].agentId"
+    )
+
+
+async def test_openclaw_channel_secret_refs_require_environment_variables(
+    mock_openclaw: Path, tmp_path: Path
+):
+    os.environ.pop("TELEGRAM_SUPPORT_BOT_TOKEN", None)
+    config = _config(mock_openclaw)
+    assert config.harness is not None
+    config.harness.settings["channel_config"] = {
+        "channels": {
+            "telegram": {
+                "accounts": {
+                    "support": {
+                        "botToken": {
+                            "source": "env",
+                            "provider": "default",
+                            "id": "TELEGRAM_SUPPORT_BOT_TOKEN",
+                        }
+                    }
+                }
+            }
+        },
+        "bindings": [
+            {
+                "agentId": "default",
+                "match": {"channel": "telegram", "accountId": "support"},
+            }
+        ],
+    }
+
+    with pytest.raises(adapter.lifecycle.LifecycleError) as caught:
+        await adapter.OpenClawRuntime().start(
+            {
+                "config": config,
+                "runtime_context": _context(tmp_path).to_mapping(),
+                "base_dir": str(tmp_path),
+                "service": {
+                    "operation": "prepare",
+                    "connection_path": str(tmp_path / "connection.json"),
+                },
+            }
+        )
+
+    assert caught.value.code == "openclaw_missing_channel_secret"
+    assert caught.value.metadata == {
+        "environment_variables": ["TELEGRAM_SUPPORT_BOT_TOKEN"]
+    }
+
+
 def test_openclaw_attach_rejects_deployment_owned_configuration(
     mock_openclaw: Path,
 ):
     config = _config(mock_openclaw)
     assert config.harness is not None
-    config.harness.settings["agent_runtime"] = "codex"
+    config.harness.settings["channel_config"] = {
+        "channels": {"telegram": {"enabled": True}},
+        "bindings": [
+            {
+                "agentId": "default",
+                "match": {"channel": "telegram", "accountId": "*"},
+            }
+        ],
+    }
 
     with pytest.raises(adapter.lifecycle.LifecycleError) as caught:
         adapter._validate_attach_config(config)
@@ -454,8 +577,57 @@ def test_openclaw_attach_rejects_deployment_owned_configuration(
         "mcp",
         "skills",
         "harness.settings.openclaw_command",
-        "harness.settings.agent_runtime",
+        "harness.settings.channel_config",
     }
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://127.0.0.1:18789",
+        "http://[::1]:18789",
+        "https://openclaw.example.com",
+    ],
+)
+def test_openclaw_gateway_endpoint_accepts_secure_or_loopback_urls(endpoint: str):
+    assert adapter._gateway_endpoint(endpoint) == endpoint
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://192.0.2.1:18789",
+        "http://localhost:18789",
+        "http://openclaw.example.com",
+    ],
+)
+def test_openclaw_gateway_endpoint_rejects_nonliteral_or_remote_http(endpoint: str):
+    with pytest.raises(adapter.lifecycle.LifecycleError) as caught:
+        adapter._gateway_endpoint(endpoint)
+
+    assert caught.value.code == "openclaw_invalid_service_reference"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Requires POSIX file modes")
+def test_openclaw_service_connection_atomically_replaces_symlink(tmp_path: Path):
+    private = tmp_path / "private"
+    private.mkdir(mode=0o777)
+    victim = tmp_path / "victim.json"
+    victim.write_text("unchanged", encoding="utf-8")
+    connection_path = private / "service-connection.json"
+    connection_path.symlink_to(victim)
+
+    adapter._write_service_connection(
+        connection_path,
+        gateway_url="http://127.0.0.1:18789",
+        token="secret",
+        agent_id="default",
+    )
+
+    assert not connection_path.is_symlink()
+    assert victim.read_text(encoding="utf-8") == "unchanged"
+    assert private.stat().st_mode & 0o777 == 0o700
+    assert connection_path.stat().st_mode & 0o777 == 0o600
 
 
 @pytest.mark.skipif(
@@ -493,9 +665,11 @@ async def test_openclaw_prepared_service_supports_multiple_runtime_sessions(
         }
     )
     assert info is not None
+    assert info["adapter_id"] == "nvidia.fabric.openclaw"
     assert info["service_type"] == "openclaw_gateway"
     assert info["metadata"] == {"openclaw_version": "2026.9.4"}
     assert "gateway_token" not in json.dumps(info)
+    assert connection_path.parent.stat().st_mode & 0o777 == 0o700
     assert connection_path.stat().st_mode & 0o777 == 0o600
 
     runtimes: list[adapter.OpenClawRuntime] = []
@@ -555,11 +729,9 @@ async def test_openclaw_prepared_service_supports_multiple_runtime_sessions(
                     "base_dir": str(tmp_path),
                     "service": {
                         "operation": "attach",
-                        "connection_path": str(
-                            tmp_path / "rejected-connection.json"
-                        ),
+                        "connection_path": str(tmp_path / "rejected-connection.json"),
                         "reference": {
-                            "provider": "nvidia.fabric.openclaw",
+                            "adapter_id": "nvidia.fabric.openclaw",
                             "service_type": "openclaw_gateway",
                             "connection": {
                                 "gateway_url": info["connection"]["gateway_url"],
@@ -591,7 +763,7 @@ async def test_openclaw_prepared_service_supports_multiple_runtime_sessions(
                     "operation": "attach",
                     "connection_path": str(tmp_path / "attached-connection.json"),
                     "reference": {
-                        "provider": "nvidia.fabric.openclaw",
+                        "adapter_id": "nvidia.fabric.openclaw",
                         "service_type": "openclaw_gateway",
                         "connection": {
                             "gateway_url": info["connection"]["gateway_url"],
@@ -1223,7 +1395,9 @@ async def test_openclaw_fabric_service_supports_multiple_runtimes(
 
     requests = [
         json.loads(line)
-        for line in (tmp_path / "requests.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in (tmp_path / "requests.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
     ]
     assert {request["user"] for request in requests} == {
         first.runtime_id,
@@ -1301,6 +1475,9 @@ def test_openclaw_descriptor_and_module_entrypoint(repo_root: Path):
 
     assert descriptor["adapter_id"] == "nvidia.fabric.openclaw"
     assert descriptor["requirements"] == {}
+    assert "agent_runtime" not in descriptor["settings_schema"]["properties"]
+    assert "telegram" not in descriptor["settings_schema"]["properties"]
+    assert "channel_config" in descriptor["settings_schema"]["properties"]
     assert "tools.enabled" in descriptor["config"]["accepts"]
     assert "tools.blocked" in descriptor["config"]["accepts"]
     assert "mcp.auth.oauth2" not in descriptor["config"]["accepts"]

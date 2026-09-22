@@ -1673,21 +1673,24 @@ class RuntimeHandle(FabricMapping):
 class ServiceReference(FabricMapping):
     """Reference to an already-running caller-owned service.
 
+    ``adapter_id`` selects the adapter that understands the service type and
+    connection fields.
+
     ``connection`` contains endpoints and credential references such as an
     environment-variable name. It must not contain credential values.
     """
 
-    provider: str
+    adapter_id: str
     service_type: str
     connection: Mapping[str, Any]
     metadata: Mapping[str, Any]
-    _fields = frozenset({"provider", "service_type", "connection", "metadata"})
+    _fields = frozenset({"adapter_id", "service_type", "connection", "metadata"})
     _json_fields = frozenset({"connection", "metadata"})
     _omit_if_empty = frozenset({"connection", "metadata"})
 
     @classmethod
     def _normalize(cls, data: dict[str, Any]) -> dict[str, Any]:
-        data["provider"] = _required_text(data.get("provider"), "service provider")
+        data["adapter_id"] = _required_text(data.get("adapter_id"), "adapter id")
         data["service_type"] = _required_text(data.get("service_type"), "service type")
         data["connection"] = _mapping(data.get("connection", {}), "connection")
         data["metadata"] = _mapping(data.get("metadata", {}), "metadata")
@@ -1695,11 +1698,21 @@ class ServiceReference(FabricMapping):
 
 
 class ServiceHandle(FabricMapping):
-    """Opaque identity and binding for one prepared or attached service."""
+    """Opaque identity and binding for one prepared or attached service.
+
+    ``service_id`` identifies the process-local Fabric service lifecycle, not
+    the underlying remote deployment. ``service_binding`` is opaque and must
+    be returned unchanged when the handle is used. ``adapter_id`` identifies
+    the adapter that created or attached to the service, and ``service_type``
+    is that adapter's stable service kind. ``ownership`` is ``fabric_owned``
+    or ``caller_owned``. ``connection`` is a sanitized summary that never
+    contains credential values, while ``metadata`` contains adapter-reported
+    version and readiness information.
+    """
 
     service_id: str
     service_binding: str
-    provider: str
+    adapter_id: str
     service_type: str
     ownership: str
     connection: Mapping[str, Any]
@@ -1708,7 +1721,7 @@ class ServiceHandle(FabricMapping):
         {
             "service_id",
             "service_binding",
-            "provider",
+            "adapter_id",
             "service_type",
             "ownership",
             "connection",
@@ -1723,7 +1736,7 @@ class ServiceHandle(FabricMapping):
         for field in (
             "service_id",
             "service_binding",
-            "provider",
+            "adapter_id",
             "service_type",
             "ownership",
         ):

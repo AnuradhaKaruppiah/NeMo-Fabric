@@ -20,4 +20,5 @@ npm install --global openclaw@2026.9.4 --allow-scripts=openclaw
 pip install "nemo-fabric[openclaw]"
 ```
 
-The adapter does not install OpenClaw. Relay telemetry is not supported.
+The adapter supports only OpenClaw's default `openclaw` agent runtime. It does
+not install OpenClaw. Relay telemetry is not supported.

@@ -3,6 +3,10 @@
   "additionalProperties": false,
   "description": "Caller-supplied reference to an already-running service.",
   "properties": {
+    "adapter_id": {
+      "description": "Adapter that understands and connects to the service.",
+      "type": "string"
+    },
     "connection": {
       "additionalProperties": true,
       "description": "Non-secret connection fields and credential references.",
@@ -13,17 +17,13 @@
       "description": "Adapter-specific caller-owned service metadata.",
       "type": "object"
     },
-    "provider": {
-      "description": "Provider responsible for the service.",
-      "type": "string"
-    },
     "service_type": {
       "description": "Stable service type understood by the selected adapter.",
       "type": "string"
     }
   },
   "required": [
-    "provider",
+    "adapter_id",
     "service_type"
   ],
   "title": "ServiceReference",

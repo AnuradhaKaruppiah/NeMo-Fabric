@@ -35,6 +35,7 @@ The enum defines the following values:
 | Name | Value |
 | --- | --- |
 | `ACTIVE` | `active` |
+| `RELEASING` | `releasing` |
 | `RELEASED` | `released` |
 | `FAILED` | `failed` |
 

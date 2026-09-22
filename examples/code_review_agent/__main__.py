@@ -167,21 +167,34 @@ async def main() -> None:
     elif args.no_skills:
         config = with_skill_paths(config)
     if args.pi_relay_extension_path is not None:
-        config.harness.settings["relay_extension_path"] = (
-            args.pi_relay_extension_path
-        )
+        config.harness.settings["relay_extension_path"] = args.pi_relay_extension_path
     if args.relay:
         config = with_relay(config)
     if args.telegram_token_env is not None:
-        telegram: dict[str, object] = {"bot_token_env": args.telegram_token_env}
+        telegram_account: dict[str, object] = {
+            "botToken": {
+                "source": "env",
+                "provider": "default",
+                "id": args.telegram_token_env,
+            }
+        }
         if args.telegram_allow_from is not None:
-            telegram.update(
-                dm_policy="allowlist",
-                allow_from=args.telegram_allow_from,
+            telegram_account.update(
+                dmPolicy="allowlist",
+                allowFrom=args.telegram_allow_from,
             )
         if args.telegram_api_root is not None:
-            telegram["api_root"] = args.telegram_api_root
-        config.harness.settings["telegram"] = telegram
+            telegram_account["apiRoot"] = args.telegram_api_root
+        agent_id = config.harness.settings.get("agent_id", "default")
+        config.harness.settings["channel_config"] = {
+            "channels": {"telegram": {"accounts": {"default": telegram_account}}},
+            "bindings": [
+                {
+                    "agentId": agent_id,
+                    "match": {"channel": "telegram", "accountId": "default"},
+                }
+            ],
+        }
 
     fabric = Fabric()
     result = None

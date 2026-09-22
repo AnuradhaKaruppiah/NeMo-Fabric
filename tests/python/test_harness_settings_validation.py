@@ -142,6 +142,18 @@ _config = partial(
                 "shutdown_timeout_seconds": 5,
                 "connect_timeout_seconds": 3,
                 "read_timeout_seconds": 300,
+                "channel_config": {
+                    "channels": {"telegram": {"enabled": True}},
+                    "bindings": [
+                        {
+                            "agentId": "default",
+                            "match": {
+                                "channel": "telegram",
+                                "accountId": "*",
+                            },
+                        }
+                    ],
+                },
             },
             id="openclaw",
         ),
@@ -192,6 +204,17 @@ def test_settings_schema_defaults_are_not_applied(
     )
 
     assert plan.config.harness.settings == {}
+
+
+def test_openclaw_rejects_agent_runtime_setting(tmp_path: Path):
+    with pytest.raises(FabricConfigError, match="harness.settings.agent_runtime"):
+        Fabric().plan(
+            _config(
+                {"agent_runtime": "codex"},
+                adapter_id="nvidia.fabric.openclaw",
+            ),
+            base_dir=tmp_path,
+        )
 
 
 def test_remote_agent_settings_schema_default_is_not_applied(tmp_path: Path):

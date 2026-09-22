@@ -338,8 +338,8 @@ pub enum ServiceOwnership {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceReference {
-    /// Provider responsible for the service.
-    pub provider: String,
+    /// Adapter that understands and connects to the service.
+    pub adapter_id: String,
     /// Stable service type understood by the selected adapter.
     pub service_type: String,
     /// Non-secret connection fields and credential references.
@@ -357,8 +357,8 @@ pub struct ServiceHandle {
     pub service_id: String,
     /// NeMo Fabric-owned opaque binding for this service handle.
     pub service_binding: String,
-    /// Provider responsible for the service.
-    pub provider: String,
+    /// Adapter that created or attached to the service.
+    pub adapter_id: String,
     /// Stable service type returned by the adapter.
     pub service_type: String,
     /// Whether NeMo Fabric owns the underlying service.
@@ -700,7 +700,7 @@ enum AdapterServiceContext {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AdapterServiceInfo {
-    provider: String,
+    adapter_id: String,
     service_type: String,
     #[serde(default)]
     connection: BTreeMap<String, Value>,
@@ -811,6 +811,15 @@ struct LocalServiceRecord {
     handle: ServiceHandle,
     connection_path: PathBuf,
     active_runtime_ids: BTreeSet<String>,
+    state: LocalServiceState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LocalServiceState {
+    Active,
+    Releasing,
+    ReleaseFailed,
+    Released,
 }
 
 /// Invoke a NeMo Fabric run plan.
@@ -941,6 +950,11 @@ pub fn start_runtime_with_service(
             service_id: service.service_id.clone(),
         });
     }
+    if record.state != LocalServiceState::Active {
+        return Err(FabricError::ServiceNotActive {
+            service_id: service.service_id.clone(),
+        });
+    }
     let environment = prepare_environment(plan)?;
     let runtime = start_local_runtime(
         plan,
@@ -957,20 +971,24 @@ pub fn release_service(plan: &RunPlan, service: &ServiceHandle) -> Result<Vec<Fa
     let Some(record) = local_services().get(&service.service_id).cloned() else {
         return Ok(vec![service_release_event(service, true)]);
     };
-    {
-        let record = record.lock().unwrap_or_else(|error| error.into_inner());
-        if !record.active_runtime_ids.is_empty() {
-            return Err(FabricError::ServiceInUse {
-                service_id: service.service_id.clone(),
-                runtime_ids: record.active_runtime_ids.iter().cloned().collect(),
-            });
-        }
-    }
-    let Some(record) = local_services().remove(&service.service_id) else {
+    let mut service_record = record.lock().unwrap_or_else(|error| error.into_inner());
+    if service_record.state == LocalServiceState::Released {
         return Ok(vec![service_release_event(service, true)]);
-    };
-    let mut record = record.lock().unwrap_or_else(|error| error.into_inner());
-    stop_service_host(&mut record)?;
+    }
+    if !service_record.active_runtime_ids.is_empty() {
+        return Err(FabricError::ServiceInUse {
+            service_id: service.service_id.clone(),
+            runtime_ids: service_record.active_runtime_ids.iter().cloned().collect(),
+        });
+    }
+    service_record.state = LocalServiceState::Releasing;
+    if let Err(error) = stop_service_host(&mut service_record) {
+        service_record.state = LocalServiceState::ReleaseFailed;
+        return Err(error);
+    }
+    service_record.state = LocalServiceState::Released;
+    drop(service_record);
+    local_services().remove(&service.service_id);
     Ok(vec![service_release_event(service, false)])
 }
 
@@ -1056,7 +1074,7 @@ fn start_service(
     let handle = ServiceHandle {
         service_id: service_id.clone(),
         service_binding,
-        provider: info.provider,
+        adapter_id: info.adapter_id,
         service_type: info.service_type,
         ownership,
         connection: info.connection,
@@ -1070,6 +1088,7 @@ fn start_service(
             handle: handle.clone(),
             connection_path,
             active_runtime_ids: BTreeSet::new(),
+            state: LocalServiceState::Active,
         })),
     );
     Ok(handle)
@@ -1322,7 +1341,7 @@ struct ServiceBindingMaterial<'a> {
     service_id: &'a str,
     plan: &'a RunPlan,
     ownership: ServiceOwnership,
-    provider: &'a str,
+    adapter_id: &'a str,
     service_type: &'a str,
     connection: &'a BTreeMap<String, Value>,
     metadata: &'a BTreeMap<String, Value>,
@@ -1340,7 +1359,7 @@ fn service_binding(
             service_id,
             plan,
             ownership,
-            provider: &info.provider,
+            adapter_id: &info.adapter_id,
             service_type: &info.service_type,
             connection: &info.connection,
             metadata: &info.metadata,
@@ -1350,7 +1369,7 @@ fn service_binding(
 
 fn validate_service_handle(plan: &RunPlan, service: &ServiceHandle) -> Result<()> {
     let info = AdapterServiceInfo {
-        provider: service.provider.clone(),
+        adapter_id: service.adapter_id.clone(),
         service_type: service.service_type.clone(),
         connection: service.connection.clone(),
         metadata: service.metadata.clone(),
@@ -1364,11 +1383,11 @@ fn validate_service_handle(plan: &RunPlan, service: &ServiceHandle) -> Result<()
             service_id: service.service_id.clone(),
         });
     }
-    if service.provider != adapter_id(plan).unwrap_or_else(|| harness(plan)) {
+    if service.adapter_id != adapter_id(plan).unwrap_or_else(|| harness(plan)) {
         return Err(FabricError::ServiceHandleMismatch {
-            field: "provider",
+            field: "adapter_id",
             expected: adapter_id(plan).unwrap_or_else(|| harness(plan)),
-            actual: service.provider.clone(),
+            actual: service.adapter_id.clone(),
             service_id: service.service_id.clone(),
         });
     }
@@ -3529,7 +3548,7 @@ for line in sys.stdin:
             with open(service["connection_path"], "w", encoding="utf-8") as stream:
                 json.dump({"fake": "connection"}, stream)
             response("start", output={
-                "provider": "acme.fabric.local-host",
+                "adapter_id": "acme.fabric.local-host",
                 "service_type": "fake_service",
                 "connection": {"endpoint": "http://127.0.0.1:1234"},
                 "metadata": {"ready": True},
@@ -3623,6 +3642,10 @@ for line in sys.stdin:
             result = {"status": "succeeded", "output": output}
         response(operation, output=result)
     elif operation == "stop":
+        if MODE == "stop_delay":
+            with open(os.environ["FABRIC_FAKE_HOST_STOP_MARKER"], "w", encoding="utf-8") as stream:
+                stream.write("started")
+            time.sleep(0.25)
         if MODE == "stop_failure":
             response("stop", error=failure("stop", "fake_stop", "stop rejected"))
             sys.exit(18)
@@ -3641,7 +3664,10 @@ for line in sys.stdin:
                 "settings": {
                     "python": "python3",
                     "cwd": ".",
-                    "env": {"FABRIC_FAKE_HOST_MODE": mode},
+                    "env": {
+                        "FABRIC_FAKE_HOST_MODE": mode,
+                        "FABRIC_FAKE_HOST_STOP_MARKER": root.join("stop-started"),
+                    },
                 },
             },
             "discovery": {"local_paths": ["adapters"]},
@@ -3917,7 +3943,7 @@ for line in sys.stdin:
         let attached = attach_service(
             &plan,
             ServiceReference {
-                provider: "acme.fabric.local-host".to_string(),
+                adapter_id: "acme.fabric.local-host".to_string(),
                 service_type: "fake_service".to_string(),
                 connection: BTreeMap::from([(
                     "token_env".to_string(),
@@ -3929,6 +3955,53 @@ for line in sys.stdin:
         .expect("attach service");
         assert_eq!(attached.ownership, ServiceOwnership::CallerOwned);
         release_service(&plan, &attached).expect("detach service");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn service_release_blocks_new_runtime_startup() {
+        let (root, plan) = local_host_plan("stop_delay");
+        let service = prepare_service(&plan).expect("prepare service");
+        let release_plan = plan.clone();
+        let release_handle = service.clone();
+        let release = thread::spawn(move || release_service(&release_plan, &release_handle));
+        let marker = root.join("stop-started");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !marker.exists() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(marker.exists(), "service stop did not begin");
+
+        assert!(matches!(
+            start_runtime_with_service(&plan, &service),
+            Err(FabricError::ServiceNotActive { .. })
+        ));
+        release
+            .join()
+            .expect("release thread")
+            .expect("release service");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn failed_service_release_retains_record_for_retry() {
+        let (root, plan) = local_host_plan("stop_failure");
+        let service = prepare_service(&plan).expect("prepare service");
+
+        assert!(matches!(
+            release_service(&plan, &service),
+            Err(FabricError::AdapterLifecycleOperation { .. })
+        ));
+        assert!(local_services().contains_key(&service.service_id));
+        assert!(matches!(
+            start_runtime_with_service(&plan, &service),
+            Err(FabricError::ServiceNotActive { .. })
+        ));
+        let released = release_service(&plan, &service).expect("retry release service");
+        assert_eq!(released[0].metadata["already_released"], false);
+        assert!(!local_services().contains_key(&service.service_id));
 
         let _ = fs::remove_dir_all(root);
     }

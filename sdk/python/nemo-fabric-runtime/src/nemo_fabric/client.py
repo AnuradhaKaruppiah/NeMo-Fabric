@@ -241,8 +241,6 @@ class Fabric:
         runtime_overrides = _json_mapping(overrides, "runtime overrides")
         if service is not None and not isinstance(service, Service):
             raise FabricConfigError("service must be a Service")
-        if service is not None and service.status is not ServiceStatus.ACTIVE:
-            raise FabricConfigError("service must be active")
         collector: AsyncExitStack | None = None
         collector_client: _AtofCollectorClient | None = None
         runtime_config = config
@@ -259,6 +257,24 @@ class Fabric:
             raise FabricConfigError("launch_collector requires streaming=True")
         if streaming and not _relay_enabled(config):
             raise FabricConfigError("streaming requires Relay telemetry to be enabled")
+        service_guard = AsyncExitStack()
+        service_handle: dict[str, Any] | None = None
+
+        async def close_start_resources() -> None:
+            try:
+                await close_streaming_resources()
+            finally:
+                await service_guard.aclose()
+
+        try:
+            if service is not None:
+                await service_guard.enter_async_context(service._runtime_start())
+                if service.status is not ServiceStatus.ACTIVE:
+                    raise FabricConfigError("service must be active")
+                service_handle = service.handle.to_mapping()
+        except BaseException:
+            await service_guard.aclose()
+            raise
         if streaming:
             try:
                 if launch_collector is not False:
@@ -291,18 +307,21 @@ class Fabric:
                 if runtime_stream_sink is not None:
                     runtime_stream_sink.url = f"{collector_client.base_url}/v1/atof"
             except asyncio.CancelledError:
-                await close_streaming_resources()
+                await close_start_resources()
                 raise
             except FabricError:
-                await close_streaming_resources()
+                await close_start_resources()
                 raise
             except Exception as error:
-                await close_streaming_resources()
+                await close_start_resources()
                 raise FabricRuntimeError(
                     str(error),
                     stage="start",
                     code="collector_start_failed",
                 ) from error
+            except BaseException:
+                await close_start_resources()
+                raise
 
         try:
             plan = await _call_blocking(
@@ -310,18 +329,18 @@ class Fabric:
             )
             native = self._require_native_module("start_runtime")
         except BaseException:
-            await close_streaming_resources()
+            await close_start_resources()
             raise
         started_runtime: dict[str, Any] | None = None
 
         def start() -> dict[str, Any]:
             nonlocal started_runtime
-            if service is None:
+            if service_handle is None:
                 encoded = native.start_runtime(json.dumps(plan.to_mapping()))
             else:
                 encoded = native.start_runtime_with_service(
                     json.dumps(plan.to_mapping()),
-                    json.dumps(service.handle.to_mapping()),
+                    json.dumps(service_handle),
                 )
             started_runtime = json.loads(encoded)
             return started_runtime
@@ -341,14 +360,18 @@ class Fabric:
                     )
                 except Exception:
                     pass
-            await close_streaming_resources()
+            await close_start_resources()
             raise
         except FabricError:
-            await close_streaming_resources()
+            await close_start_resources()
             raise
         except Exception as error:
-            await close_streaming_resources()
+            await close_start_resources()
             raise FabricRuntimeError(str(error), stage="start") from error
+        except BaseException:
+            await close_start_resources()
+            raise
+        await service_guard.aclose()
         return Runtime(
             client=self,
             plan=plan,
@@ -398,24 +421,13 @@ class Fabric:
 
         try:
             handle = ServiceHandle.from_mapping(await _call_blocking(prepare))
-        except asyncio.CancelledError:
-            if started_service is not None:
-                try:
-                    await _call_blocking(
-                        lambda: json.loads(
-                            native.release_service(
-                                json.dumps(plan.to_mapping()),
-                                json.dumps(started_service),
-                            )
-                        )
-                    )
-                except Exception:
-                    pass
+        except BaseException as error:
+            await _release_registered_service(native, plan, started_service)
+            if isinstance(error, (asyncio.CancelledError, FabricError)):
+                raise
+            if isinstance(error, Exception):
+                raise FabricRuntimeError(str(error), stage="start") from error
             raise
-        except FabricError:
-            raise
-        except Exception as error:
-            raise FabricRuntimeError(str(error), stage="start") from error
         return Service(client=self, plan=plan, service=handle)
 
     async def attach_service(
@@ -468,24 +480,13 @@ class Fabric:
 
         try:
             handle = ServiceHandle.from_mapping(await _call_blocking(attach))
-        except asyncio.CancelledError:
-            if attached_service is not None:
-                try:
-                    await _call_blocking(
-                        lambda: json.loads(
-                            native.release_service(
-                                json.dumps(plan.to_mapping()),
-                                json.dumps(attached_service),
-                            )
-                        )
-                    )
-                except Exception:
-                    pass
+        except BaseException as error:
+            await _release_registered_service(native, plan, attached_service)
+            if isinstance(error, (asyncio.CancelledError, FabricError)):
+                raise
+            if isinstance(error, Exception):
+                raise FabricRuntimeError(str(error), stage="start") from error
             raise
-        except FabricError:
-            raise
-        except Exception as error:
-            raise FabricRuntimeError(str(error), stage="start") from error
         return Service(client=self, plan=plan, service=handle)
 
     def _native_module(self) -> Any | None:
@@ -515,3 +516,25 @@ def _config_json(config: FabricConfig) -> str:
 
 def _base_dir_arg(base_dir: str | os.PathLike[str] | None) -> str | None:
     return None if base_dir is None else os.fspath(base_dir)
+
+
+async def _release_registered_service(
+    native: Any,
+    plan: RunPlan,
+    service: dict[str, Any] | None,
+) -> None:
+    """Best-effort cleanup after native registration but before SDK handoff."""
+
+    if service is None:
+        return
+    try:
+        await _call_blocking(
+            lambda: json.loads(
+                native.release_service(
+                    json.dumps(plan.to_mapping()),
+                    json.dumps(service),
+                )
+            )
+        )
+    except Exception:
+        pass

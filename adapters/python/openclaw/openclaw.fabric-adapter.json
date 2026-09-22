@@ -18,31 +18,33 @@
         "type": "string",
         "minLength": 1,
         "default": "default",
-        "description": "OpenClaw agent selected for Fabric-originated invocations."
+        "description": "OpenClaw agent selected for NeMo Fabric-originated invocations."
       },
-      "agent_runtime": {
-        "type": "string",
-        "enum": ["openclaw", "codex"],
-        "default": "openclaw",
-        "description": "OpenClaw agent harness runtime. The codex value requires the official @openclaw/codex plugin."
-      },
-      "telegram": {
+      "channel_config": {
         "type": "object",
         "properties": {
-          "bot_token_env": {"type": "string", "minLength": 1},
-          "api_root": {"type": "string", "minLength": 1},
-          "dm_policy": {
-            "type": "string",
-            "enum": ["pairing", "allowlist", "open", "disabled"]
+          "channels": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": {"type": "object"}
           },
-          "allow_from": {
+          "bindings": {
             "type": "array",
-            "items": {"type": "string"}
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "properties": {
+                "agentId": {"type": "string", "minLength": 1},
+                "match": {"type": "object"}
+              },
+              "required": ["agentId", "match"],
+              "additionalProperties": true
+            }
           }
         },
-        "required": ["bot_token_env"],
+        "required": ["channels", "bindings"],
         "additionalProperties": false,
-        "description": "Telegram channel configuration for Fabric-owned services. Managed runtimes reject channel configuration."
+        "description": "OpenClaw-native channels and bindings for NeMo Fabric-owned services. Every binding must target the configured agent. Managed runtimes reject channel configuration."
       },
       "port_range": {
         "type": "object",

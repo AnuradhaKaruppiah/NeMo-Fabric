@@ -30,8 +30,8 @@ from nemo_fabric_adapter_contract.models import RuntimeContext
 class AdapterRuntime(Protocol):
     """One adapter-owned runtime living for the complete host lifetime."""
 
-    async def start(self, payload: dict[str, Any]) -> None:
-        """Initialize runtime-owned SDK clients and resources."""
+    async def start(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        """Initialize resources and optionally return service information."""
 
     async def invoke(
         self,

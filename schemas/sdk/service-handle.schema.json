@@ -19,6 +19,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Public identity and binding for one prepared or attached service.",
   "properties": {
+    "adapter_id": {
+      "description": "Adapter that created or attached to the service.",
+      "type": "string"
+    },
     "connection": {
       "additionalProperties": true,
       "description": "Sanitized connection summary. This never contains credential values.",
@@ -32,10 +36,6 @@
     "ownership": {
       "$ref": "#/$defs/ServiceOwnership",
       "description": "Whether NeMo Fabric owns the underlying service."
-    },
-    "provider": {
-      "description": "Provider responsible for the service.",
-      "type": "string"
     },
     "service_binding": {
       "description": "NeMo Fabric-owned opaque binding for this service handle.",
@@ -53,7 +53,7 @@
   "required": [
     "service_id",
     "service_binding",
-    "provider",
+    "adapter_id",
     "service_type",
     "ownership"
   ],

@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import AsyncIterator
 from collections.abc import Mapping
+from contextlib import asynccontextmanager
 from enum import Enum
 from typing import Any
 
@@ -23,6 +25,7 @@ class ServiceStatus(str, Enum):
     """Lifecycle state of a prepared or attached service."""
 
     ACTIVE = "active"
+    RELEASING = "releasing"
     RELEASED = "released"
     FAILED = "failed"
 
@@ -52,7 +55,7 @@ class Service:
             else ServiceHandle.from_mapping(service)
         )
         self._status = ServiceStatus.ACTIVE
-        self._releasing = False
+        self._lifecycle_lock = asyncio.Lock()
 
     @property
     def status(self) -> ServiceStatus:
@@ -72,6 +75,13 @@ class Service:
 
         return ServiceHandle.from_mapping(self._service.to_mapping())
 
+    @asynccontextmanager
+    async def _runtime_start(self) -> AsyncIterator[None]:
+        """Serialize one runtime start against service release."""
+
+        async with self._lifecycle_lock:
+            yield
+
     async def release(self) -> None:
         """Stop an owned service or detach from a caller-owned service.
 
@@ -81,36 +91,44 @@ class Service:
 
         if self._status is ServiceStatus.RELEASED:
             return
-        if self._releasing:
+        if self._status is ServiceStatus.RELEASING:
             raise FabricStateError("service release is already in progress")
-        self._releasing = True
+        self._status = ServiceStatus.RELEASING
         released = False
+        release_started = False
         try:
-            native = self._client._require_native_module("release_service")
+            async with self._lifecycle_lock:
+                native = self._client._require_native_module("release_service")
 
-            def release() -> Any:
-                nonlocal released
-                result = json.loads(
-                    native.release_service(
-                        json.dumps(self._plan.to_mapping()),
-                        json.dumps(self._service.to_mapping()),
+                def release() -> Any:
+                    nonlocal released
+                    result = json.loads(
+                        native.release_service(
+                            json.dumps(self._plan.to_mapping()),
+                            json.dumps(self._service.to_mapping()),
+                        )
                     )
-                )
-                released = True
-                return result
+                    released = True
+                    return result
 
-            await _call_blocking(release)
+                release_started = True
+                await _call_blocking(release)
         except asyncio.CancelledError:
-            self._status = ServiceStatus.RELEASED if released else ServiceStatus.FAILED
+            if released:
+                self._status = ServiceStatus.RELEASED
+            elif release_started:
+                self._status = ServiceStatus.FAILED
+            else:
+                self._status = ServiceStatus.ACTIVE
             raise
         except FabricError:
+            self._status = ServiceStatus.ACTIVE
             raise
         except Exception as error:
+            self._status = ServiceStatus.FAILED
             raise FabricRuntimeError(str(error), stage="stop") from error
         else:
             self._status = ServiceStatus.RELEASED
-        finally:
-            self._releasing = False
 
     async def __aenter__(self) -> "Service":
         return self

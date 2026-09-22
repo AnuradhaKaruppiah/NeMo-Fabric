@@ -538,10 +538,28 @@ async def test_openclaw_example_shares_service_and_configures_telegram(
     assert output["service_id"] == "service-1"
     assert len(output["results"]) == 2
     prepared_config = mock_fabric.prepare_service.call_args.args[0]
-    assert prepared_config.harness.settings["telegram"] == {
-        "bot_token_env": "TELEGRAM_BOT_TOKEN",
-        "dm_policy": "allowlist",
-        "allow_from": ["123456789"],
+    assert prepared_config.harness.settings["channel_config"] == {
+        "channels": {
+            "telegram": {
+                "accounts": {
+                    "default": {
+                        "botToken": {
+                            "source": "env",
+                            "provider": "default",
+                            "id": "TELEGRAM_BOT_TOKEN",
+                        },
+                        "dmPolicy": "allowlist",
+                        "allowFrom": ["123456789"],
+                    }
+                }
+            }
+        },
+        "bindings": [
+            {
+                "agentId": "default",
+                "match": {"channel": "telegram", "accountId": "default"},
+            }
+        ],
     }
     assert mock_fabric.start_runtime.await_count == 2
     assert all(

@@ -937,6 +937,8 @@ Return a detached, JSON-compatible mapping for serialization.
 
 Reference to an already-running caller-owned service.
 
+``adapter_id`` selects the adapter that understands the service type and connection fields.
+
 ``connection`` contains endpoints and credential references such as an environment-variable name. It must not contain credential values.
 
 
@@ -947,7 +949,7 @@ The mapping exposes the following typed fields:
 
 | Field | Type |
 | --- | --- |
-| `provider` | `str` |
+| `adapter_id` | `str` |
 | `service_type` | `str` |
 | `connection` | `Mapping[str, Any]` |
 | `metadata` | `Mapping[str, Any]` |
@@ -1012,6 +1014,8 @@ Return a detached, JSON-compatible mapping for serialization.
 
 Opaque identity and binding for one prepared or attached service.
 
+``service_id`` identifies the process-local Fabric service lifecycle, not the underlying remote deployment. ``service_binding`` is opaque and must be returned unchanged when the handle is used. ``adapter_id`` identifies the adapter that created or attached to the service, and ``service_type`` is that adapter's stable service kind. ``ownership`` is ``fabric_owned`` or ``caller_owned``. ``connection`` is a sanitized summary that never contains credential values, while ``metadata`` contains adapter-reported version and readiness information.
+
 
 
 ### Fields
@@ -1022,7 +1026,7 @@ The mapping exposes the following typed fields:
 | --- | --- |
 | `service_id` | `str` |
 | `service_binding` | `str` |
-| `provider` | `str` |
+| `adapter_id` | `str` |
 | `service_type` | `str` |
 | `ownership` | `str` |
 | `connection` | `Mapping[str, Any]` |

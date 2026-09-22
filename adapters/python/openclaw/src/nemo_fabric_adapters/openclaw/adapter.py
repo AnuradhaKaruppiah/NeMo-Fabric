@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+import ipaddress
 import json
 import logging
 import math
@@ -108,8 +110,7 @@ def _validate_attach_config(config: contract.AgentConfig) -> None:
     settings = config.harness.settings if config.harness else {}
     for name in (
         "openclaw_command",
-        "agent_runtime",
-        "telegram",
+        "channel_config",
         "port_range",
         "startup_timeout_seconds",
         "shutdown_timeout_seconds",
@@ -140,17 +141,6 @@ def _positive_setting(settings: dict[str, Any], name: str, default: float) -> fl
     return float(value)
 
 
-def _agent_runtime(settings: dict[str, Any]) -> str:
-    value = settings.get("agent_runtime", "openclaw")
-    if value not in {"openclaw", "codex"}:
-        raise lifecycle.LifecycleError(
-            "openclaw_invalid_configuration",
-            "OpenClaw agent_runtime must be 'openclaw' or 'codex'",
-            metadata={"field": "harness.settings.agent_runtime"},
-        )
-    return value
-
-
 def _agent_id(settings: dict[str, Any]) -> str:
     value = settings.get("agent_id", "default")
     if not isinstance(value, str) or not value.strip():
@@ -162,36 +152,68 @@ def _agent_id(settings: dict[str, Any]) -> str:
     return value.strip()
 
 
-def _telegram_config(settings: dict[str, Any]) -> dict[str, Any] | None:
-    value = settings.get("telegram")
+def _channel_config(
+    settings: dict[str, Any], *, agent_id: str
+) -> dict[str, Any] | None:
+    value = settings.get("channel_config")
     if value is None:
         return None
     if not isinstance(value, dict):
         raise lifecycle.LifecycleError(
             "openclaw_invalid_configuration",
-            "OpenClaw telegram settings must be an object",
-            metadata={"field": "harness.settings.telegram"},
+            "OpenClaw channel_config must be an object",
+            metadata={"field": "harness.settings.channel_config"},
         )
-    token_env = value.get("bot_token_env")
-    if not isinstance(token_env, str) or not token_env.strip():
+    unsupported = sorted(set(value) - {"channels", "bindings"})
+    if unsupported:
         raise lifecycle.LifecycleError(
             "openclaw_invalid_configuration",
-            "OpenClaw telegram.bot_token_env must be a non-empty string",
-            metadata={"field": "harness.settings.telegram.bot_token_env"},
+            "OpenClaw channel_config contains unsupported top-level fields",
+            metadata={
+                "field": "harness.settings.channel_config",
+                "fields": unsupported,
+            },
         )
-    result: dict[str, Any] = {
-        "enabled": True,
-        "botToken": {"source": "env", "provider": "default", "id": token_env},
-    }
-    mapping = {
-        "api_root": "apiRoot",
-        "dm_policy": "dmPolicy",
-        "allow_from": "allowFrom",
-    }
-    for source, target in mapping.items():
-        if source in value:
-            result[target] = value[source]
-    return result
+    channels = value.get("channels")
+    if not isinstance(channels, dict) or not channels:
+        raise lifecycle.LifecycleError(
+            "openclaw_invalid_configuration",
+            "OpenClaw channel_config.channels must be a non-empty object",
+            metadata={"field": "harness.settings.channel_config.channels"},
+        )
+    bindings = value.get("bindings")
+    if not isinstance(bindings, list) or not bindings:
+        raise lifecycle.LifecycleError(
+            "openclaw_invalid_configuration",
+            "OpenClaw channel_config.bindings must be a non-empty array",
+            metadata={"field": "harness.settings.channel_config.bindings"},
+        )
+    for index, binding in enumerate(bindings):
+        if not isinstance(binding, dict) or binding.get("agentId") != agent_id:
+            raise lifecycle.LifecycleError(
+                "openclaw_invalid_configuration",
+                "Every OpenClaw channel binding must target the configured agent",
+                metadata={
+                    "field": f"harness.settings.channel_config.bindings[{index}].agentId",
+                    "agent_id": agent_id,
+                },
+            )
+    return copy.deepcopy(value)
+
+
+def _channel_secret_env_names(value: Any) -> set[str]:
+    names: set[str] = set()
+    if isinstance(value, dict):
+        if value.get("source") == "env":
+            identifier = value.get("id")
+            if isinstance(identifier, str) and identifier:
+                names.add(identifier)
+        for child in value.values():
+            names.update(_channel_secret_env_names(child))
+    elif isinstance(value, list):
+        for child in value:
+            names.update(_channel_secret_env_names(child))
+    return names
 
 
 def _resolve_command(settings: dict[str, Any], base_dir: Path) -> Path:
@@ -386,11 +408,7 @@ def _openclaw_config(
                 "models": {
                     model_ref: {
                         "params": params,
-                        "agentRuntime": {
-                            "id": _agent_runtime(
-                                config.harness.settings if config.harness else {}
-                            )
-                        },
+                        "agentRuntime": {"id": "openclaw"},
                     }
                 },
             }
@@ -445,15 +463,17 @@ def _openclaw_config(
         }
     if provider:
         result["models"] = {"providers": {model.provider: provider}}
-    telegram = _telegram_config(config.harness.settings if config.harness else {})
-    if telegram is not None:
+    channel_config = _channel_config(
+        config.harness.settings if config.harness else {}, agent_id=agent_id
+    )
+    if channel_config is not None:
         if not service_mode:
             raise lifecycle.LifecycleError(
                 "openclaw_channels_require_service",
                 "OpenClaw chat channels require prepare_service() or an externally configured attached service",
-                metadata={"field": "harness.settings.telegram"},
+                metadata={"field": "harness.settings.channel_config"},
             )
-        result["channels"] = {"telegram": telegram}
+        result.update(channel_config)
     return result
 
 
@@ -575,6 +595,16 @@ def _gateway_endpoint(value: Any) -> str:
             "openclaw_invalid_service_reference",
             "OpenClaw gateway_url must use HTTP(S) without credentials, a query, or a fragment",
         )
+    if parsed.scheme == "http":
+        try:
+            address = ipaddress.ip_address(parsed.hostname)
+        except ValueError:
+            address = None
+        if address is None or not address.is_loopback:
+            raise lifecycle.LifecycleError(
+                "openclaw_invalid_service_reference",
+                "OpenClaw HTTP gateway_url must use a literal loopback IP address",
+            )
     return endpoint
 
 
@@ -586,7 +616,8 @@ def _write_service_connection(
     agent_id: str,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    path.write_text(
+    os.chmod(path.parent, 0o700)
+    payload = (
         json.dumps(
             {
                 "gateway_url": gateway_url,
@@ -594,10 +625,26 @@ def _write_service_connection(
                 "agent_id": agent_id,
             }
         )
-        + "\n",
-        encoding="utf-8",
+        + "\n"
     )
-    path.chmod(0o600)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+    )
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            descriptor = -1
+            stream.write(payload)
+        os.replace(temporary_name, path)
+    except BaseException:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def _read_service_connection(path: Path) -> tuple[str, str, str]:
@@ -676,16 +723,17 @@ class OpenClawRuntime:
                 "openclaw_missing_api_key",
                 f"OpenClaw API key environment variable {model.api_key_env} is not set",
             )
-        telegram = settings.get("telegram")
-        if isinstance(telegram, dict):
-            telegram_token_env = telegram.get("bot_token_env")
-            if isinstance(telegram_token_env, str) and not child_env.get(
-                telegram_token_env
-            ):
-                raise lifecycle.LifecycleError(
-                    "openclaw_missing_telegram_token",
-                    f"OpenClaw Telegram token environment variable {telegram_token_env} is not set",
-                )
+        missing_channel_secrets = sorted(
+            name
+            for name in _channel_secret_env_names(settings.get("channel_config"))
+            if not child_env.get(name)
+        )
+        if missing_channel_secrets:
+            raise lifecycle.LifecycleError(
+                "openclaw_missing_channel_secret",
+                "One or more OpenClaw channel secret environment variables are not set",
+                metadata={"environment_variables": missing_channel_secrets},
+            )
         command = _resolve_command(settings, base_dir)
         startup_timeout = _positive_setting(
             settings, "startup_timeout_seconds", DEFAULT_STARTUP_TIMEOUT_SECONDS
@@ -938,11 +986,11 @@ class OpenClawRuntime:
         reference = service.get("reference")
         if (
             not isinstance(reference, dict)
-            or reference.get("provider") != OPENCLAW_ADAPTER_ID
+            or reference.get("adapter_id") != OPENCLAW_ADAPTER_ID
         ):
             raise lifecycle.LifecycleError(
                 "openclaw_invalid_service_reference",
-                f"OpenClaw service provider must be {OPENCLAW_ADAPTER_ID}",
+                f"OpenClaw service adapter_id must be {OPENCLAW_ADAPTER_ID}",
             )
         if reference.get("service_type") != OPENCLAW_SERVICE_TYPE:
             raise lifecycle.LifecycleError(
@@ -993,9 +1041,7 @@ class OpenClawRuntime:
             )
         client = self._client_for(settings, token)
         try:
-            openclaw_version = await self._probe_gateway(
-                client, gateway_url, agent_id
-            )
+            openclaw_version = await self._probe_gateway(client, gateway_url, agent_id)
             _write_service_connection(
                 Path(service["connection_path"]),
                 gateway_url=gateway_url,
@@ -1024,7 +1070,7 @@ class OpenClawRuntime:
         openclaw_version: str | None = None,
     ) -> dict[str, Any]:
         info: dict[str, Any] = {
-            "provider": OPENCLAW_ADAPTER_ID,
+            "adapter_id": OPENCLAW_ADAPTER_ID,
             "service_type": OPENCLAW_SERVICE_TYPE,
             "connection": {"gateway_url": gateway_url, "agent_id": agent_id},
             "metadata": {},
