@@ -61,7 +61,7 @@ uv run --extra harbor harbor run \
   --path "$TASK_DIR" \
   --agent nemo_fabric.integrations.harbor:FabricAgent \
   --ak fabric_adapter_id=demo.fabric.scripted \
-  --ak fabric_config_base_dir=/opt/fabric-calculator \
+  --ak "fabric_config_bundle=$TASK_DIR/environment/fabric" \
   --ak fabric_workspace=/app \
   --job-name fabric-smoke \
   --jobs-dir "$RUNS_DIR" \

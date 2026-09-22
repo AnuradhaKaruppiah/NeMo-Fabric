@@ -47,12 +47,42 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
-        if self.path != "/readyz":
+        if self.path == "/readyz":
+            self.send_response(200)
+            self.end_headers()
+            return
+        if self.path == "/startupz":
+            body = json.dumps(
+                {"ok": True, "status": "started", "version": "2026.9.4"}
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if self.path != "/v1/models":
             self.send_response(404)
             self.end_headers()
             return
+        if self.headers.get("Authorization") != f"Bearer {token}":
+            self.send_response(401)
+            self.end_headers()
+            return
+        body = json.dumps(
+            {
+                "object": "list",
+                "data": [
+                    {"id": "openclaw/default", "object": "model"},
+                    {"id": "openclaw/reviewer", "object": "model"},
+                ],
+            }
+        ).encode()
         self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
+        self.wfile.write(body)
 
     def do_POST(self):
         if self.path != "/v1/chat/completions":
@@ -67,6 +97,9 @@ class Handler(BaseHTTPRequestHandler):
         request = json.loads(self.rfile.read(length))
         with open(os.environ["FAKE_OPENCLAW_REQUEST"], "w", encoding="utf-8") as stream:
             json.dump(request, stream)
+        if requests_path := os.environ.get("FAKE_OPENCLAW_REQUESTS"):
+            with open(requests_path, "a", encoding="utf-8") as stream:
+                stream.write(json.dumps(request) + "\n")
         chunks = [
             {
                 "object": "chat.completion.chunk",

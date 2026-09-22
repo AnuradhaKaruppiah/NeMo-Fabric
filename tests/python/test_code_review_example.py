@@ -486,6 +486,73 @@ async def test_example_entrypoint_shows_response_after_normalized_output(
     }
 
 
+async def test_openclaw_example_shares_service_and_configures_telegram(
+    monkeypatch,
+    capsys,
+):
+    service = MagicMock(service_id="service-1")
+    service_context = MagicMock(name="service_context")
+    service_context.__aenter__ = AsyncMock(return_value=service)
+    service_context.__aexit__ = AsyncMock(return_value=None)
+
+    runtime_contexts = []
+    results = []
+    for index in range(2):
+        result = MagicMock()
+        result.to_mapping.return_value = {
+            "status": "succeeded",
+            "runtime": index,
+        }
+        results.append(result)
+        runtime = MagicMock()
+        runtime.invoke = AsyncMock(return_value=result)
+        runtime_context = MagicMock(name=f"runtime_context_{index}")
+        runtime_context.__aenter__ = AsyncMock(return_value=runtime)
+        runtime_context.__aexit__ = AsyncMock(return_value=None)
+        runtime_contexts.append(runtime_context)
+
+    mock_fabric = MagicMock()
+    mock_fabric.prepare_service = AsyncMock(return_value=service_context)
+    mock_fabric.start_runtime = AsyncMock(side_effect=runtime_contexts)
+    monkeypatch.setattr(main_module, "Fabric", lambda: mock_fabric)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "code_review_agent",
+            "--variant",
+            "openclaw",
+            "--service",
+            "--runtime-count",
+            "2",
+            "--telegram-token-env",
+            "TELEGRAM_BOT_TOKEN",
+            "--telegram-allow-from",
+            "123456789",
+        ],
+    )
+
+    await main_module.main()
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["service_id"] == "service-1"
+    assert len(output["results"]) == 2
+    prepared_config = mock_fabric.prepare_service.call_args.args[0]
+    assert prepared_config.harness.settings["telegram"] == {
+        "bot_token_env": "TELEGRAM_BOT_TOKEN",
+        "dm_policy": "allowlist",
+        "allow_from": ["123456789"],
+    }
+    assert mock_fabric.start_runtime.await_count == 2
+    assert all(
+        call.kwargs["service"] is service
+        for call in mock_fabric.start_runtime.await_args_list
+    )
+    service_context.__aexit__.assert_awaited_once()
+    for runtime_context in runtime_contexts:
+        runtime_context.__aexit__.assert_awaited_once()
+
+
 async def test_example_entrypoint_streams_relay_records_and_terminal_result(
     monkeypatch,
     capsys,

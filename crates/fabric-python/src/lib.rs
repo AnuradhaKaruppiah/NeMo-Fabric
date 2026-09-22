@@ -11,7 +11,8 @@ use std::time::{Duration, Instant};
 
 use nemo_fabric_core::{
     FabricConfig, OpenAiStreamTransport, ResolveContext, RunPlan, RunRequest, RuntimeHandle,
-    doctor_plan, resolve_diagnostic_plan_from_config_with_adapter_directories,
+    ServiceHandle, ServiceReference, doctor_plan,
+    resolve_diagnostic_plan_from_config_with_adapter_directories,
     resolve_run_plan_from_config_with_adapter_directories, run_plan,
 };
 use pyo3::exceptions::PyRuntimeError;
@@ -127,6 +128,53 @@ fn start_runtime(py: Python<'_>, plan_json: String) -> PyResult<String> {
     to_json(&runtime)
 }
 
+/// Prepare a Fabric-owned service and return its ServiceHandle JSON.
+#[pyfunction]
+fn prepare_service(py: Python<'_>, plan_json: String) -> PyResult<String> {
+    let plan = parse_run_plan(plan_json)?;
+    let service = py
+        .detach(|| nemo_fabric_core::prepare_service(&plan))
+        .map_err(to_py_error)?;
+    to_json(&service)
+}
+
+/// Attach to a caller-owned service and return its ServiceHandle JSON.
+#[pyfunction]
+fn attach_service(py: Python<'_>, plan_json: String, reference_json: String) -> PyResult<String> {
+    let plan = parse_run_plan(plan_json)?;
+    let reference = parse_service_reference(reference_json)?;
+    let service = py
+        .detach(|| nemo_fabric_core::attach_service(&plan, reference))
+        .map_err(to_py_error)?;
+    to_json(&service)
+}
+
+/// Start a runtime connected to a prepared or attached service.
+#[pyfunction]
+fn start_runtime_with_service(
+    py: Python<'_>,
+    plan_json: String,
+    service_json: String,
+) -> PyResult<String> {
+    let plan = parse_run_plan(plan_json)?;
+    let service = parse_service_handle(service_json)?;
+    let runtime = py
+        .detach(|| nemo_fabric_core::start_runtime_with_service(&plan, &service))
+        .map_err(to_py_error)?;
+    to_json(&runtime)
+}
+
+/// Release a prepared service or detach from a caller-owned service.
+#[pyfunction]
+fn release_service(py: Python<'_>, plan_json: String, service_json: String) -> PyResult<String> {
+    let plan = parse_run_plan(plan_json)?;
+    let service = parse_service_handle(service_json)?;
+    let events = py
+        .detach(|| nemo_fabric_core::release_service(&plan, &service))
+        .map_err(to_py_error)?;
+    to_json(&events)
+}
+
 /// Invoke a previously started runtime and return RunResult JSON.
 #[pyfunction]
 fn invoke_runtime(
@@ -181,6 +229,10 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(doctor_config, m)?)?;
     m.add_function(wrap_pyfunction!(run_config, m)?)?;
     m.add_function(wrap_pyfunction!(start_runtime, m)?)?;
+    m.add_function(wrap_pyfunction!(prepare_service, m)?)?;
+    m.add_function(wrap_pyfunction!(attach_service, m)?)?;
+    m.add_function(wrap_pyfunction!(start_runtime_with_service, m)?)?;
+    m.add_function(wrap_pyfunction!(release_service, m)?)?;
     m.add_function(wrap_pyfunction!(invoke_runtime, m)?)?;
     m.add_function(wrap_pyfunction!(invoke_openai_stream, m)?)?;
     m.add_function(wrap_pyfunction!(stop_runtime, m)?)?;
@@ -369,6 +421,14 @@ fn parse_run_plan(contents: String) -> PyResult<RunPlan> {
 }
 
 fn parse_runtime_handle(contents: String) -> PyResult<RuntimeHandle> {
+    serde_json::from_str(&contents).map_err(|error| PyRuntimeError::new_err(error.to_string()))
+}
+
+fn parse_service_reference(contents: String) -> PyResult<ServiceReference> {
+    serde_json::from_str(&contents).map_err(|error| PyRuntimeError::new_err(error.to_string()))
+}
+
+fn parse_service_handle(contents: String) -> PyResult<ServiceHandle> {
     serde_json::from_str(&contents).map_err(|error| PyRuntimeError::new_err(error.to_string()))
 }
 

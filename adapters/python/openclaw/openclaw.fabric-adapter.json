@@ -14,6 +14,36 @@
         "minLength": 1,
         "description": "OpenClaw executable name or path. Relative paths containing a directory are resolved from the NeMo Fabric base directory."
       },
+      "agent_id": {
+        "type": "string",
+        "minLength": 1,
+        "default": "default",
+        "description": "OpenClaw agent selected for Fabric-originated invocations."
+      },
+      "agent_runtime": {
+        "type": "string",
+        "enum": ["openclaw", "codex"],
+        "default": "openclaw",
+        "description": "OpenClaw agent harness runtime. The codex value requires the official @openclaw/codex plugin."
+      },
+      "telegram": {
+        "type": "object",
+        "properties": {
+          "bot_token_env": {"type": "string", "minLength": 1},
+          "api_root": {"type": "string", "minLength": 1},
+          "dm_policy": {
+            "type": "string",
+            "enum": ["pairing", "allowlist", "open", "disabled"]
+          },
+          "allow_from": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        },
+        "required": ["bot_token_env"],
+        "additionalProperties": false,
+        "description": "Telegram channel configuration for Fabric-owned services. Managed runtimes reject channel configuration."
+      },
       "port_range": {
         "type": "object",
         "properties": {
@@ -79,9 +109,7 @@
     "required": ["provider", "model"],
     "additionalProperties": false
   },
-  "requirements": {
-    "binaries": ["openclaw"]
-  },
+  "requirements": {},
   "config": {
     "accepts": [
       "models",
@@ -98,7 +126,7 @@
     "system_instruction_modes": ["replace"]
   },
   "capabilities": {
-    "service": false,
+    "service": true,
     "streaming": false,
     "updates": false,
     "cancellation": false

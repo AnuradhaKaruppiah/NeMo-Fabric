@@ -5,21 +5,40 @@ SPDX-License-Identifier: Apache-2.0
 
 # NVIDIA NeMo Fabric OpenClaw Adapter
 
-This adapter starts an isolated local OpenClaw Gateway for each NeMo Fabric
-runtime and communicates with its OpenAI-compatible Chat Completions endpoint.
+This adapter supports two lifecycle shapes:
+
+- Managed runtime: Each NeMo Fabric runtime owns an isolated local OpenClaw
+  Gateway. Use this shape for evaluation, Harbor, and other bounded jobs.
+- Service: One prepared or attached Gateway serves multiple independent Fabric
+  runtimes. OpenClaw chat channels run beside the Fabric runtime API and keep
+  their own OpenClaw sessions.
+
+Fabric-originated invocations use the Gateway's OpenAI-compatible Chat
+Completions endpoint. Telegram and other channels connect directly to OpenClaw;
+they do not pass through a Fabric runtime.
 
 ## Install
 
-Install OpenClaw separately through npm, then install the adapter:
+Install the adapter in every Fabric environment:
+
+```bash
+pip install "nemo-fabric[openclaw]"
+```
+
+Managed runtimes and Fabric-owned services also require the pinned OpenClaw
+version:
 
 ```bash
 # Requires Node.js >=24.16.0 <25 or >=26.1.0, and npm 11.16+.
 npm install --global openclaw@2026.9.4 --allow-scripts=openclaw
-pip install "nemo-fabric[openclaw]"
 ```
 
-OpenClaw is not a Python dependency of the adapter. If `openclaw` is not in
-`PATH`, set `harness.settings.openclaw_command` to the absolute path of the executable. A bare command is resolved through `PATH`; a relative path containing a directory is resolved from the NeMo Fabric base directory.
+An attachment to a caller-owned Gateway does not require a local OpenClaw
+executable. OpenClaw is not a Python dependency of the adapter. For managed or
+prepared use, if `openclaw` is not in `PATH`, set
+`harness.settings.openclaw_command` to the absolute path of the executable. A
+bare command is resolved through `PATH`; a relative path containing a directory
+is resolved from the NeMo Fabric base directory.
 
 ## Configuration
 
@@ -44,6 +63,9 @@ The following harness settings are supported:
 | Setting | Default | Description |
 | --- | --- | --- |
 | `openclaw_command` | `openclaw` | Executable name or path. |
+| `agent_id` | `default` | OpenClaw agent for Fabric-originated invocations. |
+| `agent_runtime` | `openclaw` | Agent harness runtime: `openclaw` or `codex`. The latter requires the official `@openclaw/codex` plugin. |
+| `telegram` | None | Telegram settings for a prepared service. Requires `bot_token_env`; optionally accepts `api_root`, `dm_policy`, and `allow_from`. Managed runtimes reject this setting. |
 | `port_range` | Random available range | Inclusive consumer-allocated range with `start` and `end` fields; it must span at least 111 ports. |
 | `startup_timeout_seconds` | `30` | Gateway readiness timeout. |
 | `shutdown_timeout_seconds` | `10` | Graceful shutdown timeout. |
@@ -58,3 +80,136 @@ adapter generates an OpenClaw custom provider using the
 an API key.
 
 Relay telemetry and native OpenTelemetry are not supported.
+
+## Use a Fabric-Owned Service
+
+`prepare_service()` maps the normalized `FabricConfig` to `openclaw.json`,
+starts one Gateway, and returns a process-local service handle. Starting a
+runtime with that service creates a separate Fabric runtime and OpenClaw
+session without starting another Gateway.
+
+```python
+from nemo_fabric import Fabric
+
+fabric = Fabric()
+async with await fabric.prepare_service(config, base_dir=base_dir) as service:
+    async with await fabric.start_runtime(
+        config,
+        base_dir=base_dir,
+        service=service,
+    ) as runtime:
+        result = await runtime.invoke(input="Review the workspace changes.")
+```
+
+You can start multiple runtimes with the same service. Each runtime uses its
+own `runtime_id` as the OpenClaw Chat Completions `user`, so turns remain in a
+runtime-specific session. Stop all connected runtimes before releasing the
+service. Fabric rejects release while a connected runtime is active.
+
+Service handles use a process-local registry. Reconstructing a service after
+the Fabric process exits is not supported yet; cold resume will define that
+behavior separately.
+
+## Attach to a Caller-Owned Gateway
+
+Use `attach_service()` when another deployment system starts and supervises
+the Gateway. Supply an endpoint and the name of an environment variable that
+contains the Gateway token. Do not put the token value in the reference.
+
+```python
+from nemo_fabric import Fabric
+from nemo_fabric import ServiceReference
+
+reference = ServiceReference.from_mapping(
+    {
+        "provider": "nvidia.fabric.openclaw",
+        "service_type": "openclaw_gateway",
+        "connection": {
+            "gateway_url": "https://openclaw.example.com",
+            "gateway_token_env": "OPENCLAW_GATEWAY_TOKEN",
+            "agent_id": "default",
+        },
+    }
+)
+
+fabric = Fabric()
+async with await fabric.attach_service(config, reference) as service:
+    async with await fabric.start_runtime(config, service=service) as runtime:
+        result = await runtime.invoke(input="Review the workspace changes.")
+```
+
+The attached configuration can contain request-level model sampling and a
+system instruction. Remove deployment-owned model endpoints, API-key
+references, tools, MCP servers, skills, the OpenClaw command, agent runtime,
+Telegram settings, port range, and startup or shutdown timeouts because Fabric
+cannot verify or apply those fields to an existing Gateway. Connection and read
+timeouts and `agent_id` remain valid client-side settings. Releasing an
+attachment closes only Fabric-owned clients and private connection material; it
+does not stop the Gateway.
+
+## Configure Telegram on a Prepared Service
+
+Export the bot token and add the `telegram` harness setting before calling
+`prepare_service()`:
+
+```python
+config.harness.settings["telegram"] = {
+    "bot_token_env": "TELEGRAM_BOT_TOKEN",
+    "dm_policy": "allowlist",
+    "allow_from": ["tg:123456789"],
+}
+```
+
+OpenClaw starts the channel with the Gateway. Telegram messages create
+OpenClaw-owned channel sessions and continue without a Fabric runtime. Fabric
+runtimes connected to the same service use separate sessions through Chat
+Completions.
+
+## Test the Service Lifecycle
+
+Run these commands from the repository root. Install the supported OpenClaw
+version first as described in [Install](#install).
+
+Run the adapter and service tests:
+
+```bash
+uv run pytest tests/adapters/test_openclaw.py
+cargo test -p nemo-fabric-core service_hosts_share_across_runtimes_and_require_ordered_release
+```
+
+Run the code-review example with one Gateway and two Fabric runtimes:
+
+```bash
+export NVIDIA_API_KEY="<your-key>"
+uv run python -m examples.code_review_agent \
+  --variant openclaw \
+  --service \
+  --runtime-count 2 \
+  --input "Review the workspace changes."
+```
+
+For a live Telegram check, export the bot token and supply your numeric Telegram
+user ID. This run stops both Fabric runtimes after their invocations, then keeps
+only the Gateway service alive for two minutes so you can message the bot:
+
+```bash
+export TELEGRAM_BOT_TOKEN="<your-token>"
+
+uv run python -m examples.code_review_agent \
+  --variant openclaw \
+  --service \
+  --runtime-count 2 \
+  --telegram-token-env TELEGRAM_BOT_TOKEN \
+  --telegram-allow-from "<your-numeric-user-id>" \
+  --service-duration-seconds 120 \
+  --input "Review the workspace changes."
+```
+
+Send the bot a direct message during the service-only interval. A response
+confirms that Telegram is handled directly by OpenClaw and does not require an
+active Fabric runtime. The Gateway and channel stop when the service context
+exits.
+
+For Harbor, use managed mode so the Gateway and agent tools share the task
+workspace, as shown in the
+[calculator example](../../../examples/harbor/calculator/README.md#4-openclaw).

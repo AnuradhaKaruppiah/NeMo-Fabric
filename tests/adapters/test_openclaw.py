@@ -23,6 +23,7 @@ import pytest
 from nemo_fabric import Fabric
 from nemo_fabric import FabricConfig
 from nemo_fabric.errors import FabricConfigError
+from nemo_fabric.errors import FabricRuntimeError
 from nemo_fabric_adapter_contract.models import AgentConfig
 from nemo_fabric_adapter_contract.models import AgentRunRequest
 from nemo_fabric_adapter_contract.models import RuntimeContext
@@ -30,9 +31,9 @@ from nemo_fabric_adapters.openclaw import adapter
 from nemo_fabric_adapters.openclaw import _windows_job
 
 
-def _context(workspace: Path) -> RuntimeContext:
+def _context(workspace: Path, runtime_id: str = "openclaw-runtime") -> RuntimeContext:
     payload = {
-        "runtime_id": "openclaw-runtime",
+        "runtime_id": runtime_id,
         "invocation_id": "openclaw-invocation",
         "request_id": "openclaw-request",
         "environment": {
@@ -347,6 +348,279 @@ def test_openclaw_preserves_context_injection_without_system_instruction(
     )
 
     assert "contextInjection" not in generated["agents"]["defaults"]
+
+
+def test_openclaw_uses_provider_local_model_id(tmp_path: Path):
+    config = AgentConfig.from_mapping(
+        {
+            "models": {
+                "default": {
+                    "provider": "nvidia",
+                    "model": "nvidia/nemotron-test",
+                    "base_url": "https://integrate.api.nvidia.com/v1",
+                }
+            }
+        }
+    )
+
+    generated = adapter._openclaw_config(
+        config,
+        _context(tmp_path),
+        base_dir=tmp_path,
+        port=20_000,
+        token_env="OPENCLAW_GATEWAY_TOKEN",
+    )
+
+    assert generated["agents"]["defaults"]["model"]["primary"] == (
+        "nvidia/nemotron-test"
+    )
+    assert generated["models"]["providers"]["nvidia"]["models"] == [
+        {"id": "nemotron-test", "name": "nemotron-test"}
+    ]
+
+
+def test_openclaw_prepared_service_configures_runtime_and_telegram(
+    mock_openclaw: Path, tmp_path: Path
+):
+    config = _config(mock_openclaw)
+    assert config.harness is not None
+    config.harness.settings.update(
+        {
+            "agent_runtime": "codex",
+            "telegram": {
+                "bot_token_env": "TELEGRAM_BOT_TOKEN",
+                "api_root": "http://127.0.0.1:19090",
+                "dm_policy": "open",
+                "allow_from": ["*"],
+            },
+        }
+    )
+
+    generated = adapter._openclaw_config(
+        config,
+        _context(tmp_path),
+        base_dir=tmp_path,
+        port=20_000,
+        token_env="OPENCLAW_GATEWAY_TOKEN",
+        service_mode=True,
+    )
+
+    model = generated["agents"]["defaults"]["models"]["test/fabric-echo"]
+    assert model["agentRuntime"] == {"id": "codex"}
+    assert generated["channels"]["telegram"] == {
+        "enabled": True,
+        "botToken": {
+            "source": "env",
+            "provider": "default",
+            "id": "TELEGRAM_BOT_TOKEN",
+        },
+        "apiRoot": "http://127.0.0.1:19090",
+        "dmPolicy": "open",
+        "allowFrom": ["*"],
+    }
+
+
+def test_openclaw_managed_runtime_rejects_telegram(mock_openclaw: Path, tmp_path: Path):
+    config = _config(mock_openclaw)
+    assert config.harness is not None
+    config.harness.settings["telegram"] = {"bot_token_env": "TELEGRAM_BOT_TOKEN"}
+
+    with pytest.raises(adapter.lifecycle.LifecycleError) as caught:
+        adapter._openclaw_config(
+            config,
+            _context(tmp_path),
+            base_dir=tmp_path,
+            port=20_000,
+            token_env="OPENCLAW_GATEWAY_TOKEN",
+        )
+
+    assert caught.value.code == "openclaw_channels_require_service"
+
+
+def test_openclaw_attach_rejects_deployment_owned_configuration(
+    mock_openclaw: Path,
+):
+    config = _config(mock_openclaw)
+    assert config.harness is not None
+    config.harness.settings["agent_runtime"] = "codex"
+
+    with pytest.raises(adapter.lifecycle.LifecycleError) as caught:
+        adapter._validate_attach_config(config)
+
+    assert caught.value.code == "openclaw_attach_configuration_unverifiable"
+    assert set(caught.value.metadata["fields"]) == {
+        "models.base_url",
+        "tools",
+        "mcp",
+        "skills",
+        "harness.settings.openclaw_command",
+        "harness.settings.agent_runtime",
+    }
+
+
+@pytest.mark.skipif(
+    sys.platform in {"darwin", "win32"}, reason="Requires POSIX process supervision"
+)
+async def test_openclaw_prepared_service_supports_multiple_runtime_sessions(
+    mock_openclaw: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    capture = tmp_path / "config.json"
+    request_capture = tmp_path / "request.json"
+    requests_capture = tmp_path / "requests.jsonl"
+    stopped_capture = tmp_path / "stopped.txt"
+    connection_path = tmp_path / "private" / "service-connection.json"
+    os.environ.update(
+        {
+            "FAKE_OPENCLAW_CAPTURE": str(capture),
+            "FAKE_OPENCLAW_REQUEST": str(request_capture),
+            "FAKE_OPENCLAW_REQUESTS": str(requests_capture),
+            "FAKE_OPENCLAW_STOPPED": str(stopped_capture),
+        }
+    )
+    service_context = _context(tmp_path, "service-1")
+    service = adapter.OpenClawRuntime()
+    info = await service.start(
+        {
+            "config": _config(mock_openclaw),
+            "runtime_context": service_context.to_mapping(),
+            "base_dir": str(tmp_path),
+            "service": {
+                "operation": "prepare",
+                "connection_path": str(connection_path),
+            },
+        }
+    )
+    assert info is not None
+    assert info["service_type"] == "openclaw_gateway"
+    assert info["metadata"] == {"openclaw_version": "2026.9.4"}
+    assert "gateway_token" not in json.dumps(info)
+    assert connection_path.stat().st_mode & 0o777 == 0o600
+
+    runtimes: list[adapter.OpenClawRuntime] = []
+    contexts: list[RuntimeContext] = []
+    try:
+        for runtime_id in ("runtime-a", "runtime-b"):
+            runtime = adapter.OpenClawRuntime()
+            context = _context(tmp_path, runtime_id)
+            await runtime.start(
+                {
+                    "config": _config(mock_openclaw),
+                    "runtime_context": context.to_mapping(),
+                    "base_dir": str(tmp_path),
+                    "service": {
+                        "operation": "connect",
+                        "service_id": "service-1",
+                        "connection_path": str(connection_path),
+                    },
+                }
+            )
+            runtimes.append(runtime)
+            contexts.append(context)
+        results = await asyncio.gather(
+            *(
+                runtime.invoke(
+                    AgentRunRequest(input=f"hello from {context.runtime_id}"),
+                    context,
+                )
+                for runtime, context in zip(
+                    runtimes,
+                    contexts,
+                    strict=True,
+                )
+            )
+        )
+        assert all(result.status == "succeeded" for result in results)
+
+        private_connection = json.loads(connection_path.read_text(encoding="utf-8"))
+        monkeypatch.setenv("ATTACHED_OPENCLAW_GATEWAY_TOKEN", "incorrect-token")
+        rejected = adapter.OpenClawRuntime()
+        with pytest.raises(adapter.lifecycle.LifecycleError) as caught:
+            await rejected.start(
+                {
+                    "config": AgentConfig.from_mapping(
+                        {
+                            "models": {
+                                "default": {
+                                    "provider": "test",
+                                    "model": "fabric-echo",
+                                }
+                            }
+                        }
+                    ),
+                    "runtime_context": _context(
+                        tmp_path, "rejected-attachment"
+                    ).to_mapping(),
+                    "base_dir": str(tmp_path),
+                    "service": {
+                        "operation": "attach",
+                        "connection_path": str(
+                            tmp_path / "rejected-connection.json"
+                        ),
+                        "reference": {
+                            "provider": "nvidia.fabric.openclaw",
+                            "service_type": "openclaw_gateway",
+                            "connection": {
+                                "gateway_url": info["connection"]["gateway_url"],
+                                "gateway_token_env": "ATTACHED_OPENCLAW_GATEWAY_TOKEN",
+                            },
+                        },
+                    },
+                }
+            )
+        assert caught.value.code == "openclaw_service_authentication_failed"
+
+        monkeypatch.setenv(
+            "ATTACHED_OPENCLAW_GATEWAY_TOKEN",
+            private_connection["gateway_token"],
+        )
+        attached = adapter.OpenClawRuntime()
+        attach_context = _context(tmp_path, "attached-service")
+        attach_config = AgentConfig.from_mapping(
+            {
+                "models": {"default": {"provider": "test", "model": "fabric-echo"}},
+            }
+        )
+        attached_info = await attached.start(
+            {
+                "config": attach_config,
+                "runtime_context": attach_context.to_mapping(),
+                "base_dir": str(tmp_path),
+                "service": {
+                    "operation": "attach",
+                    "connection_path": str(tmp_path / "attached-connection.json"),
+                    "reference": {
+                        "provider": "nvidia.fabric.openclaw",
+                        "service_type": "openclaw_gateway",
+                        "connection": {
+                            "gateway_url": info["connection"]["gateway_url"],
+                            "gateway_token_env": "ATTACHED_OPENCLAW_GATEWAY_TOKEN",
+                        },
+                    },
+                },
+            }
+        )
+        assert attached_info is not None
+        assert attached_info["metadata"] == {"openclaw_version": "2026.9.4"}
+        await attached.stop()
+        assert not stopped_capture.exists()
+
+        requests = [
+            json.loads(line)
+            for line in requests_capture.read_text(encoding="utf-8").splitlines()
+        ]
+        assert {request["user"] for request in requests} == {
+            "runtime-a",
+            "runtime-b",
+        }
+        assert not stopped_capture.exists()
+    finally:
+        for runtime in runtimes:
+            await runtime.stop()
+        await service.stop()
+
+    assert stopped_capture.read_text(encoding="utf-8") == "stopped"
 
 
 def test_openclaw_explicit_empty_enabled_tools_denies_all(
@@ -895,6 +1169,69 @@ async def test_openclaw_plan_doctor_and_run_without_credentials(
     assert result.output == {"response": "OpenClaw response"}
 
 
+@pytest.mark.skipif(
+    sys.platform in {"darwin", "win32"}, reason="Requires POSIX process supervision"
+)
+async def test_openclaw_fabric_service_supports_multiple_runtimes(
+    mock_openclaw: Path, tmp_path: Path
+):
+    os.environ.update(
+        {
+            "FAKE_OPENCLAW_CAPTURE": str(tmp_path / "config.json"),
+            "FAKE_OPENCLAW_REQUEST": str(tmp_path / "request.json"),
+            "FAKE_OPENCLAW_REQUESTS": str(tmp_path / "requests.jsonl"),
+            "FAKE_OPENCLAW_STOPPED": str(tmp_path / "stopped.txt"),
+        }
+    )
+    config = FabricConfig.from_mapping(
+        {
+            "metadata": {"name": "openclaw-service-test"},
+            "harness": {
+                "adapter_id": "nvidia.fabric.openclaw",
+                "resolution": "preinstalled",
+                "settings": {"openclaw_command": str(mock_openclaw)},
+            },
+            "models": {
+                "default": {
+                    "provider": "test",
+                    "model": "fabric-echo",
+                    "base_url": "https://models.example.test/v1",
+                }
+            },
+            "environment": {"provider": "local", "workspace": "."},
+        }
+    )
+    fabric = Fabric()
+    service = await fabric.prepare_service(config, base_dir=tmp_path)
+    first = await fabric.start_runtime(config, base_dir=tmp_path, service=service)
+    second = await fabric.start_runtime(config, base_dir=tmp_path, service=service)
+    try:
+        first_result, second_result = await asyncio.gather(
+            first.invoke(input="first"), second.invoke(input="second")
+        )
+        assert first_result.status == "succeeded"
+        assert second_result.status == "succeeded"
+        assert first.handle.service_id == service.service_id
+        assert second.handle.service_id == service.service_id
+        assert first.runtime_id != second.runtime_id
+        with pytest.raises(FabricRuntimeError, match="active runtimes"):
+            await service.release()
+    finally:
+        await first.stop()
+        await second.stop()
+        await service.release()
+
+    requests = [
+        json.loads(line)
+        for line in (tmp_path / "requests.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert {request["user"] for request in requests} == {
+        first.runtime_id,
+        second.runtime_id,
+    }
+    assert (tmp_path / "stopped.txt").read_text(encoding="utf-8") == "stopped"
+
+
 @pytest.mark.parametrize(
     ("authentication", "capability"),
     [
@@ -963,7 +1300,7 @@ def test_openclaw_descriptor_and_module_entrypoint(repo_root: Path):
     )
 
     assert descriptor["adapter_id"] == "nvidia.fabric.openclaw"
-    assert descriptor["requirements"]["binaries"] == ["openclaw"]
+    assert descriptor["requirements"] == {}
     assert "tools.enabled" in descriptor["config"]["accepts"]
     assert "tools.blocked" in descriptor["config"]["accepts"]
     assert "mcp.auth.oauth2" not in descriptor["config"]["accepts"]

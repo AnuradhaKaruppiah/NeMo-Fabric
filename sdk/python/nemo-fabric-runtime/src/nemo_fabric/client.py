@@ -28,6 +28,8 @@ from nemo_fabric.runtime import (
     _run_native_lifecycle,
     _run_request_payload,
 )
+from nemo_fabric.service import Service
+from nemo_fabric.service import ServiceStatus
 from nemo_fabric.streaming import (
     _configured_stream_sink,
     _relay_enabled,
@@ -37,6 +39,8 @@ from nemo_fabric.types import (
     DoctorReport,
     RunPlan,
     RunResult,
+    ServiceHandle,
+    ServiceReference,
 )
 
 try:
@@ -197,6 +201,7 @@ class Fabric:
         overrides: Mapping[str, Any] | None = None,
         streaming: bool = False,
         launch_collector: bool | None = None,
+        service: Service | None = None,
     ) -> Runtime:
         """Start a stateful runtime for one or more ordered invocations.
 
@@ -217,6 +222,8 @@ class Fabric:
                 defaults to ``True`` when streaming is enabled. ``False`` uses
                 an externally managed collector. This argument cannot be set
                 unless ``streaming=True``.
+            service: Optional prepared or attached service. When supplied, the
+                runtime connects to that service instead of creating its own.
 
         Returns:
             An active ``Runtime``. Use it as an asynchronous context
@@ -232,6 +239,10 @@ class Fabric:
         """
 
         runtime_overrides = _json_mapping(overrides, "runtime overrides")
+        if service is not None and not isinstance(service, Service):
+            raise FabricConfigError("service must be a Service")
+        if service is not None and service.status is not ServiceStatus.ACTIVE:
+            raise FabricConfigError("service must be active")
         collector: AsyncExitStack | None = None
         collector_client: _AtofCollectorClient | None = None
         runtime_config = config
@@ -278,9 +289,7 @@ class Fabric:
                     runtime_config = config.model_copy(deep=True)
                 runtime_stream_sink = _configured_stream_sink(runtime_config)
                 if runtime_stream_sink is not None:
-                    runtime_stream_sink.url = (
-                        f"{collector_client.base_url}/v1/atof"
-                    )
+                    runtime_stream_sink.url = f"{collector_client.base_url}/v1/atof"
             except asyncio.CancelledError:
                 await close_streaming_resources()
                 raise
@@ -307,9 +316,14 @@ class Fabric:
 
         def start() -> dict[str, Any]:
             nonlocal started_runtime
-            started_runtime = json.loads(
-                native.start_runtime(json.dumps(plan.to_mapping()))
-            )
+            if service is None:
+                encoded = native.start_runtime(json.dumps(plan.to_mapping()))
+            else:
+                encoded = native.start_runtime_with_service(
+                    json.dumps(plan.to_mapping()),
+                    json.dumps(service.handle.to_mapping()),
+                )
+            started_runtime = json.loads(encoded)
             return started_runtime
 
         try:
@@ -343,6 +357,136 @@ class Fabric:
             collector=collector,
             collector_client=collector_client,
         )
+
+    async def prepare_service(
+        self,
+        config: FabricConfig,
+        *,
+        base_dir: str | os.PathLike[str] | None = None,
+    ) -> Service:
+        """Create and supervise a Fabric-owned long-lived service.
+
+        The selected adapter maps the normalized configuration into its service
+        configuration. The returned handle is process-local and can be shared
+        by multiple runtimes created from the same resolved plan.
+
+        Args:
+            config: Complete typed ``FabricConfig``.
+            base_dir: Base directory for resolving relative paths.
+
+        Returns:
+            An active Fabric-owned ``Service``. Use it as an asynchronous
+            context manager to guarantee shutdown.
+
+        Raises:
+            FabricConfigError: If planning or adapter configuration is invalid.
+            FabricNativeUnavailableError: If the native extension is not
+                installed.
+            FabricRuntimeError: If service startup fails.
+        """
+
+        plan = await _call_blocking(lambda: self.plan(config, base_dir=base_dir))
+        native = self._require_native_module("prepare_service")
+        started_service: dict[str, Any] | None = None
+
+        def prepare() -> dict[str, Any]:
+            nonlocal started_service
+            started_service = json.loads(
+                native.prepare_service(json.dumps(plan.to_mapping()))
+            )
+            return started_service
+
+        try:
+            handle = ServiceHandle.from_mapping(await _call_blocking(prepare))
+        except asyncio.CancelledError:
+            if started_service is not None:
+                try:
+                    await _call_blocking(
+                        lambda: json.loads(
+                            native.release_service(
+                                json.dumps(plan.to_mapping()),
+                                json.dumps(started_service),
+                            )
+                        )
+                    )
+                except Exception:
+                    pass
+            raise
+        except FabricError:
+            raise
+        except Exception as error:
+            raise FabricRuntimeError(str(error), stage="start") from error
+        return Service(client=self, plan=plan, service=handle)
+
+    async def attach_service(
+        self,
+        config: FabricConfig,
+        reference: ServiceReference,
+        *,
+        base_dir: str | os.PathLike[str] | None = None,
+    ) -> Service:
+        """Validate and attach to a caller-owned long-lived service.
+
+        The adapter validates the reference against the normalized
+        configuration and writes any resolved credentials only to private,
+        process-local connection material. Releasing the returned service
+        detaches NeMo Fabric without stopping the caller-owned service.
+
+        Args:
+            config: Complete typed ``FabricConfig``.
+            reference: Adapter-specific endpoint and credential references.
+                Do not include credential values.
+            base_dir: Base directory for resolving relative paths.
+
+        Returns:
+            An active caller-owned ``Service``. Use it as an asynchronous
+            context manager to guarantee detach.
+
+        Raises:
+            FabricConfigError: If the reference, plan, or adapter configuration
+                is invalid.
+            FabricNativeUnavailableError: If the native extension is not
+                installed.
+            FabricRuntimeError: If attachment or validation fails.
+        """
+
+        if not isinstance(reference, ServiceReference):
+            raise FabricConfigError("reference must be a ServiceReference")
+        plan = await _call_blocking(lambda: self.plan(config, base_dir=base_dir))
+        native = self._require_native_module("attach_service")
+        attached_service: dict[str, Any] | None = None
+
+        def attach() -> dict[str, Any]:
+            nonlocal attached_service
+            attached_service = json.loads(
+                native.attach_service(
+                    json.dumps(plan.to_mapping()),
+                    json.dumps(reference.to_mapping()),
+                )
+            )
+            return attached_service
+
+        try:
+            handle = ServiceHandle.from_mapping(await _call_blocking(attach))
+        except asyncio.CancelledError:
+            if attached_service is not None:
+                try:
+                    await _call_blocking(
+                        lambda: json.loads(
+                            native.release_service(
+                                json.dumps(plan.to_mapping()),
+                                json.dumps(attached_service),
+                            )
+                        )
+                    )
+                except Exception:
+                    pass
+            raise
+        except FabricError:
+            raise
+        except Exception as error:
+            raise FabricRuntimeError(str(error), stage="start") from error
+        return Service(client=self, plan=plan, service=handle)
 
     def _native_module(self) -> Any | None:
         return _native

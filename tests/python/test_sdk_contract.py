@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 from inspect import signature
 from pathlib import Path
 from typing import Any
@@ -53,6 +55,10 @@ from nemo_fabric import Runtime
 from nemo_fabric import RuntimeCapabilities
 from nemo_fabric import RuntimeConfig
 from nemo_fabric import RuntimeHandle
+from nemo_fabric import Service
+from nemo_fabric import ServiceHandle
+from nemo_fabric import ServiceReference
+from nemo_fabric import ServiceStatus
 from nemo_fabric import SkillConfig
 from nemo_fabric import TelemetryConfig
 from nemo_fabric import ToolDefinitionConfig
@@ -1680,6 +1686,18 @@ def _runtime() -> dict[str, Any]:
     }
 
 
+def _service() -> dict[str, Any]:
+    return {
+        "service_id": "service-1",
+        "service_binding": "fabric-service-binding-test",
+        "provider": "test.fabric.shim",
+        "service_type": "test_service",
+        "ownership": "fabric_owned",
+        "connection": {"endpoint": "http://127.0.0.1:1234"},
+        "metadata": {"ready": True},
+    }
+
+
 def _run_result(**updates: Any) -> dict[str, Any]:
     result = {
         "agent_name": "demo",
@@ -1712,6 +1730,9 @@ class NativeRecorder:
         self.config_base_dir_calls: list[str | None] = []
         self.stopped = 0
         self.fail_invoke = False
+        self.prepared = 0
+        self.attached: list[dict[str, Any]] = []
+        self.released = 0
 
     def plan_config(
         self,
@@ -1725,6 +1746,31 @@ class NativeRecorder:
     def start_runtime(self, plan_json: str) -> str:
         assert json.loads(plan_json)["agent_name"] == "demo"
         return json.dumps(_runtime())
+
+    def prepare_service(self, plan_json: str) -> str:
+        assert json.loads(plan_json)["agent_name"] == "demo"
+        self.prepared += 1
+        return json.dumps(_service())
+
+    def attach_service(self, plan_json: str, reference_json: str) -> str:
+        assert json.loads(plan_json)["agent_name"] == "demo"
+        self.attached.append(json.loads(reference_json))
+        service = _service()
+        service["ownership"] = "caller_owned"
+        return json.dumps(service)
+
+    def start_runtime_with_service(self, plan_json: str, service_json: str) -> str:
+        assert json.loads(plan_json)["agent_name"] == "demo"
+        service = json.loads(service_json)
+        runtime = _runtime()
+        runtime["service_id"] = service["service_id"]
+        return json.dumps(runtime)
+
+    def release_service(self, plan_json: str, service_json: str) -> str:
+        assert json.loads(plan_json)["agent_name"] == "demo"
+        assert json.loads(service_json)["service_id"] == "service-1"
+        self.released += 1
+        return json.dumps([])
 
     def invoke_runtime(
         self, plan_json: str, runtime_json: str, request_json: str
@@ -2306,6 +2352,70 @@ async def test_start_runtime_returns_runtime_with_typed_handle():
 
     assert runtime.runtime_id == "runtime-1"
     assert isinstance(runtime.handle, RuntimeHandle)
+
+
+async def test_service_lifecycle_prepares_connects_and_releases():
+    native = NativeRecorder()
+    client = NativeClient(native)
+    service = await client.prepare_service(_fabric_config())
+
+    assert isinstance(service, Service)
+    assert isinstance(service.handle, ServiceHandle)
+    assert service.status is ServiceStatus.ACTIVE
+    async with await client.start_runtime(_fabric_config(), service=service) as runtime:
+        assert runtime.handle.service_id == service.service_id
+
+    await service.release()
+    await service.release()
+    assert service.status is ServiceStatus.RELEASED
+    assert native.prepared == 1
+    assert native.released == 1
+
+
+async def test_attach_service_passes_typed_non_secret_reference():
+    native = NativeRecorder()
+    client = NativeClient(native)
+    reference = ServiceReference.from_mapping(
+        {
+            "provider": "test.fabric.shim",
+            "service_type": "test_service",
+            "connection": {
+                "endpoint": "http://127.0.0.1:1234",
+                "token_env": "TEST_SERVICE_TOKEN",
+            },
+        }
+    )
+
+    service = await client.attach_service(_fabric_config(), reference)
+    try:
+        assert service.handle.ownership == "caller_owned"
+        assert native.attached == [reference.to_mapping()]
+    finally:
+        await service.release()
+
+
+async def test_cancelled_service_prepare_releases_completed_native_service():
+    started = threading.Event()
+    finish = threading.Event()
+
+    class BlockingPrepareRecorder(NativeRecorder):
+        def prepare_service(self, plan_json: str) -> str:
+            started.set()
+            assert finish.wait(timeout=5)
+            return super().prepare_service(plan_json)
+
+    native = BlockingPrepareRecorder()
+    task = asyncio.create_task(NativeClient(native).prepare_service(_fabric_config()))
+    while not started.is_set():
+        await asyncio.sleep(0)
+
+    task.cancel()
+    finish.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert native.prepared == 1
+    assert native.released == 1
 
 
 async def test_runtime_state_errors_use_sdk_error_hierarchy():
