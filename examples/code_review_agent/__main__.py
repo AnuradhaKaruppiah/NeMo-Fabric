@@ -9,6 +9,7 @@ import argparse
 import asyncio
 import json
 import math
+import sys
 from collections.abc import Callable
 from contextlib import AsyncExitStack
 
@@ -230,6 +231,13 @@ async def main() -> None:
                     *(runtime.invoke(input=args.input) for runtime in runtimes)
                 )
             if args.service_duration_seconds:
+                print(
+                    "NeMo Fabric runtimes stopped. "
+                    f"OpenClaw service {service.service_id} remains active for "
+                    f"{args.service_duration_seconds:g} seconds.",
+                    file=sys.stderr,
+                    flush=True,
+                )
                 await asyncio.sleep(args.service_duration_seconds)
         result = results[0]
         output = (

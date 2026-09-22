@@ -514,7 +514,9 @@ async def test_openclaw_example_shares_service_and_configures_telegram(
     mock_fabric = MagicMock()
     mock_fabric.prepare_service = AsyncMock(return_value=service_context)
     mock_fabric.start_runtime = AsyncMock(side_effect=runtime_contexts)
+    mock_sleep = AsyncMock()
     monkeypatch.setattr(main_module, "Fabric", lambda: mock_fabric)
+    monkeypatch.setattr(main_module.asyncio, "sleep", mock_sleep)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -529,12 +531,19 @@ async def test_openclaw_example_shares_service_and_configures_telegram(
             "TELEGRAM_BOT_TOKEN",
             "--telegram-allow-from",
             "123456789",
+            "--service-duration-seconds",
+            "120",
         ],
     )
 
     await main_module.main()
 
-    output = json.loads(capsys.readouterr().out)
+    captured = capsys.readouterr()
+    output = json.loads(captured.out)
+    assert captured.err == (
+        "NeMo Fabric runtimes stopped. "
+        "OpenClaw service service-1 remains active for 120 seconds.\n"
+    )
     assert output["service_id"] == "service-1"
     assert len(output["results"]) == 2
     prepared_config = mock_fabric.prepare_service.call_args.args[0]
@@ -566,6 +575,7 @@ async def test_openclaw_example_shares_service_and_configures_telegram(
         call.kwargs["service"] is service
         for call in mock_fabric.start_runtime.await_args_list
     )
+    mock_sleep.assert_awaited_once_with(120.0)
     service_context.__aexit__.assert_awaited_once()
     for runtime_context in runtime_contexts:
         runtime_context.__aexit__.assert_awaited_once()

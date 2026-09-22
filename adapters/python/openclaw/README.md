@@ -278,10 +278,13 @@ uv run python -m examples.code_review_agent \
   --input "Review the workspace changes."
 ```
 
-Send the bot a direct message during the service-only interval. A response
-confirms that Telegram is handled directly by OpenClaw and does not require an
-active NeMo Fabric runtime. The Gateway and channel stop when the service context
-exits.
+Wait for the example to print that the NeMo Fabric runtimes have stopped and
+the OpenClaw service remains active. While the command is still running, open a
+direct chat with the bot, send `/start` if this is your first interaction, and
+then send a message before the displayed interval expires. A response confirms
+that Telegram is handled directly by OpenClaw and does not require an active
+NeMo Fabric runtime. The command prints its final JSON output after the Gateway
+and channel stop at the end of the service interval.
 
 For Harbor, use managed mode so the Gateway and agent tools share the task
 workspace, as shown in the
