@@ -418,8 +418,7 @@ def _openclaw_config(
         "discovery": {"mdns": {"mode": "off"}},
     }
     agent_id = _agent_id(config.harness.settings if config.harness else {})
-    if agent_id != "default":
-        result["agents"]["entries"] = {agent_id: {"default": True}}
+    result["agents"]["entries"] = {agent_id: {}}
     if config.instructions is not None and config.instructions.system is not None:
         result["agents"]["defaults"]["contextInjection"] = "never"
     if config.skills and config.skills.paths:
@@ -528,7 +527,9 @@ async def _command_output(
         await _kill_and_reap(process)
         raise
     if process.returncode != 0:
-        detail = stderr.decode(errors="replace").strip()
+        stderr_detail = stderr.decode(errors="replace").strip()
+        stdout_detail = stdout.decode(errors="replace").strip()
+        detail = stderr_detail or stdout_detail
         raise lifecycle.LifecycleError(
             "openclaw_command_failed",
             f"OpenClaw command failed: {' '.join(args)}",

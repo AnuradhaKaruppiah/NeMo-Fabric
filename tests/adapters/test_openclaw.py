@@ -435,7 +435,7 @@ def test_openclaw_prepared_service_passes_through_native_channel_config(
 
     model = generated["agents"]["defaults"]["models"]["test/fabric-echo"]
     assert model["agentRuntime"] == {"id": "openclaw"}
-    assert generated["agents"]["entries"] == {"reviewer": {"default": True}}
+    assert generated["agents"]["entries"] == {"reviewer": {}}
     assert (
         generated["channels"] == config.harness.settings["channel_config"]["channels"]
     )
@@ -445,6 +445,33 @@ def test_openclaw_prepared_service_passes_through_native_channel_config(
             "match": {"channel": "telegram", "accountId": "*"},
         }
     ]
+
+
+def test_openclaw_explicitly_declares_default_agent_for_channel_bindings(
+    mock_openclaw: Path, tmp_path: Path
+):
+    config = _config(mock_openclaw)
+    assert config.harness is not None
+    config.harness.settings["channel_config"] = {
+        "channels": {"telegram": {"enabled": True}},
+        "bindings": [
+            {
+                "agentId": "default",
+                "match": {"channel": "telegram", "accountId": "default"},
+            }
+        ],
+    }
+
+    generated = adapter._openclaw_config(
+        config,
+        _context(tmp_path),
+        base_dir=tmp_path,
+        port=20_000,
+        token_env="OPENCLAW_GATEWAY_TOKEN",
+        service_mode=True,
+    )
+
+    assert generated["agents"]["entries"] == {"default": {}}
 
 
 def test_openclaw_managed_runtime_rejects_channel_config(
@@ -1090,6 +1117,31 @@ async def test_openclaw_command_timeout_kills_and_reaps_process(
     assert caught.value.metadata == {"command": "--version", "timeout_seconds": 0.01}
     process.kill.assert_called_once_with()
     assert process.communicate.await_count == 2
+
+
+async def test_openclaw_command_failure_uses_stdout_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    process = MagicMock(spec=asyncio.subprocess.Process)
+    process.returncode = 1
+    process.communicate = AsyncMock(
+        return_value=(b'{"issues":[{"message":"invalid binding"}]}', b"")
+    )
+    monkeypatch.setattr(
+        adapter.asyncio,
+        "create_subprocess_exec",
+        AsyncMock(return_value=process),
+    )
+
+    with pytest.raises(adapter.lifecycle.LifecycleError) as caught:
+        await adapter._command_output(
+            Path("openclaw"), "config", "validate", "--json", env={}, timeout=30
+        )
+
+    assert caught.value.code == "openclaw_command_failed"
+    assert caught.value.metadata["detail"] == (
+        '{"issues":[{"message":"invalid binding"}]}'
+    )
 
 
 async def test_openclaw_command_cancellation_kills_and_reaps_process(
