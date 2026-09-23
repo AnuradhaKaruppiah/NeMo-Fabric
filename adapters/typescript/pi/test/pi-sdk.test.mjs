@@ -38,25 +38,39 @@ test("uses standard content when replaying reasoning through a custom model prox
   });
 });
 
-test("reserves enough context for the selected model's maximum output", () => {
-  assert.equal(modelAwareCompactionReserveTokens(16_384, 65_536), 65_536);
-  assert.equal(modelAwareCompactionReserveTokens(65_536, 32_768), 65_536);
+test("reserves output capacity without consuming more than half the context window", () => {
+  assert.equal(modelAwareCompactionReserveTokens(16_384, 65_536, 262_144), 65_536);
+  assert.equal(modelAwareCompactionReserveTokens(65_536, 32_768, 262_144), 65_536);
+  assert.equal(modelAwareCompactionReserveTokens(16_384, 131_072, 131_072), 65_536);
+  assert.equal(modelAwareCompactionReserveTokens(16_384, 65_536, 0), 65_536);
 });
 
 test("classifies only an exact opaque custom-proxy error as context overflow", () => {
   assert.match(
-    classifyOpaqueProxyContextOverflow("500 status code (no body)", 262_144),
+    classifyOpaqueProxyContextOverflow("500 status code (no body)", 262_144, 200_000, 65_536),
     /maximum context length is 262144 tokens/u,
   );
   assert.equal(
-    classifyOpaqueProxyContextOverflow("503 status code (no body)", 262_144),
+    classifyOpaqueProxyContextOverflow("503 status code (no body)", 262_144, 200_000, 65_536),
     "503 status code (no body)",
   );
   assert.match(
-    classifyOpaqueProxyContextOverflow("OpenAI API error (500): 500 status code (no body)", 262_144),
+    classifyOpaqueProxyContextOverflow(
+      "OpenAI API error (500): 500 status code (no body)",
+      262_144,
+      200_000,
+      65_536,
+    ),
     /maximum context length is 262144 tokens/u,
   );
-  assert.equal(classifyOpaqueProxyContextOverflow("500 status code (no body)", 0), "500 status code (no body)");
+  assert.equal(
+    classifyOpaqueProxyContextOverflow("500 status code (no body)", 262_144, 1_000, 65_536),
+    "500 status code (no body)",
+  );
+  assert.equal(
+    classifyOpaqueProxyContextOverflow("500 status code (no body)", 0, 200_000, 65_536),
+    "500 status code (no body)",
+  );
 });
 
 test("recovers an opaque custom-proxy error and ends the wrapped stream", async () => {
@@ -85,7 +99,7 @@ test("recovers an opaque custom-proxy error and ends the wrapped stream", async 
           default: {
             api_key_env: "TEST_API_KEY",
             base_url: `http://127.0.0.1:${address.port}/v1`,
-            model: "gpt-4.1-mini",
+            model: "gpt-4o-mini",
             provider: "openai",
           },
         },
@@ -107,9 +121,11 @@ test("recovers an opaque custom-proxy error and ends the wrapped stream", async 
       },
     });
 
-    const model = handle.session.model;
-    assert.notEqual(model, undefined);
-    const stream = await handle.session.agent.streamFunction(model, { messages: [] });
+    assert.notEqual(handle.session.model, undefined);
+    const model = { ...handle.session.model, contextWindow: 128 };
+    const stream = await handle.session.agent.streamFunction(model, {
+      messages: [{ role: "user", content: "x".repeat(512), timestamp: Date.now() }],
+    });
     const events = [];
     for await (const event of stream) {
       events.push(event);

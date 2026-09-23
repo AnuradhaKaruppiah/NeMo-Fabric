@@ -58,8 +58,13 @@ export function withCustomBaseUrl<T extends { api: string; baseUrl: string; comp
 export function modelAwareCompactionReserveTokens(
   configuredReserveTokens: number,
   maxOutputTokens: number,
+  contextWindow: number,
 ): number {
-  return Math.max(configuredReserveTokens, maxOutputTokens);
+  const reserveTokens = Math.max(configuredReserveTokens, maxOutputTokens);
+  if (contextWindow <= 0) {
+    return reserveTokens;
+  }
+  return Math.min(reserveTokens, Math.floor(contextWindow / 2));
 }
 
 const OPAQUE_PROXY_SERVER_ERROR = /^(?:OpenAI API error \(500\): )?500 status code \(no body\)$/iu;
@@ -67,8 +72,16 @@ const OPAQUE_PROXY_SERVER_ERROR = /^(?:OpenAI API error \(500\): )?500 status co
 export function classifyOpaqueProxyContextOverflow(
   errorMessage: string | undefined,
   contextWindow: number,
+  estimatedContextTokens: number,
+  reserveTokens: number,
 ): string | undefined {
-  if (errorMessage === undefined || contextWindow <= 0 || !OPAQUE_PROXY_SERVER_ERROR.test(errorMessage)) {
+  const compactionThreshold = contextWindow - Math.min(Math.max(reserveTokens, 0), Math.floor(contextWindow / 2));
+  if (
+    errorMessage === undefined ||
+    contextWindow <= 0 ||
+    estimatedContextTokens <= compactionThreshold ||
+    !OPAQUE_PROXY_SERVER_ERROR.test(errorMessage)
+  ) {
     return errorMessage;
   }
   return `maximum context length is ${contextWindow} tokens (${errorMessage} from the configured model proxy)`;
@@ -86,6 +99,7 @@ interface PiSdkModules {
   createAssistantMessageEventStream: typeof import("@earendil-works/pi-ai").createAssistantMessageEventStream;
   createAgentSession: typeof import("@earendil-works/pi-coding-agent").createAgentSession;
   DefaultResourceLoader: typeof import("@earendil-works/pi-coding-agent").DefaultResourceLoader;
+  estimateTokens: typeof import("@earendil-works/pi-coding-agent").estimateTokens;
   ModelRuntime: typeof import("@earendil-works/pi-coding-agent").ModelRuntime;
   SessionManager: typeof import("@earendil-works/pi-coding-agent").SessionManager;
   SettingsManager: typeof import("@earendil-works/pi-coding-agent").SettingsManager;
@@ -123,6 +137,7 @@ async function loadPiSdk(): Promise<PiSdkModules> {
     typeof ai.createAssistantMessageEventStream !== "function" ||
     typeof codingAgent.createAgentSession !== "function" ||
     typeof codingAgent.DefaultResourceLoader !== "function" ||
+    typeof codingAgent.estimateTokens !== "function" ||
     typeof codingAgent.ModelRuntime !== "function" ||
     typeof codingAgent.SessionManager !== "function" ||
     typeof codingAgent.SettingsManager !== "function"
@@ -138,6 +153,7 @@ async function loadPiSdk(): Promise<PiSdkModules> {
     createAssistantMessageEventStream: ai.createAssistantMessageEventStream,
     createAgentSession: codingAgent.createAgentSession,
     DefaultResourceLoader: codingAgent.DefaultResourceLoader,
+    estimateTokens: codingAgent.estimateTokens,
     ModelRuntime: codingAgent.ModelRuntime,
     SessionManager: codingAgent.SessionManager,
     SettingsManager: codingAgent.SettingsManager,
@@ -170,7 +186,11 @@ function streamFailure(model: Model<any>, error: unknown): AssistantMessageEvent
   };
 }
 
-function installOpaqueProxyOverflowRecovery(session: AgentSession, pi: PiSdkModules): void {
+function installOpaqueProxyOverflowRecovery(
+  session: AgentSession,
+  pi: PiSdkModules,
+  reserveTokens: number,
+): void {
   const originalStream = session.agent.streamFunction.bind(session.agent);
   session.agent.streamFunction = async (
     model: Model<any>,
@@ -189,6 +209,8 @@ function installOpaqueProxyOverflowRecovery(session: AgentSession, pi: PiSdkModu
           const errorMessage = classifyOpaqueProxyContextOverflow(
             event.error.errorMessage,
             model.contextWindow,
+            context.messages.reduce((tokens, message) => tokens + pi.estimateTokens(message), 0),
+            reserveTokens,
           );
           target.push({ ...event, error: { ...event.error, errorMessage } });
         }
@@ -617,12 +639,14 @@ export class PiSdkSessionFactory implements PiSessionFactory {
       throw new LifecycleError("pi_model_unknown", "The selected provider and model are not present in Pi's catalog");
     }
     const model = withCustomBaseUrl(catalogModel, selected.base_url, !relayEnabled);
+    const compactionReserveTokens = modelAwareCompactionReserveTokens(
+      settings.getCompactionReserveTokens(),
+      model.maxTokens,
+      model.contextWindow,
+    );
     settings.applyOverrides({
       compaction: {
-        reserveTokens: modelAwareCompactionReserveTokens(
-          settings.getCompactionReserveTokens(),
-          model.maxTokens,
-        ),
+        reserveTokens: compactionReserveTokens,
       },
     });
     let relay: PiRelayRuntime | undefined;
@@ -711,7 +735,7 @@ export class PiSdkSessionFactory implements PiSessionFactory {
         excludeTools: blocked,
       });
       if (selected.base_url) {
-        installOpaqueProxyOverflowRecovery(session, pi);
+        installOpaqueProxyOverflowRecovery(session, pi, compactionReserveTokens);
       }
       handle = new PiSdkSessionHandle(session, state, relay);
       const blockedNames = new Set(blocked);

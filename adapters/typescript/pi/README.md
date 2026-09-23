@@ -33,10 +33,12 @@ The adapter supports:
 
 Ambient Pi settings, context files, packages, extensions, skills, prompts,
 themes, model files, credentials, and session files are disabled. Explicitly
-configured extensions are trusted code. The adapter keeps enough context space
-for the selected model's maximum output. For custom model proxies, it also
-recognizes an exact bodyless server error as a recoverable overflow signal so
-Pi can make one bounded compact-and-retry attempt.
+configured extensions are trusted code. The adapter raises the compaction
+reserve toward the selected model's maximum output while retaining at least
+half of the context window for input. For custom model proxies, it recognizes
+an exact bodyless server error as a recoverable overflow signal only when Pi's
+context estimate exceeds the compaction threshold, then makes one bounded
+compact-and-retry attempt.
 
 ## Install the Adapter
 
