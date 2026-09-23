@@ -90,7 +90,7 @@ integration shape and implement the minimum lifecycle.
 | [mini-SWE-agent](python/mini-swe-agent/README.md) | Configured provider and model | Not exposed | Not exposed | Not exposed | Not exposed |
 | [NOOA](python/nooa/README.md) | Configured provider and model with optional base URL and temperature | Not exposed | InteractiveAgent: normalized whole servers; BenchAgent: not exposed | InteractiveAgent: normalized `skills.paths`; BenchAgent: not exposed | Not exposed |
 | [OpenClaw](python/openclaw/README.md) | Native OpenClaw providers or a configured OpenAI Chat Completions-compatible provider | OpenClaw native policy only | Normalized: stdio, HTTP, streamable HTTP, and SSE without normalized authentication | Normalized `skills.paths` | OpenClaw native behavior |
-| [OpenCode](typescript/opencode/README.md) | Configured OpenCode provider and model with an optional OpenAI-compatible base URL | Not exposed | Not exposed | Not exposed | Not exposed |
+| [OpenCode](typescript/opencode/README.md) | Configured OpenCode provider and model with an optional OpenAI-compatible base URL | Not exposed | Normalized: stdio and streamable HTTP | Normalized `skills.paths` | Not exposed |
 | [Pi](typescript/pi/README.md) | One Pi-catalog provider and model with an optional base URL override | `tools.definitions`, `tools.enabled`, and `tools.blocked` cover built-ins, trusted local modules, and explicit extension tools | Not exposed | Normalized `skills.paths` | Not exposed |
 | [Remote Agent](python/remote-agent/README.md) | Configured remote HTTP API and model | Not exposed | Not exposed | Not exposed | Not exposed |
 
@@ -129,10 +129,11 @@ and additive extension maps because their support does not vary by adapter:
 | `models.<role>.model` | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes; passed to OpenCode | Yes; must exist in the Pi catalog | Yes |
 | `models.<role>.api_key_env` | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | `models.<role>.base_url` | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes; OpenAI-compatible Chat Completions endpoint | Yes; known catalog models only | No; use `harness.settings.base_url` |
-| `models.<role>.temperature` | No | No | Yes | Yes | Yes | Yes | Yes | No | No | Yes |
+| `models.<role>.temperature` | No | No | Yes | Yes | Yes | Yes | Yes | Yes: OpenAI-compatible `base_url` only | No | Yes |
 | `models.<role>.settings.<key>` | No keys declared | No keys declared | No keys declared | No keys declared | No keys declared | `client_type` | No keys declared | No keys declared | No keys declared | `max_tokens` for Anthropic Messages |
-| `models.<role>.top_p`, `.max_tokens` | No | No | Yes | Yes | Yes; passed through LiteLLM | No | Yes | No | No | Yes; translated to the selected API protocol |
-| `instructions.system` | `replace`, `append` | `replace`; base instructions | `replace` | `replace` | `replace` | `replace` | `replace` | No | `replace`; Pi base instructions | `replace` |
+| `models.<role>.top_p` | No | No | Yes | Yes | Yes: passed through LiteLLM | No | Yes | Yes: OpenAI-compatible `base_url` only | No | Yes: translated to the selected API protocol |
+| `models.<role>.max_tokens` | No | No | Yes | Yes | Yes: passed through LiteLLM | No | Yes | No | No | Yes: translated to the selected API protocol |
+| `instructions.system` | `replace`, `append` | `replace` with base instructions | `replace` | `replace` | `replace` | `replace` | `replace` | `replace` with OpenCode base instructions | `replace` with Pi base instructions | `replace` |
 | `runtime.input_schema`, `.output_schema` | Core | Core | Core | Core | Core | Core | Core | Core | Core | Core |
 | `runtime.artifacts`, `.timeout_seconds` | Core | Core | Core | Core | Core | Core | Core | Core | Core | Core |
 | `runtime.max_turns` | Yes | No | Yes; maps to LangGraph supersteps | Yes; iteration limit | Yes | No | No | No | No | No |
@@ -141,10 +142,10 @@ and additive extension maps because their support does not vary by adapter:
 | `environment.connection`, `.metadata`, `.settings` | Environment-provider-owned | Environment-provider-owned | Environment-provider-owned | Environment-provider-owned | Environment-provider-owned | Environment-provider-owned | Environment-provider-owned | Environment-provider-owned | Environment-provider-owned | Environment-provider-owned |
 | `tools.definitions` | No | No | No | No | No | No | No | No | Yes; trusted local module factories | No |
 | `tools.enabled`, `.blocked` | Yes | No | Yes | Yes; native selectors are Hermes toolset names | No | No | Yes | No | Yes | No |
-| `skills.paths` | Yes | Yes | Yes | Yes | No | InteractiveAgent: Yes; BenchAgent: No | Yes | No | Yes | No |
-| `mcp.servers.<name>.transport`, `.url` with `harness_native` exposure | Yes | Yes | Yes | Yes | No | InteractiveAgent: Yes; BenchAgent: No | Yes | No | No | No |
+| `skills.paths` | Yes | Yes | Yes | Yes | No | InteractiveAgent: Yes, BenchAgent: No | Yes | Yes | Yes | No |
+| `mcp.servers.<name>.transport`, `.url` with `harness_native` exposure | Yes | Yes | Yes | Yes | No | InteractiveAgent: Yes, BenchAgent: No | Yes | Yes: stdio `args` and `env`, streamable HTTP `custom_headers` | No | No |
 | `mcp.servers.<name>.exposure = "fabric_managed"` | No; not implemented | No; not implemented | No; not implemented | No; not implemented | No | No; not implemented | No; not implemented | No | No | No |
-| `telemetry.providers.relay` | Yes | Yes | Yes | Yes | Yes | Yes | No | No | Yes | Yes, supports collector-backed ATOF streaming |
+| `telemetry.providers.relay` | Yes | Yes | Yes | Yes | Yes | Yes | No | No | Yes, supports embedded collector-backed Agent Trajectory Observability Format (ATOF) streaming | Yes, supports collector-backed ATOF streaming |
 | `telemetry.providers.native` | No | Yes; OpenTelemetry | Yes; OpenTelemetry and OpenInference | No | No | No | No | No | No | No |
 | `telemetry.providers.<provider>.config` | Declared-provider pass-through | Declared-provider pass-through | Declared-provider pass-through | Declared-provider pass-through | Declared-provider pass-through | Declared-provider pass-through | No | No | Declared-provider pass-through | No |
 | `relay.project`, `.output_dir`, `.observability` | Yes | Yes | Yes | Yes | Yes | Yes | No | No | Yes | Uses the named external collector sink when selected; config is not sent to the remote service |
@@ -173,9 +174,8 @@ without creating a compatibility requirement.
 All bundled adapters use a language-specific persistent adapter host with an
 ordered `start` → `invoke*` → `stop` protocol.
 
-NeMo Relay records raw events in Agent Trajectory Observability Format (ATOF)
-and produces normalized trajectories in Agent Trajectory Interchange Format
-(ATIF).
+NeMo Relay records raw events in ATOF and produces normalized trajectories in
+Agent Trajectory Interchange Format (ATIF).
 
 | Agent Harness | State Retained Across Turns | Relay Integration | Per-Turn Behavior | Stop Behavior | Remote Service |
 | --- | --- | --- | --- | --- | --- |
@@ -187,7 +187,7 @@ and produces normalized trajectories in Agent Trajectory Interchange Format
 | [NOOA](python/nooa/README.md) | InteractiveAgent queue dispatcher or BenchAgent task state | Adapter-owned Relay middleware and generated Relay configuration | InteractiveAgent dispatches queued requests; BenchAgent evaluates one task | Closes agent resources and Relay state | Not implemented |
 | [OpenClaw](python/openclaw/README.md) | OpenClaw Gateway session selected by Fabric runtime ID | Not supported | Sends a terminal Chat Completions request to the isolated loopback Gateway | Terminates the Gateway process tree and removes its temporary config and state | Adapter-owned loopback service |
 | [OpenCode](typescript/opencode/README.md) | Embedded OpenCode host and session | Not supported | Reuses the session and calls `prompt()`, `wait()`, and `context()` for ordered text input | Removes the session and closes the host | Not implemented |
-| [Pi](typescript/pi/README.md) | In-memory Pi `AgentSession` | Runtime-owned Relay 0.9 CLI gateway and explicit Pi extension | Reuses the session, calls `prompt()` for ordered text input, and collects ATOF; `relay_artifacts` does not include local ATIF | Aborts work, emits extension shutdown so local ATIF finalizes on disk, disposes the session, and then stops the gateway | Not implemented |
+| [Pi](typescript/pi/README.md) | In-memory Pi `AgentSession` | Runtime-owned Relay 0.9 CLI gateway and explicit Pi extension | Reuses the session and calls `prompt()` for ordered text input; with `streaming=True`, routes per-invocation model-turn ATOF for successful redirects through the embedded collector; startup `model_redirect` marks remain in configured Relay ATOF artifacts and are not included in `invoke_stream()`; `relay_artifacts` does not include local ATIF | Aborts work, emits extension shutdown so local ATIF finalizes on disk, disposes the session, and then stops the gateway | Not implemented |
 | [Remote Agent](python/remote-agent/README.md) | `httpx.AsyncClient` and user/assistant transcript | Remote Relay publishes to a shared ATOF collector | Registers the request ID, maps it into body metadata, sends one HTTP request, and retains the completed transcript | Closes the HTTP client | Implemented over HTTP(S) |
 
 Telemetry output names use the descriptor contract values. Claude, Codex,
