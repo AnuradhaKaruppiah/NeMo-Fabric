@@ -3,10 +3,12 @@
 
 """Contract tests for the code-review example."""
 
+import asyncio
 import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 
@@ -465,6 +467,139 @@ async def test_example_entrypoint_shows_response_after_normalized_output(
     assert json.loads("\n".join(lines[:-1])) == {
         "output": {"response": "visible response"}
     }
+
+
+async def test_openclaw_example_shares_service_and_configures_telegram(
+    monkeypatch,
+    capsys,
+):
+    service = MagicMock(service_id="service-1")
+    service_context = MagicMock(name="service_context")
+    service_context.__aenter__ = AsyncMock(return_value=service)
+    service_context.__aexit__ = AsyncMock(return_value=None)
+
+    runtime_contexts = []
+    results = []
+    for index in range(2):
+        result = MagicMock()
+        result.to_mapping.return_value = {
+            "status": "succeeded",
+            "runtime": index,
+        }
+        results.append(result)
+        runtime = MagicMock()
+        runtime.invoke = AsyncMock(return_value=result)
+        runtime_context = MagicMock(name=f"runtime_context_{index}")
+        runtime_context.__aenter__ = AsyncMock(return_value=runtime)
+        runtime_context.__aexit__ = AsyncMock(return_value=None)
+        runtime_contexts.append(runtime_context)
+
+    mock_fabric = MagicMock()
+    mock_fabric.prepare_service = AsyncMock(return_value=service_context)
+    mock_fabric.start_runtime = AsyncMock(side_effect=runtime_contexts)
+    mock_sleep = AsyncMock()
+    monkeypatch.setattr(main_module, "Fabric", lambda: mock_fabric)
+    monkeypatch.setattr(
+        main_module,
+        "asyncio",
+        SimpleNamespace(
+            create_task=asyncio.create_task,
+            gather=asyncio.gather,
+            sleep=mock_sleep,
+        ),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "code_review_agent",
+            "--variant",
+            "openclaw",
+            "--service",
+            "--runtime-count",
+            "2",
+            "--telegram-token-env",
+            "TELEGRAM_BOT_TOKEN",
+            "--telegram-allow-from",
+            "123456789",
+            "--service-duration-seconds",
+            "120",
+        ],
+    )
+
+    await main_module.main()
+
+    captured = capsys.readouterr()
+    output = json.loads(captured.out)
+    assert captured.err == (
+        "OpenClaw Telegram channel is active. You can message the bot while "
+        "Fabric runtimes are running or during the service-only interval.\n"
+        "NeMo Fabric runtimes stopped. "
+        "OpenClaw service service-1 remains active for 120 seconds.\n"
+    )
+    assert output["service_id"] == "service-1"
+    assert len(output["results"]) == 2
+    prepared_config = mock_fabric.prepare_service.call_args.args[0]
+    assert prepared_config.harness.settings["channel_config"] == {
+        "channels": {
+            "telegram": {
+                "accounts": {
+                    "default": {
+                        "botToken": {
+                            "source": "env",
+                            "provider": "default",
+                            "id": "TELEGRAM_BOT_TOKEN",
+                        },
+                        "dmPolicy": "allowlist",
+                        "allowFrom": ["123456789"],
+                    }
+                }
+            }
+        },
+        "bindings": [
+            {
+                "agentId": "default",
+                "match": {"channel": "telegram", "accountId": "default"},
+            }
+        ],
+    }
+    assert mock_fabric.start_runtime.await_count == 2
+    assert all(
+        call.kwargs["service"] is service
+        for call in mock_fabric.start_runtime.await_args_list
+    )
+    mock_sleep.assert_awaited_once_with(120.0)
+    service_context.__aexit__.assert_awaited_once()
+    for runtime_context in runtime_contexts:
+        runtime_context.__aexit__.assert_awaited_once()
+
+
+async def test_openclaw_example_drains_invocations_before_cancelled_cleanup():
+    all_started = asyncio.Event()
+    started = 0
+    cleaned = 0
+
+    async def invoke(*, input):
+        nonlocal cleaned, started
+        started += 1
+        if started == 2:
+            all_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await asyncio.sleep(0)
+            cleaned += 1
+
+    mock_runtimes = [MagicMock(invoke=AsyncMock(side_effect=invoke)) for _ in range(2)]
+
+    task = asyncio.create_task(main_module._invoke_runtimes(mock_runtimes, "review"))
+    await all_started.wait()
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert cleaned == 2
 
 
 @pytest.mark.parametrize(
