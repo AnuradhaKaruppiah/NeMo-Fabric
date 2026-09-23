@@ -370,7 +370,8 @@ def test_pi_variant_projects_explicit_skill_and_tool_policy():
     assert plan.config.runtime.output_schema == "message"
 
 
-def test_pi_variant_requires_the_relay_extension_for_a_live_run():
+@pytest.mark.parametrize("stream", [False, True])
+def test_pi_variant_requires_the_relay_extension_for_a_live_run(stream: bool):
     completed = subprocess.run(
         [
             sys.executable,
@@ -379,6 +380,7 @@ def test_pi_variant_requires_the_relay_extension_for_a_live_run():
             "--variant",
             "pi",
             "--relay",
+            *(["--stream"] if stream else []),
         ],
         cwd=BASE_DIR.parents[1],
         text=True,
@@ -388,27 +390,6 @@ def test_pi_variant_requires_the_relay_extension_for_a_live_run():
 
     assert completed.returncode == 2
     assert "Pi Relay runs require --pi-relay-extension-path" in completed.stderr
-
-
-def test_pi_variant_rejects_relay_backed_streaming():
-    completed = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "examples.code_review_agent",
-            "--variant",
-            "pi",
-            "--relay",
-            "--stream",
-        ],
-        cwd=BASE_DIR.parents[1],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-
-    assert completed.returncode == 2
-    assert "Pi adapter does not support Relay-backed streaming yet" in completed.stderr
 
 
 def test_openclaw_variant_rejects_relay_telemetry():
@@ -486,9 +467,22 @@ async def test_example_entrypoint_shows_response_after_normalized_output(
     }
 
 
+@pytest.mark.parametrize(
+    "variant_options",
+    [
+        ["--variant", "nooa"],
+        [
+            "--variant",
+            "pi",
+            "--pi-relay-extension-path",
+            "/tmp/nemo-relay-pi-extension",
+        ],
+    ],
+)
 async def test_example_entrypoint_streams_relay_records_and_terminal_result(
     monkeypatch,
     capsys,
+    variant_options: list[str],
 ):
     result = MagicMock()
     result.output = RunOutput.from_mapping({"response": "streamed response"})
@@ -520,8 +514,7 @@ async def test_example_entrypoint_streams_relay_records_and_terminal_result(
         "argv",
         [
             "code_review_agent",
-            "--variant",
-            "nooa",
+            *variant_options,
             "--relay",
             "--stream",
             "--show-output",
@@ -541,6 +534,12 @@ async def test_example_entrypoint_streams_relay_records_and_terminal_result(
     assert payload["result"]["status"] == "succeeded"
     mock_fabric.start_runtime.assert_awaited_once()
     assert mock_fabric.start_runtime.call_args.kwargs["streaming"] is True
+    if "--pi-relay-extension-path" in variant_options:
+        started_config = mock_fabric.start_runtime.call_args.args[0]
+        assert started_config.harness is not None
+        assert started_config.harness.settings["relay_extension_path"] == (
+            "/tmp/nemo-relay-pi-extension"
+        )
     runtime.invoke_stream.assert_called_once_with(input="review this")
     stream.result.assert_awaited_once_with()
     runtime_context.__aexit__.assert_awaited_once()

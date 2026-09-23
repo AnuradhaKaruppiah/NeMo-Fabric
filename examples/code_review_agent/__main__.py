@@ -82,8 +82,6 @@ async def main() -> None:
         parser.error("--stream requires --relay")
     if args.stream and args.plan:
         parser.error("--stream cannot be combined with --plan")
-    if args.variant == "pi" and args.stream:
-        parser.error("the Pi adapter does not support Relay-backed streaming yet")
     if args.variant == "openclaw" and args.relay:
         parser.error("the OpenClaw adapter does not support Relay telemetry")
     if args.pi_relay_extension_path is not None and args.variant != "pi":
