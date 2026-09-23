@@ -35,9 +35,7 @@ Ambient Pi settings, context files, packages, extensions, skills, prompts,
 themes, model files, credentials, and session files are disabled. Explicitly
 configured extensions are trusted code. The adapter raises the compaction
 reserve toward the selected model's maximum output while retaining at least
-half of the context window for input. For custom model proxies, it recognizes
-an exact bodyless HTTP 500 response as a recoverable overflow signal, then
-makes one bounded compact-and-retry attempt.
+half of the context window for input.
 
 ## Install the Adapter
 

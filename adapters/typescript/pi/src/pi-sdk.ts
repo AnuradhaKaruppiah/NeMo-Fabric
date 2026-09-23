@@ -13,7 +13,6 @@ import type {
   ExtensionCommandContextActions,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import type { AssistantMessageEvent, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { createJiti } from "jiti/static";
 import type { AgentConfig, AgentModelConfig, AgentToolDefinition, JsonObject } from "nemo-fabric-adapter-contract";
 import { LifecycleError, type AdapterStartInput } from "nemo-fabric-adapters-common";
@@ -67,18 +66,6 @@ export function modelAwareCompactionReserveTokens(
   return Math.min(reserveTokens, Math.floor(contextWindow / 2));
 }
 
-const OPAQUE_PROXY_SERVER_ERROR = /^(?:OpenAI API error \(500\): )?500 status code \(no body\)$/iu;
-
-export function classifyOpaqueProxyContextOverflow(
-  errorMessage: string | undefined,
-  contextWindow: number,
-): string | undefined {
-  if (errorMessage === undefined || contextWindow <= 0 || !OPAQUE_PROXY_SERVER_ERROR.test(errorMessage)) {
-    return errorMessage;
-  }
-  return `maximum context length is ${contextWindow} tokens (${errorMessage} from the configured model proxy)`;
-}
-
 type PiToolFactory = (context: PiToolFactoryContext) => ToolDefinition | Promise<ToolDefinition>;
 
 const PI_BUILTIN_TOOL_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
@@ -88,7 +75,6 @@ const PI_HARNESS_INSTALL_COMMAND =
 
 interface PiSdkModules {
   InMemoryCredentialStore: typeof import("@earendil-works/pi-ai").InMemoryCredentialStore;
-  createAssistantMessageEventStream: typeof import("@earendil-works/pi-ai").createAssistantMessageEventStream;
   createAgentSession: typeof import("@earendil-works/pi-coding-agent").createAgentSession;
   DefaultResourceLoader: typeof import("@earendil-works/pi-coding-agent").DefaultResourceLoader;
   ModelRuntime: typeof import("@earendil-works/pi-coding-agent").ModelRuntime;
@@ -125,7 +111,6 @@ async function loadPiSdk(): Promise<PiSdkModules> {
 
   if (
     typeof ai.InMemoryCredentialStore !== "function" ||
-    typeof ai.createAssistantMessageEventStream !== "function" ||
     typeof codingAgent.createAgentSession !== "function" ||
     typeof codingAgent.DefaultResourceLoader !== "function" ||
     typeof codingAgent.ModelRuntime !== "function" ||
@@ -140,70 +125,11 @@ async function loadPiSdk(): Promise<PiSdkModules> {
 
   return {
     InMemoryCredentialStore: ai.InMemoryCredentialStore,
-    createAssistantMessageEventStream: ai.createAssistantMessageEventStream,
     createAgentSession: codingAgent.createAgentSession,
     DefaultResourceLoader: codingAgent.DefaultResourceLoader,
     ModelRuntime: codingAgent.ModelRuntime,
     SessionManager: codingAgent.SessionManager,
     SettingsManager: codingAgent.SettingsManager,
-  };
-}
-
-function streamFailure(model: Model<any>, error: unknown): AssistantMessageEvent {
-  const errorMessage = error instanceof Error ? error.message : String(error);
-  return {
-    type: "error",
-    reason: "error",
-    error: {
-      role: "assistant",
-      content: [],
-      api: model.api,
-      provider: model.provider,
-      model: model.id,
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-      stopReason: "error",
-      errorMessage,
-      timestamp: Date.now(),
-    },
-  };
-}
-
-function installOpaqueProxyOverflowRecovery(session: AgentSession, pi: PiSdkModules): void {
-  const originalStream = session.agent.streamFunction.bind(session.agent);
-  session.agent.streamFunction = async (
-    model: Model<any>,
-    context: Context,
-    options?: SimpleStreamOptions,
-  ) => {
-    const source = await originalStream(model, context, options);
-    const target = pi.createAssistantMessageEventStream();
-    void (async () => {
-      try {
-        for await (const event of source) {
-          if (event.type !== "error") {
-            target.push(event);
-            continue;
-          }
-          const errorMessage = classifyOpaqueProxyContextOverflow(
-            event.error.errorMessage,
-            model.contextWindow,
-          );
-          target.push({ ...event, error: { ...event.error, errorMessage } });
-        }
-        target.end();
-      } catch (error) {
-        target.push(streamFailure(model, error));
-        target.end();
-      }
-    })();
-    return target;
   };
 }
 
@@ -717,9 +643,6 @@ export class PiSdkSessionFactory implements PiSessionFactory {
         tools: enabled === null ? undefined : enabled,
         excludeTools: blocked,
       });
-      if (selected.base_url) {
-        installOpaqueProxyOverflowRecovery(session, pi);
-      }
       handle = new PiSdkSessionHandle(session, state, relay);
       const blockedNames = new Set(blocked);
       const availableNames = new Set(session.getAllTools().map((tool) => tool.name));

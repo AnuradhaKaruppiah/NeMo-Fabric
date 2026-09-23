@@ -9,7 +9,6 @@ import test from "node:test";
 import { createServer } from "node:http";
 
 import {
-  classifyOpaqueProxyContextOverflow,
   modelAwareCompactionReserveTokens,
   PiSdkSessionFactory,
   resolveCustomTools,
@@ -43,92 +42,6 @@ test("reserves output capacity without consuming more than half the context wind
   assert.equal(modelAwareCompactionReserveTokens(65_536, 32_768, 262_144), 65_536);
   assert.equal(modelAwareCompactionReserveTokens(16_384, 131_072, 131_072), 65_536);
   assert.equal(modelAwareCompactionReserveTokens(16_384, 65_536, 0), 65_536);
-});
-
-test("classifies only an exact opaque custom-proxy error as context overflow", () => {
-  assert.match(
-    classifyOpaqueProxyContextOverflow("500 status code (no body)", 262_144),
-    /maximum context length is 262144 tokens/u,
-  );
-  assert.equal(
-    classifyOpaqueProxyContextOverflow("503 status code (no body)", 262_144),
-    "503 status code (no body)",
-  );
-  assert.match(
-    classifyOpaqueProxyContextOverflow("OpenAI API error (500): 500 status code (no body)", 262_144),
-    /maximum context length is 262144 tokens/u,
-  );
-  assert.equal(classifyOpaqueProxyContextOverflow("500 status code (no body)", 0), "500 status code (no body)");
-});
-
-test("recovers an opaque custom-proxy error and ends the wrapped stream", async () => {
-  const workspace = await realpath(await mkdtemp(join(tmpdir(), "fabric-pi-proxy-overflow-")));
-  const server = createServer((_request, response) => {
-    response.writeHead(500).end();
-  });
-  await new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
-  });
-  const address = server.address();
-  assert.notEqual(typeof address, "string");
-  let handle;
-  try {
-    const factory = new PiSdkSessionFactory({
-      async start() {
-        return undefined;
-      },
-    });
-    handle = await factory.create({
-      agentName: "pi-proxy-overflow-test",
-      baseDir: workspace,
-      config: {
-        models: {
-          default: {
-            api_key_env: "TEST_API_KEY",
-            base_url: `http://127.0.0.1:${address.port}/v1`,
-            model: "gpt-4o-mini",
-            provider: "openai",
-          },
-        },
-        tools: { enabled: [] },
-      },
-      runtimeContext: {
-        artifacts: {},
-        environment: {
-          control_location: "external_control",
-          env: { TEST_API_KEY: "not-a-real-key" },
-          environment_id: "environment-1",
-          ownership: "caller_owned",
-          provider: "local",
-          workspace,
-        },
-        invocation_id: "start",
-        request_id: "request-start",
-        runtime_id: "runtime-1",
-      },
-    });
-
-    const model = handle.session.model;
-    assert.notEqual(model, undefined);
-    const stream = await handle.session.agent.streamFunction(model, {
-      messages: [],
-    });
-    const events = [];
-    for await (const event of stream) {
-      events.push(event);
-    }
-
-    assert.equal(events.at(-1)?.type, "error");
-    assert.equal(
-      events.at(-1)?.error.errorMessage,
-      `maximum context length is ${model.contextWindow} tokens (OpenAI API error (500): 500 status code (no body) from the configured model proxy)`,
-    );
-  } finally {
-    await handle?.stop();
-    await new Promise((resolve) => server.close(resolve));
-    await rm(workspace, { recursive: true, force: true });
-  }
 });
 
 test("rejects append system instructions before loading the Pi harness", async () => {
