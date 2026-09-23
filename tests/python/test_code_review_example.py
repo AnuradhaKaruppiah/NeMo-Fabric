@@ -8,6 +8,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 
@@ -498,7 +499,15 @@ async def test_openclaw_example_shares_service_and_configures_telegram(
     mock_fabric.start_runtime = AsyncMock(side_effect=runtime_contexts)
     mock_sleep = AsyncMock()
     monkeypatch.setattr(main_module, "Fabric", lambda: mock_fabric)
-    monkeypatch.setattr(main_module.asyncio, "sleep", mock_sleep)
+    monkeypatch.setattr(
+        main_module,
+        "asyncio",
+        SimpleNamespace(
+            create_task=asyncio.create_task,
+            gather=asyncio.gather,
+            sleep=mock_sleep,
+        ),
+    )
     monkeypatch.setattr(
         sys,
         "argv",
