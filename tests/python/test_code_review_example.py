@@ -589,21 +589,20 @@ async def test_openclaw_example_drains_invocations_before_cancelled_cleanup():
     started = 0
     cleaned = 0
 
-    class Runtime:
-        async def invoke(self, *, input):
-            nonlocal cleaned, started
-            started += 1
-            if started == 2:
-                all_started.set()
-            try:
-                await asyncio.Event().wait()
-            finally:
-                await asyncio.sleep(0)
-                cleaned += 1
+    async def invoke(*, input):
+        nonlocal cleaned, started
+        started += 1
+        if started == 2:
+            all_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await asyncio.sleep(0)
+            cleaned += 1
 
-    task = asyncio.create_task(
-        main_module._invoke_runtimes([Runtime(), Runtime()], "review")
-    )
+    mock_runtimes = [MagicMock(invoke=AsyncMock(side_effect=invoke)) for _ in range(2)]
+
+    task = asyncio.create_task(main_module._invoke_runtimes(mock_runtimes, "review"))
     await all_started.wait()
 
     task.cancel()
