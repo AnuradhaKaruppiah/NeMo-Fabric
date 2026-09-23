@@ -77,7 +77,7 @@ The following settings are specific to the OpenClaw adapter:
 | `agent_id` | `default` | OpenClaw agent for NeMo Fabric-originated invocations. |
 | `channel_config` | None | OpenClaw-native `channels` and `bindings` for a prepared service. Every binding must target `agent_id`. Managed runtimes reject this setting. |
 | `port_range` | Random available range | Inclusive consumer-allocated range with `start` and `end` fields; it must span at least 111 ports. |
-| `startup_timeout_seconds` | `30` | Gateway readiness timeout. |
+| `startup_timeout_seconds` | `30` | Gateway startup timeout. |
 | `shutdown_timeout_seconds` | `10` | Graceful shutdown timeout. |
 | `connect_timeout_seconds` | `10` | Local HTTP connection timeout. |
 | `read_timeout_seconds` | `600` | Local HTTP response timeout. |
@@ -107,7 +107,8 @@ async with await fabric.prepare_service(config, base_dir=base_dir) as service:
 ```
 
 `service.handle` contains sanitized identity and connection information. It
-never contains the Gateway token or channel credentials. For example:
+never contains the Gateway token or channel credentials. The following example
+shows a sanitized service handle:
 
 ```json
 {
@@ -231,7 +232,7 @@ updated independently of the NeMo Fabric service lifecycle.
 ## Cleanup
 
 The adapter runs the Gateway in an isolated process group, continuously checks
-its readiness endpoint, and forwards `SIGINT` and `SIGTERM` on POSIX systems.
+its startup endpoint, and forwards `SIGINT` and `SIGTERM` on POSIX systems.
 On Linux, the adapter uses `setpriv --pdeathsig SIGTERM` when `setpriv` is
 available so that the kernel signals the Gateway after abrupt adapter
 termination. Windows uses a kill-on-close Job Object for the Gateway process
@@ -262,8 +263,9 @@ uv run python -m examples.code_review_agent \
 ```
 
 For a live Telegram check, export the bot token and supply your numeric Telegram
-user ID. This run stops both NeMo Fabric runtimes after their invocations, then keeps
-only the Gateway service alive for two minutes so you can message the bot:
+user ID. Telegram is available as soon as the service starts and remains
+available while the Fabric runtimes run. After their invocations finish, the
+example keeps only the Gateway service alive for two more minutes:
 
 ```bash
 export TELEGRAM_BOT_TOKEN="<your-token>"
@@ -278,13 +280,13 @@ uv run python -m examples.code_review_agent \
   --input "Review the workspace changes."
 ```
 
-Wait for the example to print that the NeMo Fabric runtimes have stopped and
-the OpenClaw service remains active. While the command is still running, open a
-direct chat with the bot, send `/start` if this is your first interaction, and
-then send a message before the displayed interval expires. A response confirms
-that Telegram is handled directly by OpenClaw and does not require an active
-NeMo Fabric runtime. The command prints its final JSON output after the Gateway
-and channel stop at the end of the service interval.
+When the example reports that the Telegram channel is active, open a direct
+chat with the bot, send `/start` if this is your first interaction, and then
+send a message. You do not need to wait for the Fabric runtimes to stop. To
+specifically verify that Telegram is independent of those runtimes, send
+another message after the example reports that they have stopped and before
+the displayed service-only interval expires. The command prints its final JSON
+output after the Gateway and channel stop at the end of that interval.
 
 For Harbor, use managed mode so the Gateway and agent tools share the task
 workspace, as shown in the

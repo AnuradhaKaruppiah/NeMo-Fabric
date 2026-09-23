@@ -12,6 +12,7 @@ import math
 import sys
 from collections.abc import Callable
 from contextlib import AsyncExitStack
+from typing import Any
 
 from nemo_fabric import Fabric, FabricConfig
 
@@ -37,6 +38,22 @@ CONFIG_BUILDERS: dict[str, Callable[[], FabricConfig]] = {
     "openclaw": openclaw_config,
     "pi": pi_config,
 }
+
+
+async def _invoke_runtimes(runtimes: list[Any], input_value: object) -> list[Any]:
+    """Invoke every runtime and drain all tasks before lifecycle cleanup."""
+
+    tasks = [
+        asyncio.create_task(runtime.invoke(input=input_value)) for runtime in runtimes
+    ]
+    try:
+        return await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
 
 
 async def main() -> None:
@@ -216,6 +233,13 @@ async def main() -> None:
         }
     elif args.service:
         async with await fabric.prepare_service(config, base_dir=BASE_DIR) as service:
+            if args.telegram_token_env is not None:
+                print(
+                    "OpenClaw Telegram channel is active. You can message the bot "
+                    "while Fabric runtimes are running or during the service-only interval.",
+                    file=sys.stderr,
+                    flush=True,
+                )
             async with AsyncExitStack() as runtime_stack:
                 runtimes = [
                     await runtime_stack.enter_async_context(
@@ -227,9 +251,7 @@ async def main() -> None:
                     )
                     for _ in range(args.runtime_count)
                 ]
-                results = await asyncio.gather(
-                    *(runtime.invoke(input=args.input) for runtime in runtimes)
-                )
+                results = await _invoke_runtimes(runtimes, args.input)
             if args.service_duration_seconds:
                 print(
                     "NeMo Fabric runtimes stopped. "
@@ -266,4 +288,7 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        raise SystemExit(130) from None

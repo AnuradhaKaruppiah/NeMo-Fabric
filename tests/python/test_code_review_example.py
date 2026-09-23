@@ -3,6 +3,7 @@
 
 """Contract tests for the code-review example."""
 
+import asyncio
 import json
 import subprocess
 import sys
@@ -541,6 +542,8 @@ async def test_openclaw_example_shares_service_and_configures_telegram(
     captured = capsys.readouterr()
     output = json.loads(captured.out)
     assert captured.err == (
+        "OpenClaw Telegram channel is active. You can message the bot while "
+        "Fabric runtimes are running or during the service-only interval.\n"
         "NeMo Fabric runtimes stopped. "
         "OpenClaw service service-1 remains active for 120 seconds.\n"
     )
@@ -579,6 +582,35 @@ async def test_openclaw_example_shares_service_and_configures_telegram(
     service_context.__aexit__.assert_awaited_once()
     for runtime_context in runtime_contexts:
         runtime_context.__aexit__.assert_awaited_once()
+
+
+async def test_openclaw_example_drains_invocations_before_cancelled_cleanup():
+    all_started = asyncio.Event()
+    started = 0
+    cleaned = 0
+
+    class Runtime:
+        async def invoke(self, *, input):
+            nonlocal cleaned, started
+            started += 1
+            if started == 2:
+                all_started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                await asyncio.sleep(0)
+                cleaned += 1
+
+    task = asyncio.create_task(
+        main_module._invoke_runtimes([Runtime(), Runtime()], "review")
+    )
+    await all_started.wait()
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert cleaned == 2
 
 
 async def test_example_entrypoint_streams_relay_records_and_terminal_result(

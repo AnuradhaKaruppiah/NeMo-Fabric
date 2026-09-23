@@ -10,13 +10,20 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use nemo_fabric_core::{
-    FabricConfig, OpenAiStreamTransport, ResolveContext, RunPlan, RunRequest, RuntimeHandle,
-    ServiceHandle, ServiceReference, doctor_plan,
+    FabricConfig, FabricError, OpenAiStreamTransport, ResolveContext, RunPlan, RunRequest,
+    RuntimeHandle, ServiceHandle, ServiceReference, doctor_plan,
     resolve_diagnostic_plan_from_config_with_adapter_directories,
     resolve_run_plan_from_config_with_adapter_directories, run_plan,
 };
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
+
+pyo3::create_exception!(
+    _native,
+    ServiceInUseError,
+    PyRuntimeError,
+    "Raised when a service release is rejected because runtimes are still active."
+);
 
 const ADAPTER_PYTHON_ENV: &str = "ADAPTER_PYTHON";
 const PYTHON_DATA_PATH_QUERY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -171,7 +178,10 @@ fn release_service(py: Python<'_>, plan_json: String, service_json: String) -> P
     let service = parse_service_handle(service_json)?;
     let events = py
         .detach(|| nemo_fabric_core::release_service(&plan, &service))
-        .map_err(to_py_error)?;
+        .map_err(|error| match error {
+            FabricError::ServiceInUse { .. } => ServiceInUseError::new_err(error.to_string()),
+            error => to_py_error(error),
+        })?;
     to_json(&events)
 }
 
@@ -224,6 +234,7 @@ fn stop_runtime(py: Python<'_>, plan_json: String, runtime_json: String) -> PyRe
 
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add("ServiceInUseError", m.py().get_type::<ServiceInUseError>())?;
     m.add_function(wrap_pyfunction!(version, m)?)?;
     m.add_function(wrap_pyfunction!(plan_config, m)?)?;
     m.add_function(wrap_pyfunction!(doctor_config, m)?)?;

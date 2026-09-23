@@ -125,7 +125,10 @@ class Service:
             self._status = ServiceStatus.ACTIVE
             raise
         except Exception as error:
-            self._status = ServiceStatus.FAILED
+            if isinstance(error, getattr(native, "ServiceInUseError", ())):
+                self._status = ServiceStatus.ACTIVE
+            else:
+                self._status = ServiceStatus.FAILED
             raise FabricRuntimeError(str(error), stage="stop") from error
         else:
             self._status = ServiceStatus.RELEASED

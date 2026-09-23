@@ -2534,6 +2534,30 @@ async def test_failed_service_release_blocks_start_and_can_be_retried():
     assert native.release_attempts == 2
 
 
+async def test_service_in_use_release_keeps_service_active():
+    class ServiceInUseError(RuntimeError):
+        pass
+
+    class ServiceInUseRecorder(NativeRecorder):
+        def __init__(self) -> None:
+            super().__init__()
+            self.ServiceInUseError = ServiceInUseError
+
+        def release_service(self, plan_json: str, service_json: str) -> str:
+            raise self.ServiceInUseError(
+                'service `service-1` has active runtimes: ["runtime-1"]'
+            )
+
+    service = await NativeClient(ServiceInUseRecorder()).prepare_service(
+        _fabric_config()
+    )
+
+    with pytest.raises(FabricRuntimeError, match="active runtimes"):
+        await service.release()
+
+    assert service.status is ServiceStatus.ACTIVE
+
+
 async def test_cancelled_service_prepare_releases_completed_native_service():
     started = threading.Event()
     finish = threading.Event()

@@ -812,11 +812,14 @@ def serve(
     # Reserve process stdout for the protocol for the entire host lifetime,
     # including SDK background tasks running while the host is idle.
     with redirect_stdout(sys.stderr):
-        asyncio.run(
-            _serve(
-                runtime_factory,
-                config_loader=config_loader,
-                input_stream=input_stream,
-                output_stream=output_stream,
+        try:
+            asyncio.run(
+                _serve(
+                    runtime_factory,
+                    config_loader=config_loader,
+                    input_stream=input_stream,
+                    output_stream=output_stream,
+                )
             )
-        )
+        except KeyboardInterrupt:
+            raise SystemExit(130) from None

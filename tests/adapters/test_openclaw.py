@@ -474,6 +474,46 @@ def test_openclaw_explicitly_declares_default_agent_for_channel_bindings(
     assert generated["agents"]["entries"] == {"default": {}}
 
 
+@pytest.mark.parametrize(
+    "api_root",
+    [
+        "http://telegram.example.com",
+        "http://localhost:8081",
+        "ftp://127.0.0.1:8081",
+        "https://user:password@telegram.example.com",
+    ],
+)
+def test_openclaw_rejects_insecure_telegram_api_roots(
+    mock_openclaw: Path, tmp_path: Path, api_root: str
+):
+    config = _config(mock_openclaw)
+    assert config.harness is not None
+    config.harness.settings["channel_config"] = {
+        "channels": {"telegram": {"apiRoot": api_root}},
+        "bindings": [
+            {
+                "agentId": "default",
+                "match": {"channel": "telegram", "accountId": "default"},
+            }
+        ],
+    }
+
+    with pytest.raises(adapter.lifecycle.LifecycleError) as caught:
+        adapter._openclaw_config(
+            config,
+            _context(tmp_path),
+            base_dir=tmp_path,
+            port=20_000,
+            token_env="OPENCLAW_GATEWAY_TOKEN",
+            service_mode=True,
+        )
+
+    assert caught.value.code == "openclaw_invalid_configuration"
+    assert caught.value.metadata["field"] == (
+        "harness.settings.channel_config.channels.telegram.apiRoot"
+    )
+
+
 def test_openclaw_managed_runtime_rejects_channel_config(
     mock_openclaw: Path, tmp_path: Path
 ):
@@ -1095,17 +1135,17 @@ async def test_openclaw_stop_completes_cleanup_before_propagating_cancellation(
 async def test_openclaw_command_timeout_kills_and_reaps_process(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    process = MagicMock(spec=asyncio.subprocess.Process)
-    process.returncode = None
+    mock_process = MagicMock(spec=asyncio.subprocess.Process)
+    mock_process.returncode = None
 
     async def communicate() -> tuple[bytes, bytes]:
-        if process.returncode is None:
+        if mock_process.returncode is None:
             await asyncio.Event().wait()
         return b"", b""
 
-    process.communicate = AsyncMock(side_effect=communicate)
-    process.kill.side_effect = lambda: setattr(process, "returncode", -9)
-    create_subprocess = AsyncMock(return_value=process)
+    mock_process.communicate = AsyncMock(side_effect=communicate)
+    mock_process.kill.side_effect = lambda: setattr(mock_process, "returncode", -9)
+    create_subprocess = AsyncMock(return_value=mock_process)
     monkeypatch.setattr(adapter.asyncio, "create_subprocess_exec", create_subprocess)
 
     with pytest.raises(adapter.lifecycle.LifecycleError) as caught:
@@ -1115,8 +1155,8 @@ async def test_openclaw_command_timeout_kills_and_reaps_process(
 
     assert caught.value.code == "openclaw_command_timeout"
     assert caught.value.metadata == {"command": "--version", "timeout_seconds": 0.01}
-    process.kill.assert_called_once_with()
-    assert process.communicate.await_count == 2
+    mock_process.kill.assert_called_once_with()
+    assert mock_process.communicate.await_count == 2
 
 
 async def test_openclaw_command_failure_uses_stdout_diagnostics(

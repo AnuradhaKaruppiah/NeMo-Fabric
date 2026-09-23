@@ -162,7 +162,7 @@ stops its Gateway during runtime shutdown. A prepared service keeps its Gateway
 running until the service is released, so multiple runtimes can connect to it.
 
 The adapter isolates the Gateway in its own process group, continuously checks
-its readiness endpoint, and forwards `SIGINT` and `SIGTERM` on POSIX systems.
+its startup endpoint, and forwards `SIGINT` and `SIGTERM` on POSIX systems.
 On Linux, the adapter uses `setpriv --pdeathsig SIGTERM` when `setpriv` is
 available so that the kernel signals the Gateway after abrupt adapter
 termination. Windows uses a kill-on-close Job Object for the Gateway process

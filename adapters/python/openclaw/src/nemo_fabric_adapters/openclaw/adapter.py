@@ -181,6 +181,10 @@ def _channel_config(
             "OpenClaw channel_config.channels must be a non-empty object",
             metadata={"field": "harness.settings.channel_config.channels"},
         )
+    _validate_channel_api_roots(
+        channels.get("telegram"),
+        field="harness.settings.channel_config.channels.telegram",
+    )
     bindings = value.get("bindings")
     if not isinstance(bindings, list) or not bindings:
         raise lifecycle.LifecycleError(
@@ -199,6 +203,49 @@ def _channel_config(
                 },
             )
     return copy.deepcopy(value)
+
+
+def _validate_channel_api_roots(value: Any, *, field: str) -> None:
+    """Reject Telegram API roots that could transmit credentials in cleartext."""
+
+    if not isinstance(value, dict):
+        return
+    for name, child in value.items():
+        child_field = f"{field}.{name}"
+        if name == "apiRoot":
+            if not isinstance(child, str):
+                raise lifecycle.LifecycleError(
+                    "openclaw_invalid_configuration",
+                    "OpenClaw Telegram apiRoot must be a string",
+                    metadata={"field": child_field},
+                )
+            parsed = urlsplit(child)
+            if (
+                parsed.scheme not in {"http", "https"}
+                or not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise lifecycle.LifecycleError(
+                    "openclaw_invalid_configuration",
+                    "OpenClaw Telegram apiRoot must use HTTP(S) without credentials, a query, or a fragment",
+                    metadata={"field": child_field},
+                )
+            if parsed.scheme == "http":
+                try:
+                    address = ipaddress.ip_address(parsed.hostname)
+                except ValueError:
+                    address = None
+                if address is None or not address.is_loopback:
+                    raise lifecycle.LifecycleError(
+                        "openclaw_invalid_configuration",
+                        "OpenClaw Telegram HTTP apiRoot must use a literal loopback IP address",
+                        metadata={"field": child_field},
+                    )
+        else:
+            _validate_channel_api_roots(child, field=child_field)
 
 
 def _channel_secret_env_names(value: Any) -> set[str]:
@@ -823,7 +870,7 @@ class OpenClawRuntime:
                 ),
             ]
             self._install_signal_handlers()
-            await self._wait_ready(port, token, startup_timeout)
+            await self._wait_started(port, token, startup_timeout)
             self._client = httpx.AsyncClient(
                 headers={"authorization": f"Bearer {token}"},
                 http2=True,
@@ -894,12 +941,12 @@ class OpenClawRuntime:
         agent_id: str,
     ) -> str:
         try:
-            response = await client.get(f"{gateway_url}/readyz")
+            response = await client.get(f"{gateway_url}/startupz")
             response.raise_for_status()
         except httpx.HTTPError as error:
             raise lifecycle.LifecycleError(
                 "openclaw_service_unavailable",
-                "OpenClaw Gateway readiness check failed",
+                "OpenClaw Gateway startup check failed",
                 retryable=True,
             ) from error
         try:
@@ -1128,7 +1175,7 @@ class OpenClawRuntime:
                     return
                 try:
                     response = await asyncio.wait_for(
-                        client.get(f"http://127.0.0.1:{port}/readyz"),
+                        client.get(f"http://127.0.0.1:{port}/startupz"),
                         timeout=HEALTH_CHECK_TIMEOUT_SECONDS,
                     )
                     healthy = response.status_code == 200
@@ -1223,7 +1270,7 @@ class OpenClawRuntime:
         except ProcessLookupError:
             pass
 
-    async def _wait_ready(self, port: int, token: str, timeout: float) -> None:
+    async def _wait_started(self, port: int, token: str, timeout: float) -> None:
         deadline = asyncio.get_running_loop().time() + timeout
         async with httpx.AsyncClient(
             headers={"authorization": f"Bearer {token}"}, timeout=1.0, trust_env=False
@@ -1238,7 +1285,7 @@ class OpenClawRuntime:
                         metadata={"detail": detail[-2000:]},
                     )
                 try:
-                    response = await client.get(f"http://127.0.0.1:{port}/readyz")
+                    response = await client.get(f"http://127.0.0.1:{port}/startupz")
                     if response.status_code == 200:
                         return
                 except httpx.RequestError:
@@ -1246,7 +1293,7 @@ class OpenClawRuntime:
                 await asyncio.sleep(0.05)
         raise lifecycle.LifecycleError(
             "openclaw_gateway_start_timeout",
-            "OpenClaw Gateway did not become ready before the startup timeout",
+            "OpenClaw Gateway did not finish startup before the startup timeout",
             retryable=True,
         )
 
