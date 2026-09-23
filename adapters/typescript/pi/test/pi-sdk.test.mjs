@@ -47,30 +47,18 @@ test("reserves output capacity without consuming more than half the context wind
 
 test("classifies only an exact opaque custom-proxy error as context overflow", () => {
   assert.match(
-    classifyOpaqueProxyContextOverflow("500 status code (no body)", 262_144, 200_000, 65_536),
+    classifyOpaqueProxyContextOverflow("500 status code (no body)", 262_144),
     /maximum context length is 262144 tokens/u,
   );
   assert.equal(
-    classifyOpaqueProxyContextOverflow("503 status code (no body)", 262_144, 200_000, 65_536),
+    classifyOpaqueProxyContextOverflow("503 status code (no body)", 262_144),
     "503 status code (no body)",
   );
   assert.match(
-    classifyOpaqueProxyContextOverflow(
-      "OpenAI API error (500): 500 status code (no body)",
-      262_144,
-      200_000,
-      65_536,
-    ),
+    classifyOpaqueProxyContextOverflow("OpenAI API error (500): 500 status code (no body)", 262_144),
     /maximum context length is 262144 tokens/u,
   );
-  assert.equal(
-    classifyOpaqueProxyContextOverflow("500 status code (no body)", 262_144, 1_000, 65_536),
-    "500 status code (no body)",
-  );
-  assert.equal(
-    classifyOpaqueProxyContextOverflow("500 status code (no body)", 0, 200_000, 65_536),
-    "500 status code (no body)",
-  );
+  assert.equal(classifyOpaqueProxyContextOverflow("500 status code (no body)", 0), "500 status code (no body)");
 });
 
 test("recovers an opaque custom-proxy error and ends the wrapped stream", async () => {
@@ -121,10 +109,10 @@ test("recovers an opaque custom-proxy error and ends the wrapped stream", async 
       },
     });
 
-    assert.notEqual(handle.session.model, undefined);
-    const model = { ...handle.session.model, contextWindow: 128 };
+    const model = handle.session.model;
+    assert.notEqual(model, undefined);
     const stream = await handle.session.agent.streamFunction(model, {
-      messages: [{ role: "user", content: "x".repeat(512), timestamp: Date.now() }],
+      messages: [],
     });
     const events = [];
     for await (const event of stream) {
