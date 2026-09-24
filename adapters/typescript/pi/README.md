@@ -33,7 +33,9 @@ The adapter supports:
 
 Ambient Pi settings, context files, packages, extensions, skills, prompts,
 themes, model files, credentials, and session files are disabled. Explicitly
-configured extensions are trusted code.
+configured extensions are trusted code. The adapter raises the compaction
+reserve toward the selected model's maximum output while retaining at least
+half of the context window for input.
 
 ## Install the Adapter
 

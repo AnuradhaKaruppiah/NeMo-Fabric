@@ -34,6 +34,38 @@ interface PiToolFactoryContext {
   workspace: string;
 }
 
+export function withCustomBaseUrl<T extends { api: string; baseUrl: string; compat?: object }>(
+  catalogModel: T,
+  baseUrl: string | null | undefined,
+  overrideBaseUrl = true,
+): T {
+  if (!baseUrl) {
+    return catalogModel;
+  }
+  const model = overrideBaseUrl ? { ...catalogModel, baseUrl } : catalogModel;
+  if (catalogModel.api !== "openai-completions") {
+    return model;
+  }
+  return {
+    ...model,
+    // Generic OpenAI-compatible proxies may reject provider-specific
+    // reasoning_content fields when Pi replays an assistant tool call.
+    compat: { ...catalogModel.compat, requiresThinkingAsText: true },
+  };
+}
+
+export function modelAwareCompactionReserveTokens(
+  configuredReserveTokens: number,
+  maxOutputTokens: number,
+  contextWindow: number,
+): number {
+  const reserveTokens = Math.max(configuredReserveTokens, maxOutputTokens);
+  if (contextWindow <= 0) {
+    return reserveTokens;
+  }
+  return Math.min(reserveTokens, Math.floor(contextWindow / 2));
+}
+
 type PiToolFactory = (context: PiToolFactoryContext) => ToolDefinition | Promise<ToolDefinition>;
 
 const PI_BUILTIN_TOOL_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
@@ -515,7 +547,17 @@ export class PiSdkSessionFactory implements PiSessionFactory {
     if (catalogModel === undefined) {
       throw new LifecycleError("pi_model_unknown", "The selected provider and model are not present in Pi's catalog");
     }
-    const model = !relayEnabled && selected.base_url ? { ...catalogModel, baseUrl: selected.base_url } : catalogModel;
+    const model = withCustomBaseUrl(catalogModel, selected.base_url, !relayEnabled);
+    const compactionReserveTokens = modelAwareCompactionReserveTokens(
+      settings.getCompactionReserveTokens(),
+      model.maxTokens,
+      model.contextWindow,
+    );
+    settings.applyOverrides({
+      compaction: {
+        reserveTokens: compactionReserveTokens,
+      },
+    });
     let relay: PiRelayRuntime | undefined;
     let handle: PiSdkSessionHandle | undefined;
     try {
