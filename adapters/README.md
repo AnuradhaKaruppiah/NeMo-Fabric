@@ -59,6 +59,7 @@ build, and packaging conventions.
 | --- | --- | --- | --- |
 | [OpenCode](typescript/opencode/README.md) | `nvidia.fabric.opencode` | `nemo-fabric-adapters-opencode` | Bun 1.4.2+ |
 | [Pi](typescript/pi/README.md) | `nvidia.fabric.pi` | `nemo-fabric-adapters-pi` | 22.19+ |
+| [Qwen Code](typescript/qwen/README.md) | `nvidia.fabric.qwen` | `nemo-fabric-adapters-qwen` | Node.js 22.19+ |
 
 Shared TypeScript lifecycle utilities live under
 [`typescript/common`](typescript/common/README.md).
@@ -92,6 +93,7 @@ integration shape and implement the minimum lifecycle.
 | [OpenClaw](python/openclaw/README.md) | Native OpenClaw providers or a configured OpenAI Chat Completions-compatible provider | OpenClaw native policy only | Normalized: stdio, HTTP, streamable HTTP, and SSE without normalized authentication | Normalized `skills.paths` | OpenClaw native behavior |
 | [OpenCode](typescript/opencode/README.md) | Configured OpenCode provider and model with an optional OpenAI-compatible base URL | Not exposed | Normalized: stdio and streamable HTTP | Normalized `skills.paths` | Not exposed |
 | [Pi](typescript/pi/README.md) | One Pi-catalog provider and model with an optional base URL override | `tools.definitions`, `tools.enabled`, and `tools.blocked` cover built-ins, trusted local modules, and explicit extension tools | Not exposed | Normalized `skills.paths` | Not exposed |
+| [Qwen Code](typescript/qwen/README.md) | OpenAI-compatible provider and model | Native `tools.blocked` deny list | Normalized: stdio and streamable HTTP with per-server tool filters | Explicit `skills.paths` | Not exposed |
 | [Remote Agent](python/remote-agent/README.md) | Configured remote HTTP API and model | Not exposed | Not exposed | Not exposed | Not exposed |
 
 "Normalized" means that the adapter accepts the corresponding `FabricConfig`
@@ -188,6 +190,7 @@ Agent Trajectory Interchange Format (ATIF).
 | [OpenClaw](python/openclaw/README.md) | OpenClaw Gateway session selected by Fabric runtime ID | Not supported | Sends a terminal Chat Completions request to the isolated loopback Gateway | Terminates the Gateway process tree and removes its temporary config and state | Adapter-owned loopback service |
 | [OpenCode](typescript/opencode/README.md) | Embedded OpenCode host and session | Not supported | Reuses the session and calls `prompt()`, `wait()`, and `context()` for ordered text input | Removes the session and closes the host | Not implemented |
 | [Pi](typescript/pi/README.md) | In-memory Pi `AgentSession` | Runtime-owned Relay 0.9 CLI gateway and explicit Pi extension | Reuses the session and calls `prompt()` for ordered text input; with `streaming=True`, routes per-invocation model-turn ATOF for successful redirects through the embedded collector; startup `model_redirect` marks remain in configured Relay ATOF artifacts and are not included in `invoke_stream()`; `relay_artifacts` does not include local ATIF | Aborts work, emits extension shutdown so local ATIF finalizes on disk, disposes the session, and then stops the gateway | Not implemented |
+| [Qwen Code](typescript/qwen/README.md) | SDK query and bundled Qwen CLI child process | Not supported | Reuses one live SDK query across ordered text turns | Closes the query and removes isolated temporary settings | Not implemented |
 | [Remote Agent](python/remote-agent/README.md) | `httpx.AsyncClient` and user/assistant transcript | Remote Relay publishes to a shared ATOF collector | Registers the request ID, maps it into body metadata, sends one HTTP request, and retains the completed transcript | Closes the HTTP client | Implemented over HTTP(S) |
 
 Telemetry output names use the descriptor contract values. Claude, Codex,

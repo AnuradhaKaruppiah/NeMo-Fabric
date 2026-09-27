@@ -1,0 +1,79 @@
+---
+title: "Use the Qwen Code Adapter"
+description: "Run Qwen Code through the direct SDK adapter for NVIDIA NeMo Fabric."
+---
+{/* SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0 */}
+
+The `nvidia.fabric.qwen` adapter runs Qwen Code through `@qwen-code/sdk` and
+its bundled CLI. Each NVIDIA NeMo Fabric runtime owns one CLI child process and
+a live session, so consecutive text invocations retain conversation context.
+
+## Install
+
+Use Node.js 22.19 or newer. For a published release, install the adapter and
+its exact supported SDK peer in the environment that starts the adapter:
+
+```bash
+npm install nemo-fabric-adapters-qwen @qwen-code/sdk@0.1.16
+```
+
+For a source build from the repository root:
+
+```bash
+just install-typescript-qwen
+npm run build --prefix adapter-contract/typescript
+npm run build --prefix adapters/typescript --workspace nemo-fabric-adapters-common
+npm run build --prefix adapters/typescript --workspace nemo-fabric-adapters-qwen
+```
+
+## Configure
+
+Set `harness.adapter_id` to `nvidia.fabric.qwen`. For a source build, add
+`adapters/typescript/qwen/qwen.fabric-adapter.json` to
+`discovery.local_paths`; for an installed package use
+`node_modules/nemo-fabric-adapters-qwen/qwen.fabric-adapter.json`.
+
+Configure one `models.default` entry with `provider: openai`, the model ID,
+and `api_key_env`. The adapter reads that environment variable without writing
+the secret to Qwen settings. `base_url` can point to an OpenAI-compatible
+Chat Completions endpoint; non-loopback endpoints must use HTTPS. Optional
+`temperature` and `top_p` map to Qwen sampling parameters.
+
+The adapter also maps `instructions.system` (`replace` or `append`),
+`tools.blocked` (Qwen-native tool names), and explicit `skills.paths` directories
+containing `SKILL.md`. `harness.settings.permission_mode` can be `default`,
+`plan`, `auto-edit`, `auto`, or `yolo`. Use `yolo` only in a trusted sandbox
+because it bypasses edit approval.
+
+## Configure MCP
+
+The adapter supports normalized `stdio` and `streamable-http` MCP servers.
+Stdio servers accept `args` and `env`; streamable-HTTP servers accept
+`custom_headers`. Header values can reference `${NAME}`. The adapter resolves
+those references from `environment.env` first, then the parent process, without
+writing the resolved secret to Qwen settings. Non-loopback HTTP endpoints must
+use HTTPS.
+
+Per-server `allowed_tools` and `blocked_tools` map to Qwen's `includeTools` and
+`excludeTools`. Native MCP authentication is not exposed. The adapter sends
+servers through the SDK session control plane and allowlists only their names,
+which prevents ambient project MCP servers from loading without bypassing
+Qwen's workspace trust policy.
+
+The pinned SDK discovers external MCP servers on the first prompt and does not
+include them in `mcpServerStatus()`. The adapter captures the SDK's pinned MCP
+failure diagnostic and returns `qwen_mcp_unavailable` rather than accepting a
+result produced without every explicitly configured server.
+
+In SDK mode, Qwen's `default` permission mode denies tool calls that require an
+interactive approval. Use `auto` for Qwen's classifier-mediated policy, or
+`yolo` only in a trusted sandbox when MCP calls must run unattended.
+
+`tools.enabled`, per-invocation `max_turns`, native streaming, and Relay
+telemetry are not exposed. Planning rejects these unsupported fields rather
+than silently ignoring them. Qwen runs as a child process in the configured
+workspace; use a sandbox if that workspace is untrusted.
+
+For a runnable configuration, see the
+[code-review agent Qwen variant](../../../examples/code_review_agent/README.md).
