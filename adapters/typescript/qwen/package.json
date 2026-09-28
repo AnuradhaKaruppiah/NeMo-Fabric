@@ -16,6 +16,10 @@
     "clean": "rm -rf dist",
     "pack:check": "npm run build && node ../scripts/check-package.mjs",
     "prepack": "npm run build",
+    "prototype:build": "npm run build && tsc -p prototype/tsconfig.json",
+    "prototype:clean": "rm -rf prototype/dist",
+    "prototype:smoke": "npm run prototype:clean && npm run prototype:build && node prototype/smoke/real-qwen.mjs",
+    "prototype:test": "npm run prototype:clean && npm run prototype:build && node --test prototype/test/*.test.mjs",
     "test": "npm run clean && npm run build && node --test test/*.test.mjs"
   },
   "publishConfig": {"access": "public", "registry": "https://registry.npmjs.org"},
@@ -34,6 +38,7 @@
   "peerDependencies": {"@qwen-code/sdk": "0.1.16"},
   "peerDependenciesMeta": {"@qwen-code/sdk": {"optional": true}},
   "devDependencies": {
+    "@agentclientprotocol/sdk": "1.4.0",
     "@qwen-code/sdk": "0.1.16",
     "@types/node": "24.12.4",
     "typescript": "5.9.3"

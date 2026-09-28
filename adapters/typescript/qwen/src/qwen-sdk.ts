@@ -19,7 +19,7 @@ import type { QwenSession, QwenSessionFactory, QwenTurn } from "./runtime.js";
 const STREAM_CLOSE_TIMEOUT_MS = 10;
 const MCP_FAILURE_MARKER = "Warning: MCP server(s) failed to start:";
 
-class QwenDiagnostics {
+export class QwenDiagnostics {
   private markerPrefix = "";
   private mcpUnavailable = false;
 
@@ -154,7 +154,7 @@ class QwenSdkSession implements QwenSession {
   }
 }
 
-function settings(model: ReturnType<typeof selectModel>, blockedTools: string[], skillPaths: string[], mcpServerNames: string[]): object {
+export function qwenSettings(model: ReturnType<typeof selectModel>, blockedTools: string[], skillPaths: string[], mcpServerNames: string[]): object {
   const samplingParams = {
     ...(model.temperature === undefined ? {} : { temperature: model.temperature }),
     ...(model.topP === undefined ? {} : { top_p: model.topP }),
@@ -183,7 +183,7 @@ function settings(model: ReturnType<typeof selectModel>, blockedTools: string[],
   };
 }
 
-function workingDirectory(input: AdapterStartInput): string {
+export function qwenWorkingDirectory(input: AdapterStartInput): string {
   const path = input.runtimeContext.environment.workspace ?? input.baseDir;
   if (!isAbsolute(path)) throw new LifecycleError("qwen_invalid_workspace", "Qwen requires an absolute workspace path");
   return resolve(path);
@@ -212,7 +212,7 @@ export class QwenSdkSessionFactory implements QwenSessionFactory {
       const systemSettings = join(directory, "system-settings.json");
       await mkdir(home);
       await mkdir(runtime);
-      await writeFile(systemSettings, `${JSON.stringify(settings(model, blockedTools, skillPaths, mcpServerNames))}\n`, { mode: 0o600 });
+      await writeFile(systemSettings, `${JSON.stringify(qwenSettings(model, blockedTools, skillPaths, mcpServerNames))}\n`, { mode: 0o600 });
       const prompts = new PromptQueue();
       const diagnostics = new QwenDiagnostics();
       let sdk: typeof import("@qwen-code/sdk");
@@ -224,7 +224,7 @@ export class QwenSdkSessionFactory implements QwenSessionFactory {
       queryHandle = sdk.query({
         prompt: prompts,
         options: {
-          cwd: workingDirectory(input),
+          cwd: qwenWorkingDirectory(input),
           model: model.id,
           authType: "openai",
           permissionMode,

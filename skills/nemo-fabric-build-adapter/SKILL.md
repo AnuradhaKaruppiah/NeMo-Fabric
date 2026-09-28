@@ -46,6 +46,26 @@ If the requested behavior cannot be expressed by the current contract, surface
 the gap. Do not silently consume an unsupported northbound field or hide it in
 an unrelated extension.
 
+### Choose ACP Deliberately
+
+When a harness exposes Agent Client Protocol (ACP), compare its ACP surface
+with its native SDK before selecting the integration:
+
+- Treat ACP as a transport and session boundary, not a universal adapter or
+  normalized configuration mapper.
+- Keep model, credentials, instructions, tool policy, skills, turn limits,
+  installation, and result interpretation in a harness-specific projector.
+- Reuse only process, protocol, session, cancellation, bounds, and shutdown
+  behavior across harnesses.
+- Negotiate capabilities and reject normalized features that the ACP surface
+  cannot enforce.
+- Retain a direct SDK integration when ACP loses required semantics such as
+  MCP filters, connection status, usage, cost, or telemetry.
+
+Read [the ACP adapter reference](references/acp-adapters.md) for the validated
+Kilo Code and Qwen Code boundary, capability questions, and verification
+matrix.
+
 ## Define the Descriptor First
 
 Create one self-contained `*.fabric-adapter.json` before implementing target
