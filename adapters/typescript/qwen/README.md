@@ -3,31 +3,27 @@ SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Qwen Code adapter
+# NVIDIA NeMo Fabric Qwen Code Adapter
 
-This package runs Qwen Code through its direct TypeScript SDK. One NVIDIA NeMo
-Fabric runtime owns one Qwen CLI child process and a live multi-turn session.
+This package provides the Qwen Code harness adapter for NVIDIA NeMo Fabric.
+One persistent Node.js adapter process uses `@qwen-code/sdk` to start and manage
+a separate, bundled Qwen CLI child process for each NeMo Fabric runtime. Ordered
+invocations reuse one live Qwen Code session and its conversation history.
 
-This initial adapter slice accepts one OpenAI-compatible model, optional base
-URL, temperature, top-p, system instructions in `replace` or `append` mode,
-`tools.blocked`, explicit `skills.paths`, and normalized stdio and
-streamable-HTTP MCP servers with per-server tool filters.
-`harness.settings.permission_mode` selects Qwen's native
-approval mode; its default is `default`. `yolo` allows unattended code edits
-and should be used only inside an appropriate task sandbox.
-The selected credential is read from the named environment variable and is not
-written to settings. `tools.enabled`, per-invocation turn limits,
-native streaming, and Relay telemetry are not yet claimed by the descriptor.
+## Install the Adapter
 
-For a published release, install the adapter and the exact supported SDK peer
-in the environment that starts the adapter:
+Install Node.js 22.19 or later. Then install the adapter and its exact-pinned,
+consumer-managed SDK in the project that owns the NeMo Fabric configuration:
 
 ```bash
-npm install nemo-fabric-adapters-qwen @qwen-code/sdk@0.1.16
+npm install --save-exact nemo-fabric-adapters-qwen @qwen-code/sdk@0.1.16
 ```
 
-For source development from the repository root, install the Qwen workspace
-and build the local contract and adapter packages:
+The SDK is an optional peer and bundles the Qwen CLI. Installing the adapter
+alone does not install it. Starting the adapter without the compatible SDK
+reports `qwen_sdk_missing`.
+
+For source development, run these commands from the repository root:
 
 ```bash
 just install-typescript-qwen
@@ -36,27 +32,104 @@ npm run build --prefix adapters/typescript --workspace nemo-fabric-adapters-comm
 npm run build --prefix adapters/typescript --workspace nemo-fabric-adapters-qwen
 ```
 
-Run the direct SDK suite and the Fabric process E2E with:
+## Supported Configuration
 
-```bash
-npm test --prefix adapters/typescript --workspace nemo-fabric-adapters-qwen
-uv sync --no-default-groups --group test
-uv run --no-sync pytest tests/e2e/test_qwen.py -q
+The adapter supports the following normalized configuration:
+
+- **Models:** Selects the `default` role, or the only configured role. It maps
+  `model`, `api_key_env`, `base_url`, `temperature`, and `top_p` for the
+  `openai` provider.
+- **Instructions:** Supports `instructions.system` with `mode: replace` or
+  `mode: append`.
+- **Tools:** Maps Qwen-native tool names from `tools.blocked`. Tool definitions
+  and `tools.enabled` are unsupported.
+- **Skills:** Each `skills.paths` entry must be a directory containing
+  `SKILL.md`.
+- **MCP:** Supports stdio and streamable HTTP servers, including per-server
+  allowed and blocked tool filters.
+- **Harness settings:** Maps `permission_mode` to Qwen Code's `default`, `plan`,
+  `auto-edit`, `auto`, or `yolo` approval mode.
+
+### Model Endpoints
+
+The adapter requires `models.<role>.provider: openai`. When `base_url` is set,
+it must identify an OpenAI-compatible Chat Completions endpoint. Remote
+endpoints require HTTPS, with HTTP allowed for loopback development servers.
+
+The adapter reads the variable named by `api_key_env` from NeMo Fabric
+`environment.env` first and then the parent process environment. It does not
+write the credential to Qwen settings.
+
+### MCP Configuration
+
+Stdio servers map `url` to the executable and may define `args` and `env`, but
+not HTTP headers. Streamable HTTP servers may define `custom_headers`, but not
+process arguments or environment variables. Remote MCP endpoints require HTTPS
+except for loopback development endpoints.
+
+Header values may reference `${NAME}`. Resolution checks NeMo Fabric
+`environment.env` first and then the parent process environment. Unresolved
+references fail startup. `allowed_tools` and `blocked_tools` map to Qwen Code's
+per-server filters. Normalized MCP authentication is unsupported.
+
+Only explicitly configured server names are enabled. The pinned SDK discovers
+external MCP servers on the first prompt and does not include them in
+`mcpServerStatus()`. The adapter captures the SDK's MCP startup diagnostic and
+returns `qwen_mcp_unavailable` instead of accepting a result produced without
+every explicitly configured server.
+
+### Runtime Behavior
+
+The adapter accepts plain-text input and returns the terminal assistant text in
+`output.response`. Qwen Code reports cumulative usage for a live query, so the
+adapter returns the per-invocation difference. Create a new runtime to change
+the selected model, workspace, system instructions, skills, MCP servers, tool
+policy, or permission mode.
+
+The adapter gives the child process isolated temporary Qwen home and runtime
+directories. It disables usage statistics, telemetry, extensions, ambient
+skills, and ambient MCP servers. Explicit NeMo Fabric `environment.env` values
+and the selected model credential are forwarded to the child process.
+
+In SDK mode, Qwen Code's `default` permission mode denies tool calls that need
+interactive approval. Use `auto` for Qwen's classifier-mediated policy. Use
+`yolo` only inside an appropriate task sandbox because it bypasses edit
+approval. Qwen's permission policy is not a filesystem sandbox.
+
+`models.max_tokens`, provider-specific model settings, `runtime.max_turns`,
+`tools.enabled`, native streaming, cancellation, service mode, and Relay
+telemetry are unsupported.
+
+## Understand the Runtime Lifecycle
+
+The Qwen Code harness is not embedded in the adapter process. `start` creates
+isolated configuration and asks `@qwen-code/sdk` to launch its bundled Qwen CLI
+as a child process. The SDK exchanges JSON-lines messages with the CLI over
+stdin and stdout. `stop` closes the live query, terminates the child process,
+and removes the temporary profile.
+
+```mermaid
+flowchart TB
+  Fabric["NeMo Fabric runtime"]
+
+  subgraph AdapterProcess["Node.js adapter process"]
+    Adapter["Qwen Code adapter"]
+    SDK["@qwen-code/sdk client"]
+    Adapter --> SDK
+  end
+
+  subgraph QwenProcess["Separate Qwen CLI child process"]
+    CLI["Bundled Qwen CLI"]
+    Session["One live Qwen Code session"]
+    CLI --> Session
+  end
+
+  Fabric -->|"Adapter contract<br/>NDJSON over stdio"| Adapter
+  SDK -.->|"Starts, configures, and stops"| CLI
+  SDK <-->|"JSON-lines over stdin/stdout"| CLI
+  Session -->|"Model requests"| Provider["OpenAI-compatible endpoint"]
+  CLI -->|"stdio or streamable HTTP"| MCP["Configured MCP servers"]
 ```
 
-Use `adapters/typescript/qwen/qwen.fabric-adapter.json` as the local adapter
-descriptor. Set `models.default.provider` to `openai`, provide a model ID and
-`api_key_env`, and make that variable available in the Fabric environment.
-
-MCP `stdio` servers map `url` to the executable and accept normalized `args`
-and `env`. `streamable-http` servers accept `custom_headers`; `${NAME}` values
-resolve from the Fabric environment first and then the parent process. Remote
-URLs require HTTPS, with HTTP allowed for loopback development servers.
-`allowed_tools` and `blocked_tools` map to Qwen's per-server filters. Native MCP
-authentication is not exposed. Only explicitly configured server names are
-enabled, so ambient project MCP configuration does not leak into the session.
-
-The pinned SDK discovers external MCP servers on the first prompt and does not
-include them in `mcpServerStatus()`. The adapter captures the SDK's pinned MCP
-failure diagnostic and returns `qwen_mcp_unavailable` rather than accepting a
-result produced without every explicitly configured server.
+For installation, configuration, and operational guidance, refer to the
+[Qwen Code integration guide](../../../docs/integrations/harness/qwen.mdx).

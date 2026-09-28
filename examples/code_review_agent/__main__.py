@@ -142,7 +142,8 @@ async def main() -> None:
     if args.stream and args.plan:
         parser.error("--stream cannot be combined with --plan")
     if args.variant in {"openclaw", "qwen"} and args.relay:
-        parser.error(f"the {args.variant} adapter does not support Relay telemetry")
+        display_name = "OpenClaw" if args.variant == "openclaw" else "Qwen Code"
+        parser.error(f"the {display_name} adapter does not support Relay telemetry")
     if args.service and args.variant != "openclaw":
         parser.error("--service requires --variant openclaw")
     if args.runtime_count < 1:

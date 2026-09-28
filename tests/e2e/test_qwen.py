@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -36,7 +37,9 @@ def qwen_config(
     return FabricConfig(
         metadata=MetadataConfig(name="qwen-e2e"),
         discovery=DiscoveryConfig(local_paths=[DESCRIPTOR]),
-        harness=HarnessConfig(adapter_id="nvidia.fabric.qwen"),
+        harness=HarnessConfig(
+            adapter_id="nvidia.fabric.qwen", settings={"permission_mode": "yolo"}
+        ),
         models={
             "default": ModelConfig(
                 provider="openai",
@@ -70,6 +73,27 @@ async def test_qwen_doctor_and_run_against_local_provider(
     report = await fabric.doctor(config, base_dir=ROOT)
     assert report.status in {"pass", "warn"}
 
+    scenario = requests.post(
+        f"{api_server}/_scenario",
+        json={
+            "tool_calls": [
+                {
+                    "name": "tool_search",
+                    "arguments": {"query": "select:mcp__probe__echo"},
+                },
+                {
+                    "name": "tool_call",
+                    "arguments": {
+                        "name": "mcp__probe__echo",
+                        "arguments": {"text": "hello"},
+                    },
+                },
+            ]
+        },
+        timeout=5,
+    )
+    scenario.raise_for_status()
+
     single = await fabric.run(config, base_dir=ROOT, input="single")
     assert single["status"] == "succeeded", single.get("error")
     assert "single" in single["output"]["response"]
@@ -83,7 +107,17 @@ async def test_qwen_doctor_and_run_against_local_provider(
     assert second["usage"]["input_tokens"] >= 0
 
     captured = requests.get(f"{api_server}/_requests", timeout=5).json()
-    assert "mcp__probe__echo" in str(captured)
+    evidence = [
+        {
+            "messages": payload.get("messages", [])[-4:],
+            "tools": [
+                tool.get("function", {}).get("name")
+                for tool in payload.get("tools", [])
+            ],
+        }
+        for payload in captured
+    ]
+    assert "echo:hello" in json.dumps(evidence), json.dumps(evidence, indent=2)
 
 
 async def test_qwen_reports_an_unavailable_configured_mcp_server(

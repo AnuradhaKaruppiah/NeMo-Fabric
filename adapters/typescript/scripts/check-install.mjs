@@ -317,7 +317,9 @@ try {
     qwenStartRequest(consumerRoot),
     { operation: "stop", payload: { runtime_id: "runtime-install-check" } },
   ]);
-  if (qwenResponses.length !== 2 || qwenResponses[0].outcome?.status !== "succeeded") {
+  if (qwenResponses.length !== 2 ||
+      qwenResponses[0].outcome?.status !== "succeeded" ||
+      qwenResponses[1].outcome?.status !== "succeeded") {
     throw new Error(`Consumer-managed Qwen SDK failed to start: ${JSON.stringify(qwenResponses)}`);
   }
 } finally {

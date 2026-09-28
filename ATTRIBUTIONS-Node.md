@@ -9399,7 +9399,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 **Repository URL**: https://github.com/earendil-works/pi
 **License Type(s)**: MIT
 ### License: https://spdx.org/licenses/MIT.html
-```
+````
 # @earendil-works/pi-agent-core
 
 Stateful agent with tool execution and event streaming. Built on `@earendil-works/pi-ai`.
@@ -9913,13 +9913,13 @@ These low-level streams are observational. They preserve event order, but they d
 ## License
 
 MIT
-```
+````
 
 ## @earendil-works/pi-ai - 0.84.2
 **Repository URL**: https://github.com/earendil-works/pi
 **License Type(s)**: MIT
 ### License: https://spdx.org/licenses/MIT.html
-```
+````
 # @earendil-works/pi-ai
 
 Unified LLM API with provider collections, automatic auth resolution, token and cost tracking, and simple context persistence and hand-off to other models mid-session.
@@ -11598,13 +11598,13 @@ Add an entry to `packages/ai/CHANGELOG.md` under `## [Unreleased]`:
 ## License
 
 MIT
-```
+````
 
 ## @earendil-works/pi-client - 0.84.2
 **Repository URL**: https://github.com/earendil-works/pi
 **License Type(s)**: MIT
 ### License: https://spdx.org/licenses/MIT.html
-```
+````
 # @earendil-works/pi-client
 
 Transport-neutral client for remote pi sessions. `PiClient` exchanges length-prefixed CBOR messages through a small `ByteTransport` interface. The package has no Node-specific imports.
@@ -11668,13 +11668,13 @@ await client.connect();
 `maxPendingBytes` bounds queued outbound data. It defaults to four times the protocol frame limit. The transport preserves send order and waits for socket backpressure before resolving each send.
 
 The `@earendil-works/pi-client` root remains transport- and runtime-neutral. Importing the Node-compatible transport requires the explicit `@earendil-works/pi-client/unix` subpath.
-```
+````
 
 ## @earendil-works/pi-coding-agent - 0.84.2
 **Repository URL**: https://github.com/earendil-works/pi
 **License Type(s)**: MIT
 ### License: https://spdx.org/licenses/MIT.html
-```
+````
 <p align="center">
   <a href="https://pi.dev">
     <img alt="pi logo" src="https://pi.dev/logo-auto.svg" width="128">
@@ -12388,13 +12388,13 @@ MIT
   <br /><br />
   <a href="https://exe.dev"><img src="docs/images/exy.png" alt="Exy mascot" width="48" /><br />exe.dev</a>
 </p>
-```
+````
 
 ## @earendil-works/pi-protocol - 0.84.2
 **Repository URL**: https://github.com/earendil-works/pi
 **License Type(s)**: MIT
 ### License: https://spdx.org/licenses/MIT.html
-```
+````
 # @earendil-works/pi-protocol
 
 Runtime-neutral schemas, types, CBOR encoding, and byte-stream framing for the experimental pi protocol.
@@ -12464,13 +12464,13 @@ Undefined object properties are omitted. JSON-valued protocol fields reject CBOR
 Default limits are 16 MiB per CBOR payload/frame, 1,000,000 array elements or map entries, and 64 nested item levels. Options can configure these limits. A frame decoder validates the declared length before buffering payload bytes.
 
 All schemas reject unknown object properties. The protocol is experimental and has no compatibility guarantees.
-```
+````
 
 ## @earendil-works/pi-telemetry - 0.84.2
 **Repository URL**: https://github.com/earendil-works/pi
 **License Type(s)**: MIT
 ### License: https://spdx.org/licenses/MIT.html
-```
+````
 # @earendil-works/pi-telemetry
 
 Vendor-neutral telemetry contracts and typed schema utilities for pi packages.
@@ -12935,13 +12935,13 @@ npm run check
 ## License
 
 MIT
-```
+````
 
 ## @earendil-works/pi-tui - 0.84.2
 **Repository URL**: https://github.com/earendil-works/pi
 **License Type(s)**: MIT
 ### License: https://spdx.org/licenses/MIT.html
-```
+````
 # @earendil-works/pi-tui
 
 Minimal terminal UI framework with differential rendering and synchronized output for flicker-free interactive CLI applications.
@@ -13796,7 +13796,7 @@ Set `PI_TUI_WRITE_LOG` to capture the raw ANSI stream written to stdout.
 ```bash
 PI_TUI_WRITE_LOG=/tmp/tui-ansi.log npx tsx test/chat-simple.ts
 ```
-```
+````
 
 ## @effect/opentelemetry - 4.0.0-rc.112
 **Repository URL**: https://github.com/Effect-TS/effect
@@ -15005,7 +15005,7 @@ SOFTWARE.
 **Repository URL**: https://github.com/nodable/val-parsers
 **License Type(s)**: MIT
 ### License: https://spdx.org/licenses/MIT.html
-```
+````
 # @nodable/entities
 
 Fast, zero-dependency XML/HTML entity encoder and decoder for Node.js.
@@ -15047,13 +15047,13 @@ dec.decode('Hello &copy; 2024 &amp; &lt;stuff&gt;');
 ## License
 
 MIT
-```
+````
 
 ## @npmcli/agent - 4.0.2
 **Repository URL**: https://github.com/npm/agent
 **License Type(s)**: ISC
 ### License: https://spdx.org/licenses/ISC.html
-```
+````
 ## @npmcli/agent
 
 A pair of Agent implementations for nodejs that provide consistent keep-alives, granular timeouts, dns caching, and proxy support.
@@ -15094,7 +15094,7 @@ Options that have been added by this module include:
     - `idle`: time between data packets (if a top level `timeout` is provided, it will be copied here)
     - `response`: time between sending a request and receiving a response
     - `transfer`: time between starting to receive a request and consuming the response fully
-```
+````
 
 ## @npmcli/arborist - 9.4.0
 **Repository URL**: https://github.com/npm/cli
@@ -15625,7 +15625,7 @@ SOFTWARE.
 **Repository URL**: https://www.npmjs.com/package/@opencode/ai
 **License Type(s)**: MIT
 ### License: https://spdx.org/licenses/MIT.html
-```
+````
 # @opencode/ai
 
 Schema-first language model and image-generation APIs built with Effect.
@@ -16508,13 +16508,13 @@ This package is built on Effect. Public methods return `Effect` or `Stream`; pro
 - `AGENTS.md` — architecture, route construction, contributor guide
 - `example/tutorial.ts` — runnable end-to-end walkthrough
 - `test/provider/*.test.ts` — fixture-first protocol tests; `*.recorded.test.ts` files cover live cassettes
-```
+````
 
 ## @opencode/client - 2.0.3
 **Repository URL**: https://github.com/anomalyco/opencode
 **License Type(s)**: MIT
 ### License: https://spdx.org/licenses/MIT.html
-```
+````
 # @opencode/client
 
 Private generation target for clients derived directly from OpenCode's authoritative Effect `HttpApi`.
@@ -16542,13 +16542,13 @@ yield *
   })
 yield * client.sessions.prompt({ sessionID, prompt: Prompt.make({ text: "Hello" }) })
 ```
-```
+````
 
 ## @opencode/codemode - 2.0.3
 **Repository URL**: https://github.com/anomalyco/opencode
 **License Type(s)**: MIT
 ### License: https://spdx.org/licenses/MIT.html
-```
+````
 # @opencode/codemode
 
 This is our take on code mode: a lightweight, pure interpreter for a JavaScript-like language built around calling
@@ -16736,7 +16736,7 @@ Invalid limit configuration throws `RangeError`. Warnings receive a separate bud
 Truncation does not fail execution; an oversized value becomes a string with an in-band marker. Timeouts interrupt
 tool calls and busy loops, while a result returned before cleanup times out remains successful with a
 `TimeoutExceeded` warning. Tool-call concurrency is unrestricted. Boundary data is limited to 32 nested levels.
-```
+````
 
 ## @opencode/core - 2.0.3
 **Repository URL**: https://github.com/anomalyco/opencode
@@ -16760,7 +16760,7 @@ Core runtime services for OpenCode.
 **Repository URL**: https://github.com/anomalyco/opencode
 **License Type(s)**: MIT
 ### License: https://spdx.org/licenses/MIT.html
-```
+````
 # Browser plugin
 
 `@opencode/plugin-browser` exposes the desktop browser through Code Mode.
@@ -16889,7 +16889,7 @@ Disable through normal configuration:
 ```jsonc
 { "plugins": ["-opencode.browser"] }
 ```
-```
+````
 
 ## @opencode/protocol - 2.0.3
 **Repository URL**: https://github.com/anomalyco/opencode
@@ -16911,7 +16911,7 @@ Disable through normal configuration:
 **Repository URL**: https://github.com/anomalyco/opencode
 **License Type(s)**: MIT
 ### License: https://spdx.org/licenses/MIT.html
-```
+````
 # @opencode/sdk
 
 In-process OpenCode host for Promise and Effect applications. The SDK executes Server's assembled HTTP router in memory, opening no listener and adding no network hop.
@@ -17055,7 +17055,7 @@ const opencode = OpenCode.layer({
 ```
 
 Resources acquired in `configure` still belong to the instance, not to the Scope the SDK was built in. Both Workerd entrypoints also accept `instances`. The public `OpenCode.InstanceOptions` and `OpenCode.InstanceConfiguration` types describe the corresponding Promise or Effect callbacks.
-```
+````
 
 ## @opencode/server - 2.0.3
 **Repository URL**: https://github.com/anomalyco/opencode
@@ -20971,7 +20971,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 **Repository URL**: https://github.com/QwenLM/qwen-code
 **License Type(s)**: Apache-2.0
 ### License: https://spdx.org/licenses/Apache-2.0.html
-```
+````
 # @qwen-code/sdk
 
 A minimum experimental TypeScript SDK for programmatic access to Qwen Code.
@@ -21634,7 +21634,7 @@ npm install -g @qwen-code/qwen-code@latest
 ## License
 
 Apache-2.0 - see [LICENSE](../../LICENSE) for details.
-```
+````
 
 ## @redis/bloom - 6.2.1
 **Repository URL**: https://github.com/redis/node-redis
@@ -21674,7 +21674,7 @@ The source code and documentation for this package are in the main [node-redis](
 **Repository URL**: https://github.com/redis/node-redis
 **License Type(s)**: MIT
 ### License: https://spdx.org/licenses/MIT.html
-```
+````
 # @redis/json
 
 This package provides support for the [RedisJSON](https://redis.io/docs/latest/develop/data-types/json/) module, which adds JSON as a native data type to Redis.
@@ -21751,13 +21751,13 @@ await client.json.arrAppend('noderedis:jsondata', '.pets', {
   isMammal: false
 });
 ```
-```
+````
 
 ## @redis/search - 6.2.1
 **Repository URL**: https://github.com/redis/node-redis
 **License Type(s)**: MIT
 ### License: https://spdx.org/licenses/MIT.html
-```
+````
 # @redis/search
 
 This package provides support for the [RediSearch](https://redis.io/docs/interact/search-and-query/) module, which adds indexing and querying support for data stored in Redis Hashes or as JSON documents with the [RedisJSON](https://redis.io/docs/data-types/json/) module.
@@ -21897,13 +21897,13 @@ We'll use the [RediSearch query language](https://redis.io/docs/interact/search-
 ```javascript
 await client.ft.search('idx:users', '@age:[0 30]');
 ```
-```
+````
 
 ## @redis/time-series - 6.2.1
 **Repository URL**: https://github.com/redis/node-redis
 **License Type(s)**: MIT
 ### License: https://spdx.org/licenses/MIT.html
-```
+````
 # @redis/time-series
 
 This package provides support for the [RedisTimeSeries](https://redis.io/docs/data-types/timeseries/) module, which adds a time series data structure to Redis.
@@ -22071,7 +22071,7 @@ const tsInfo = await client.ts.info('temperature');
 //   rules: []
 // }
 ```
-```
+````
 
 ## @sigstore/bundle - 4.0.0
 **Repository URL**: https://github.com/sigstore/sigstore-js
@@ -29755,7 +29755,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 **Repository URL**: https://github.com/TooTallNate/node-data-uri-to-buffer
 **License Type(s)**: MIT
 ### License: https://spdx.org/licenses/MIT.html
-```
+````
 data-uri-to-buffer
 ==================
 ### Generate a Buffer instance from a [Data URI][rfc] string
@@ -29844,7 +29844,7 @@ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 [rfc]: http://tools.ietf.org/html/rfc2397
-```
+````
 
 ## debug - 4.4.3
 **Repository URL**: https://github.com/debug-js/debug
@@ -38150,7 +38150,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 **Repository URL**: https://github.com/redis/node-redis
 **License Type(s)**: MIT
 ### License: https://spdx.org/licenses/MIT.html
-```
+````
 # Node-Redis
 
 [![Tests](https://img.shields.io/github/actions/workflow/status/redis/node-redis/tests.yml?branch=master)](https://github.com/redis/node-redis/actions/workflows/tests.yml)
@@ -38492,7 +38492,7 @@ Thank you to all the people who already contributed to Node Redis!
 ## License
 
 This repository is licensed under the "MIT" license. See [LICENSE](https://github.com/redis/node-redis/blob/master/LICENSE).
-```
+````
 
 ## require-from-string - 2.0.2
 **Repository URL**: https://github.com/floatdrop/require-from-string
@@ -39430,7 +39430,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 **Repository URL**: https://github.com/jslicense/spdx-license-ids
 **License Type(s)**: CC0-1.0
 ### License: https://spdx.org/licenses/CC0-1.0.html
-```
+````
 # spdx-license-ids
 
 [![npm version](https://img.shields.io/npm/v/spdx-license-ids.svg)](https://www.npmjs.com/package/spdx-license-ids)
@@ -39482,7 +39482,7 @@ deprecatedIds.includes('GPL-3.0'); //=> true
 ## License
 
 [Creative Commons Zero v1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/deed)
-```
+````
 
 ## sprintf-js - 1.0.3
 **Repository URL**: https://github.com/alexei/sprintf.js
@@ -40938,7 +40938,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 **Repository URL**: https://github.com/NaturalIntelligence/xml-naming
 **License Type(s)**: MIT
 ### License: https://spdx.org/licenses/MIT.html
-```
+````
 # xml-naming
 
 Validates XML name productions as defined in the [XML 1.0](https://www.w3.org/TR/xml/) and [XML 1.1](https://www.w3.org/TR/xml11/) specifications.
@@ -41128,7 +41128,7 @@ sanitize('my element', 'name', { replacement: '-' })  // 'my-element'
 ## License
 
 MIT
-```
+````
 
 ## xmlhttprequest-ssl - 2.1.2
 **Repository URL**: https://github.com/mjwwit/node-XMLHttpRequest
