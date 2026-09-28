@@ -103,7 +103,9 @@ async def test_qwen_doctor_and_run_against_local_provider(
         second = await runtime.invoke(input="second")
     assert first["status"] == second["status"] == "succeeded"
     assert "first" in first["output"]["response"]
+    assert "user_count=1" in first["output"]["response"]
     assert "second" in second["output"]["response"]
+    assert "user_count=2" in second["output"]["response"]
     assert second["usage"]["input_tokens"] >= 0
 
     captured = requests.get(f"{api_server}/_requests", timeout=5).json()
