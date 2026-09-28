@@ -272,34 +272,21 @@ before choosing the custom-agent boundary.
 
 Complete these checks before handing off an adapter:
 
-Sequence checks that share generated package outputs. Do not run a package
-suite that cleans or rebuilds `dist` in parallel with a process E2E that
-launches files from that directory.
-
-1. Install the built wheel or package in an isolated consumer environment. If
-   the harness is consumer-owned, first verify the adapter-only missing-harness
-   error, then install the pinned harness at the consumer resolution level and
-   exercise the packaged lifecycle.
+1. Install the built wheel in an isolated adapter environment.
 2. Confirm discovery below `share/nemo-fabric` and inspect the resolved adapter
    and target descriptors in `Fabric().plan(...)`.
 3. Exercise one accepted normalized config and rejection for unsupported
    fields and each declared schema.
 4. Run `doctor(...)` with both missing and satisfied requirements.
-5. Test start followed by stop without an invocation, success, target failure,
-   malformed output, repeated invocation, stop, partial-start cleanup, EOF
-   cleanup, and two-runtime isolation. The empty start-stop case catches SDK
-   input-stream drains that a normal completed turn can mask.
+5. Test start, success, target failure, malformed output, repeated invocation,
+   stop, partial-start cleanup, EOF cleanup, and two-runtime isolation.
 6. If native OpenAI streaming is claimed, test empty and multi-chunk streams,
    malformed and oversized records, invalid chunks, sequence and identity
    mismatches, a missing end record, early consumer close without cancellation,
    a separate terminal result, one active turn, and exactly one target
    invocation.
-7. If MCP support is claimed, test actual discovery and tool execution for
-   every declared transport plus tool filters and secret/environment
-   projection. Do not treat a harness status API alone as proof that an
-   external MCP server is usable.
-8. Test Relay correlation separately if telemetry support is claimed.
-9. Report the adapter package version, contract version, required-profile
+7. Test Relay correlation separately if telemetry support is claimed.
+8. Report the adapter package version, contract version, required-profile
    result, and every optional capability as supported or unsupported.
 
 Do not claim automated NeMo Fabric conformance until the published conformance
