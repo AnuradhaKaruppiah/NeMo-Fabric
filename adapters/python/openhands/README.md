@@ -15,14 +15,11 @@ per-invocation iteration limit into OpenHands.
 Install the tested OpenHands SDK and tools, then install the adapter:
 
 ```bash
-pip install "openhands-sdk==1.49.4" "openhands-tools==1.49.4"
+pip install "openhands-sdk==1.50.0" "openhands-tools==1.50.0"
 pip install nemo-fabric-adapters-openhands
 ```
 
-The 1.49.4 package pair is validated with NVIDIA NIM. It is not a general
-workaround for an [upstream usage-telemetry issue](https://github.com/OpenHands/software-agent-sdk/issues/5268):
-1.49.4 can still fail with providers that explicitly report null
-`cache_creation_tokens` details.
+The 1.50.0 package pair is validated with NVIDIA NIM.
 
 The adapter package supports Python 3.11 or later, while OpenHands requires
 Python 3.12 or later. The adapter package does not install OpenHands.
@@ -33,7 +30,7 @@ processes:
 
 ```bash
 uv sync --group adapter-tests
-uv pip install "openhands-sdk==1.49.4" "openhands-tools==1.49.4"
+uv pip install "openhands-sdk==1.50.0" "openhands-tools==1.50.0"
 export ADAPTER_PYTHON="$PWD/.venv/bin/python"
 ```
 

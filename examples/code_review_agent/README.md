@@ -193,17 +193,15 @@ On Python 3.12 or later, install the tested OpenHands SDK and tools, then instal
 the NeMo Fabric extra:
 
 ```bash
-pip install "openhands-sdk==1.49.4" "openhands-tools==1.49.4"
+pip install "openhands-sdk==1.50.0" "openhands-tools==1.50.0"
 pip install "nemo-fabric[openhands]"
 ```
 
 The NeMo Fabric extra installs the adapter, but not the OpenHands packages. This
 variant uses the `NVIDIA_API_KEY` configured for the default demo, maps the
 terminal and file editor tools, and retains the default code-review skill.
-The 1.49.4 package pair is validated with NVIDIA NIM; see the
-[OpenHands adapter guide](../../adapters/python/openhands/README.md) for its
-provider-specific telemetry limitation. OpenHands does not currently support
-Relay telemetry.
+The 1.50.0 package pair is validated with NVIDIA NIM. OpenHands does not
+currently support Relay telemetry.
 
 When you run the source checkout without activating its virtual environment,
 select the same interpreter for the adapter subprocess:

@@ -12,14 +12,11 @@ per runtime.
 Install the tested OpenHands packages and the adapter:
 
 ```bash
-pip install "openhands-sdk==1.49.4" "openhands-tools==1.49.4"
+pip install "openhands-sdk==1.50.0" "openhands-tools==1.50.0"
 pip install nemo-fabric-adapters-openhands
 ```
 
-The 1.49.4 package pair is validated with NVIDIA NIM. OpenHands has an
-[upstream usage-telemetry issue](https://github.com/OpenHands/software-agent-sdk/issues/5268)
-that can affect providers that explicitly report null `cache_creation_tokens`
-details.
+The 1.50.0 package pair is validated with NVIDIA NIM.
 
 Refer to the [NVIDIA NeMo Fabric repository](https://github.com/NVIDIA/NeMo-Fabric/tree/main/adapters/python/openhands)
 for configuration and usage instructions.
