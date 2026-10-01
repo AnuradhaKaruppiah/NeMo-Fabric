@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -146,3 +147,22 @@ def test_installer_removes_all_three_handlers():
     uninstall()
     for unsubscribe in unsubscribers:
         unsubscribe.assert_called_once_with()
+
+
+def test_installer_unsubscribes_fixture_event_manager(monkeypatch: pytest.MonkeyPatch):
+    fixture_source = Path(__file__).parents[1] / "fixtures" / "nooa" / "src"
+    monkeypatch.syspath_prepend(str(fixture_source))
+    from fabric_nooa_test_target import _EventManager
+
+    event_manager = _EventManager()
+    uninstall = relay_compat.install_nemo_relay_compat(event_manager)
+    assert event_manager._handlers == {
+        MIDDLEWARE_AGENT_CALL: [relay_compat.nemo_relay_agent_call_middleware],
+        MIDDLEWARE_LLM_CALL: [relay_compat.nemo_relay_llm_middleware],
+        MIDDLEWARE_EXECUTE_PYTHON: [relay_compat._tool_middleware],
+    }
+
+    uninstall()
+    assert all(not handlers for handlers in event_manager._handlers.values())
+    with pytest.raises(ValueError, match="not in list"):
+        uninstall()
