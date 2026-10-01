@@ -56,9 +56,16 @@ async def _tool_middleware(ctx: Any, nxt: Any) -> Any:
                     value = getattr(result, "stdout", None) or None
         return nemo_relay.ToolExecutionResult(codec.to_json(value))
 
-    await nemo_relay.tools.execute("execute_python", args, execute)
+    relay_result = await nemo_relay.tools.execute(
+        "execute_python", args, execute, tool_call_id=ctx.params.get("tool_call_id")
+    )
     if captured_ctx is not None:
         return captured_ctx
+    if isinstance(relay_result, nemo_relay.ToolExecutionResult):
+        from nooa.events import ExecutionResult
+
+        ctx.result = ExecutionResult(returned_value=relay_result.result)
+        return ctx
     raise RuntimeError(
         "NeMo Relay guardrail blocked code execution — the request was rejected "
         "before running. Check your NeMo Relay guardrail configuration."

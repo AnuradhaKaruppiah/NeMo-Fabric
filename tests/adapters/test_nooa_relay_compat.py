@@ -19,7 +19,9 @@ if not ((3, 12) <= sys.version_info[:2] < (3, 14)):
 
 pytest.importorskip("nooa")
 
+from nooa.events import ExecutionResult
 from nooa.events import _NO_RETURN
+from nooa.runtime.middleware import ExecutePythonContext
 from nooa.runtime.middleware import MIDDLEWARE_AGENT_CALL
 from nooa.runtime.middleware import MIDDLEWARE_EXECUTE_PYTHON
 from nooa.runtime.middleware import MIDDLEWARE_LLM_CALL
@@ -57,8 +59,11 @@ async def test_tool_callback_wraps_extracted_result(
         context.result = tool_result
         return context
 
-    async def relay_execute(name: str, args: dict[str, Any], callback: Any) -> Any:
+    async def relay_execute(
+        name: str, args: dict[str, Any], callback: Any, *, tool_call_id: str | None
+    ) -> Any:
         assert name == "execute_python"
+        assert tool_call_id is None
         assert args == {"code": "original", "timeout": 1}
         wrapped = await callback(args)
         assert isinstance(wrapped, relay_compat.nemo_relay.ToolExecutionResult)
@@ -88,8 +93,11 @@ async def test_tool_callback_applies_intercepted_code_and_timeout(
         context.result = SimpleNamespace(returned_value="done")
         return context
 
-    async def relay_execute(name: str, args: dict[str, Any], callback: Any) -> Any:
+    async def relay_execute(
+        name: str, args: dict[str, Any], callback: Any, *, tool_call_id: str | None
+    ) -> Any:
         assert name == "execute_python"
+        assert tool_call_id == "original-id"
         assert args == {
             "code": "original",
             "timeout": 1,
@@ -107,7 +115,9 @@ async def test_tool_callback_rejection_skips_execution(monkeypatch: pytest.Monke
     ctx = SimpleNamespace(code="original", params={}, result=None)
     next_middleware = MagicMock()
 
-    async def relay_execute(_name: str, _args: dict[str, Any], _callback: Any) -> None:
+    async def relay_execute(
+        _name: str, _args: dict[str, Any], _callback: Any, *, tool_call_id: str | None
+    ) -> None:
         return None
 
     monkeypatch.setattr(relay_compat.nemo_relay.tools, "execute", relay_execute)
@@ -124,12 +134,60 @@ async def test_tool_callback_propagates_execution_error(
     async def next_middleware(_context: Any) -> Any:
         raise ValueError("execution failed")
 
-    async def relay_execute(_name: str, args: dict[str, Any], callback: Any) -> Any:
+    async def relay_execute(
+        _name: str, args: dict[str, Any], callback: Any, *, tool_call_id: str | None
+    ) -> Any:
         return await callback(args)
 
     monkeypatch.setattr(relay_compat.nemo_relay.tools, "execute", relay_execute)
     with pytest.raises(ValueError, match="execution failed"):
         await relay_compat._tool_middleware(ctx, next_middleware)
+
+
+async def test_tool_execution_intercept_can_short_circuit(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    ctx = ExecutePythonContext(code="original", params={"tool_call_id": "call-1"})
+    next_middleware = MagicMock()
+
+    async def relay_execute(
+        name: str, args: dict[str, Any], callback: Any, *, tool_call_id: str | None
+    ) -> Any:
+        assert name == "execute_python"
+        assert args == {"code": "original", "tool_call_id": "call-1"}
+        assert tool_call_id == "call-1"
+        return relay_compat.nemo_relay.ToolExecutionResult({"answer": 42})
+
+    monkeypatch.setattr(relay_compat.nemo_relay.tools, "execute", relay_execute)
+    returned = await relay_compat._tool_middleware(ctx, next_middleware)
+    assert returned is ctx
+    assert isinstance(ctx.result, ExecutionResult)
+    assert ctx.result.returned_value == {"answer": 42}
+    next_middleware.assert_not_called()
+
+
+async def test_real_relay_execution_intercept_can_short_circuit():
+    ctx = ExecutePythonContext(code="original", params={"tool_call_id": "call-1"})
+    next_middleware = MagicMock()
+
+    async def short_circuit(context: Any, _next_call: Any) -> Any:
+        assert context.tool_call_id == "call-1"
+        return relay_compat.nemo_relay.ToolExecutionInterceptOutcome({"answer": 42})
+
+    name = "nooa-compat-short-circuit-test"
+    relay_compat.nemo_relay.intercepts.register_tool_execution(name, 0, short_circuit)
+    try:
+        with relay_compat.nemo_relay.scope.scope(
+            "nooa-compat-test", relay_compat.nemo_relay.ScopeType.Agent
+        ):
+            returned = await relay_compat._tool_middleware(ctx, next_middleware)
+    finally:
+        relay_compat.nemo_relay.intercepts.deregister_tool_execution(name)
+
+    assert returned is ctx
+    assert isinstance(ctx.result, ExecutionResult)
+    assert ctx.result.returned_value == {"answer": 42}
+    next_middleware.assert_not_called()
 
 
 def test_installer_removes_all_three_handlers():
