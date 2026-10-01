@@ -217,8 +217,20 @@ def _tools(api: OpenHandsApi, config: contract.AgentConfig) -> list[Any]:
 
 def _mcp_servers(api: OpenHandsApi, config: contract.AgentConfig) -> dict[str, Any]:
     result: dict[str, Any] = {}
-    servers = config.mcp.servers if config.mcp is not None else {}
+    if config.mcp is None:
+        return result
+    if config.mcp.extensions:
+        raise lifecycle.LifecycleError(
+            "openhands_mcp_configuration_unsupported",
+            "OpenHands does not support MCP configuration extensions.",
+        )
+    servers = config.mcp.servers
     for name, server in servers.items():
+        if server.extensions:
+            raise lifecycle.LifecycleError(
+                "openhands_mcp_configuration_unsupported",
+                f"OpenHands does not support extensions for MCP server {name!r}.",
+            )
         if server.authentication is not None:
             raise lifecycle.LifecycleError(
                 "openhands_mcp_auth_unsupported",
@@ -238,6 +250,12 @@ def _mcp_servers(api: OpenHandsApi, config: contract.AgentConfig) -> dict[str, A
                 f"MCP server {name!r} must have a non-empty URL or command.",
             )
         if transport in {"stdio", "command", "process"}:
+            if server.custom_headers:
+                raise lifecycle.LifecycleError(
+                    "openhands_mcp_configuration_unsupported",
+                    f"OpenHands stdio MCP server {name!r} does not support "
+                    "custom_headers.",
+                )
             result[name] = api.MCPServer(
                 transport="stdio",
                 command=target,
@@ -250,6 +268,11 @@ def _mcp_servers(api: OpenHandsApi, config: contract.AgentConfig) -> dict[str, A
             raise lifecycle.LifecycleError(
                 "openhands_mcp_transport_unsupported",
                 f"MCP server {name!r} has unsupported transport {server.transport!r}.",
+            )
+        if server.args or server.env:
+            raise lifecycle.LifecycleError(
+                "openhands_mcp_configuration_unsupported",
+                f"OpenHands remote MCP server {name!r} does not support args or env.",
             )
         headers = None
         if server.custom_headers:

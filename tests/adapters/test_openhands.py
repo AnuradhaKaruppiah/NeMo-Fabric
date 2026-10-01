@@ -466,6 +466,48 @@ async def test_start_rejects_unenforced_mcp_tool_policy(
     assert caught.value.code == "openhands_mcp_tool_policy_unsupported"
 
 
+@pytest.mark.parametrize(
+    ("server_name", "field", "value"),
+    [
+        ("local", "custom_headers", {"X-Test": "value"}),
+        ("remote", "args", ["--verbose"]),
+        ("remote", "extensions", {"example.test/option": True}),
+    ],
+)
+async def test_start_rejects_unapplied_mcp_server_fields(
+    openhands_payload: dict,
+    mock_openhands: dict,
+    monkeypatch: pytest.MonkeyPatch,
+    server_name: str,
+    field: str,
+    value: object,
+):
+    monkeypatch.setenv("TEST_OPENHANDS_API_KEY", "test-key")
+    server = openhands_payload["config"]["mcp"]["servers"][server_name]
+    server[field] = value
+
+    with pytest.raises(adapter.lifecycle.LifecycleError) as caught:
+        await adapter.OpenHandsRuntime().start(_start_payload(openhands_payload))
+
+    assert caught.value.code == "openhands_mcp_configuration_unsupported"
+
+
+async def test_start_rejects_unapplied_mcp_extensions(
+    openhands_payload: dict,
+    mock_openhands: dict,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("TEST_OPENHANDS_API_KEY", "test-key")
+    openhands_payload["config"]["mcp"]["extensions"] = {
+        "example.test/option": True
+    }
+
+    with pytest.raises(adapter.lifecycle.LifecycleError) as caught:
+        await adapter.OpenHandsRuntime().start(_start_payload(openhands_payload))
+
+    assert caught.value.code == "openhands_mcp_configuration_unsupported"
+
+
 async def test_start_rejects_missing_named_credential(
     openhands_payload: dict,
     mock_openhands: dict,
