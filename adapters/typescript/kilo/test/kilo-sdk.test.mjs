@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
+import {EventEmitter} from "node:events";
 import test from "node:test";
 import {mkdtemp, mkdir, rm, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
+import {PassThrough} from "node:stream";
 
-import {classifySpawnError, extractPromptOutcome, KiloSdkSessionFactory} from "../dist/kilo-sdk.js";
+import {classifySpawnError, closeChild, extractPromptOutcome, KiloSdkSessionFactory, startKiloServer} from "../dist/kilo-sdk.js";
 
 test("extracts Kilo Code text, usage, and cost", () => {
   assert.deepEqual(extractPromptOutcome({
@@ -24,6 +26,64 @@ test("distinguishes a missing Kilo executable from other launch failures", () =>
   assert.equal(classifySpawnError(Object.assign(new Error("missing"), {code: "ENOENT"})).code, "kilo_harness_unavailable");
   assert.equal(classifySpawnError(Object.assign(new Error("denied"), {code: "EACCES"})).code, "kilo_start_failed");
   assert.equal(classifySpawnError(new Error("unknown")).code, "kilo_start_failed");
+});
+
+test("waits for process exit after escalating shutdown", async () => {
+  const child = new EventEmitter();
+  child.pid = 42;
+  child.exitCode = null;
+  child.signalCode = null;
+  child.kill = (signal) => {
+    child.signals.push(signal);
+    if (signal === "SIGKILL") {
+      setImmediate(() => {
+        child.signalCode = signal;
+        child.emit("exit", null, signal);
+      });
+    }
+    return true;
+  };
+  child.signals = [];
+
+  await closeChild(child, 1);
+  assert.deepEqual(child.signals, ["SIGTERM", "SIGKILL"]);
+  assert.equal(child.signalCode, "SIGKILL");
+});
+
+test("waits for server cleanup before rejecting startup", async () => {
+  const child = new EventEmitter();
+  child.pid = 42;
+  child.exitCode = null;
+  child.signalCode = null;
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.signals = [];
+  child.kill = (signal) => {
+    child.signals.push(signal);
+    return true;
+  };
+  let spawned;
+  const didSpawn = new Promise((resolveSpawn) => { spawned = resolveSpawn; });
+  let rejected = false;
+  const result = startKiloServer(process.cwd(), process.env, "kilo", () => {
+    spawned();
+    return child;
+  }, async () => 4123).catch((error) => {
+    rejected = true;
+    return error;
+  });
+
+  await didSpawn;
+  child.emit("error", Object.assign(new Error("denied"), {code: "EACCES"}));
+  await new Promise((resolveImmediate) => setImmediate(resolveImmediate));
+  assert.equal(rejected, false);
+  assert.deepEqual(child.signals, ["SIGTERM"]);
+
+  child.signalCode = "SIGTERM";
+  child.emit("exit", null, "SIGTERM");
+  const error = await result;
+  assert.equal(rejected, true);
+  assert.equal(error.code, "kilo_start_failed");
 });
 
 test("projects normalized configuration into an isolated Kilo Code server", async () => {
@@ -64,7 +124,8 @@ test("projects normalized configuration into an isolated Kilo Code server", asyn
     });
     const projected = JSON.parse(serverEnvironment.KILO_CONFIG_CONTENT);
     assert.deepEqual(projected.provider.nvidia, {npm: "@ai-sdk/openai-compatible", options: {apiKey: "{env:MODEL_KEY}", baseURL: "https://provider.example/v1"}, models: {nemotron: {}}});
-    assert.deepEqual(projected.agent.build, {model: "nvidia/nemotron", permission: {question: "deny", external_directory: "deny", doom_loop: "deny", read: {"*": "allow", "*.env": "deny", "*.env.*": "deny", "*.env.example": "allow"}, "*": "deny", grep: "allow", bash: "deny"}, prompt: "Review carefully.", steps: 9, temperature: 0.1, top_p: 0.8});
+    assert.deepEqual(projected.permission, {question: "deny", external_directory: "deny", doom_loop: "deny", read: {"*": "allow", "*.env": "deny", "*.env.*": "deny", "*.env.example": "allow"}, "*": "deny", grep: "allow", bash: "deny"});
+    assert.deepEqual(projected.agent, {build: {model: "nvidia/nemotron", prompt: "Review carefully.", steps: 9, temperature: 0.1, top_p: 0.8}});
     assert.deepEqual(projected.skills.paths, [skill]);
     assert.deepEqual(projected.mcp.local, {type: "local", command: ["mcp-server", "--stdio"], environment: {MODE: "test"}});
     assert.equal(serverEnvironment.KILO_DISABLE_PROJECT_CONFIG, "1");
@@ -121,12 +182,13 @@ test("denies interactive permissions when normalized tools are omitted", async (
       },
     });
     const projected = JSON.parse(serverEnvironment.KILO_CONFIG_CONTENT);
-    assert.deepEqual(projected.agent.build.permission, {
+    assert.deepEqual(projected.permission, {
       question: "deny",
       external_directory: "deny",
       doom_loop: "deny",
       read: {"*": "allow", "*.env": "deny", "*.env.*": "deny", "*.env.example": "allow"},
     });
+    assert.deepEqual(projected.agent, {build: {model: "nvidia/nemotron"}});
     await handle.stop();
   } finally {
     await rm(workspace, {recursive: true, force: true});

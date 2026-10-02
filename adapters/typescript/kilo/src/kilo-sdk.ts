@@ -34,6 +34,8 @@ interface KiloClient {
 interface KiloServer { url: string; close(): Promise<void> }
 type ClientFactory = (options: {baseUrl: string; directory: string}) => KiloClient;
 type ServerFactory = (workspace: string, environment: NodeJS.ProcessEnv, executable: string) => Promise<KiloServer>;
+type SpawnFactory = typeof spawn;
+type PortFactory = () => Promise<number>;
 
 const START_TIMEOUT_MS = 30_000;
 const STOP_TIMEOUT_MS = 5_000;
@@ -173,16 +175,16 @@ function buildConfig(input: AdapterStartInput, skills: string[]): {content: stri
   }
   const agent: Record<string, unknown> = {
     model: `${model.provider}/${model.model}`,
-    permission: toolPermission(input),
     ...(system === undefined ? {} : {prompt: system}),
     ...(steps === undefined ? {} : {steps}),
     ...(model.temperature === undefined ? {} : {temperature: model.temperature}),
     ...(model.topP === undefined ? {} : {top_p: model.topP}),
   };
+  const permission = toolPermission(input);
   const mcp = mcpConfig(input);
   return {
     credential,
-    content: JSON.stringify({provider: {[model.provider]: provider}, agent: {build: agent}, ...(skills.length === 0 ? {} : {skills: {paths: skills}}), ...(Object.keys(mcp).length === 0 ? {} : {mcp})}),
+    content: JSON.stringify({provider: {[model.provider]: provider}, permission, agent: {build: agent}, ...(skills.length === 0 ? {} : {skills: {paths: skills}}), ...(Object.keys(mcp).length === 0 ? {} : {mcp})}),
   };
 }
 
@@ -232,14 +234,34 @@ function childEnvironment(input: AdapterStartInput, profile: string, config: str
   return environment;
 }
 
-async function closeChild(child: ChildProcessWithoutNullStreams): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  child.kill("SIGTERM");
-  await new Promise<void>((resolveClose) => {
-    const timer = setTimeout(() => { child.kill("SIGKILL"); resolveClose(); }, STOP_TIMEOUT_MS);
-    timer.unref();
-    child.once("exit", () => { clearTimeout(timer); resolveClose(); });
+function childExited(child: ChildProcessWithoutNullStreams): boolean {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
+async function waitForChildExit(child: ChildProcessWithoutNullStreams, timeoutMs: number): Promise<boolean> {
+  if (childExited(child)) return true;
+  return await new Promise<boolean>((resolveExit) => {
+    const timer = setTimeout(() => {
+      child.off("exit", onExit);
+      resolveExit(false);
+    }, timeoutMs);
+    const onExit = (): void => {
+      clearTimeout(timer);
+      resolveExit(true);
+    };
+    child.once("exit", onExit);
   });
+}
+
+export async function closeChild(child: ChildProcessWithoutNullStreams, timeoutMs = STOP_TIMEOUT_MS): Promise<void> {
+  if (child.pid === undefined || childExited(child)) return;
+  child.kill("SIGTERM");
+  if (await waitForChildExit(child, timeoutMs)) return;
+  if (childExited(child)) return;
+  child.kill("SIGKILL");
+  if (!(await waitForChildExit(child, timeoutMs))) {
+    throw new LifecycleError("kilo_stop_failed", "Kilo Code did not stop after being killed");
+  }
 }
 
 async function availableLoopbackPort(): Promise<number> {
@@ -265,29 +287,29 @@ export function classifySpawnError(error: NodeJS.ErrnoException): LifecycleError
     : new LifecycleError("kilo_start_failed", "Kilo Code could not be launched");
 }
 
-export async function startKiloServer(workspace: string, environment: NodeJS.ProcessEnv, executable: string): Promise<KiloServer> {
+export async function startKiloServer(workspace: string, environment: NodeJS.ProcessEnv, executable: string, spawnChild: SpawnFactory = spawn, portFactory: PortFactory = availableLoopbackPort): Promise<KiloServer> {
   let port: number;
   try {
-    port = await availableLoopbackPort();
+    port = await portFactory();
   } catch {
     throw new LifecycleError("kilo_start_failed", "Kilo Code could not reserve a loopback server port");
   }
-  const child = spawn(executable, ["serve", "--hostname=127.0.0.1", `--port=${port}`], {cwd: workspace, env: environment});
+  const child = spawnChild(executable, ["serve", "--hostname=127.0.0.1", `--port=${port}`], {cwd: workspace, env: environment});
   child.stderr.resume();
   return await new Promise<KiloServer>((resolveServer, reject) => {
     let output = "";
     let settled = false;
-    const fail = (error: LifecycleError): void => {
+    const fail = async (error: LifecycleError): Promise<void> => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      void closeChild(child);
+      try { await closeChild(child); } catch { /* Preserve the startup failure. */ }
       reject(error);
     };
-    const timer = setTimeout(() => fail(new LifecycleError("kilo_start_timeout", "Timed out while starting the Kilo Code server")), START_TIMEOUT_MS);
+    const timer = setTimeout(() => void fail(new LifecycleError("kilo_start_timeout", "Timed out while starting the Kilo Code server")), START_TIMEOUT_MS);
     timer.unref();
-    child.once("error", (error: NodeJS.ErrnoException) => fail(classifySpawnError(error)));
-    child.once("exit", () => fail(new LifecycleError("kilo_start_failed", "Kilo Code exited before its server became ready")));
+    child.once("error", (error: NodeJS.ErrnoException) => void fail(classifySpawnError(error)));
+    child.once("exit", () => void fail(new LifecycleError("kilo_start_failed", "Kilo Code exited before its server became ready")));
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
       output = (output + chunk).slice(-4096);
