@@ -188,9 +188,9 @@ uv run --extra harbor harbor run \
   --force-build
 ```
 
-Both runs use the same task and verifier as the scripted smoke. Compare their
-`result.json` rewards and `agent/` metadata under `$RUNS_DIR` to see the selected
-harness without changing Harbor task setup.
+The OpenClaw, Claude, Pi, and Codex runs use the same task and verifier as the
+scripted smoke. Compare their `result.json` rewards and `agent/` metadata under
+`$RUNS_DIR` to see the selected harness without changing Harbor task setup.
 
 ## Inspect Results
 

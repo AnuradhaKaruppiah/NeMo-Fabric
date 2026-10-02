@@ -12,6 +12,7 @@ import logging
 import math
 import os
 import subprocess
+import tempfile
 import webbrowser
 from dataclasses import asdict, dataclass, is_dataclass
 from enum import Enum
@@ -622,8 +623,6 @@ def child_environment(
     if model_config.provider == "openai" and api_key_env is not None:
         if api_key_env in values:
             values["OPENAI_API_KEY"] = values[api_key_env]
-        if "CODEX_HOME" not in configured:
-            values["CODEX_HOME"] = str(state_dir(context, base_dir) / "api-key-home")
     if model_config.provider != "openai":
         codex_home = state_dir(context, base_dir) / "custom-provider-home"
         values["CODEX_HOME"] = str(codex_home)
@@ -1275,6 +1274,7 @@ class CodexRuntime:
         self._thread: Any = None
         self._relay: CodexRelaySettings | None = None
         self._gateway_process: subprocess.Popen[Any] | None = None
+        self._api_key_home: tempfile.TemporaryDirectory | None = None
         self._mcp_authentication_checked = False
         self._unusable = False
 
@@ -1300,14 +1300,7 @@ class CodexRuntime:
             client_config = sdk_config(agent_config, context, base_dir, relay)
             model_config = _selected_model_config(agent_config)
             api_key_env = model_config.api_key_env
-            if model_config.provider != "openai" or api_key_env is not None:
-                await asyncio.to_thread(
-                    Path(client_config.env["CODEX_HOME"]).mkdir,
-                    parents=True,
-                    exist_ok=True,
-                )
-            client = AsyncCodex(config=client_config)
-            self._client = client
+            api_key = None
             if model_config.provider == "openai" and api_key_env is not None:
                 api_key = client_config.env.get(api_key_env)
                 if not api_key:
@@ -1315,6 +1308,27 @@ class CodexRuntime:
                         "codex_invalid_configuration",
                         f"{api_key_env} is required for Codex API-key authentication",
                     )
+                self._api_key_home = tempfile.TemporaryDirectory(
+                    prefix="nemo-fabric-codex-"
+                )
+                private_home = Path(self._api_key_home.name).resolve()
+                if private_home.is_relative_to(
+                    _artifact_root(context, base_dir).resolve()
+                ):
+                    raise AdapterConfigError(
+                        "codex_invalid_configuration",
+                        "Temporary Codex credential directory must be outside artifacts",
+                    )
+                client_config.env["CODEX_HOME"] = str(private_home)
+            elif model_config.provider != "openai":
+                await asyncio.to_thread(
+                    Path(client_config.env["CODEX_HOME"]).mkdir,
+                    parents=True,
+                    exist_ok=True,
+                )
+            client = AsyncCodex(config=client_config)
+            self._client = client
+            if api_key is not None:
                 await client.login_api_key(api_key)
             await _register_skill_roots(
                 client, _native_skill_paths(agent_config, base_dir)
@@ -1464,6 +1478,9 @@ class CodexRuntime:
             cleanup_error = _cleanup_relay(self._relay, self._gateway_process)
             self._relay = None
             self._gateway_process = None
+            if self._api_key_home is not None:
+                self._api_key_home.cleanup()
+                self._api_key_home = None
 
         if isinstance(close_error, asyncio.CancelledError):
             raise close_error
@@ -1491,6 +1508,9 @@ class CodexRuntime:
         cleanup_error = _cleanup_relay(self._relay, self._gateway_process)
         self._relay = None
         self._gateway_process = None
+        if self._api_key_home is not None:
+            self._api_key_home.cleanup()
+            self._api_key_home = None
         if cleanup_error is not None:
             LOGGER.error(
                 "Codex Relay cleanup after start failure also failed: %s",
