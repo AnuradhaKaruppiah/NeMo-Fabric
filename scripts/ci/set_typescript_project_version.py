@@ -22,8 +22,10 @@ CONTRACT_DIRECTORY = Path("adapter-contract/typescript")
 ADAPTERS_DIRECTORY = Path("adapters/typescript")
 CONTRACT_PACKAGE = "nemo-fabric-adapter-contract"
 COMMON_PACKAGE = "nemo-fabric-adapters-common"
+CLINE_PACKAGE = "nemo-fabric-adapters-cline"
 PI_PACKAGE = "nemo-fabric-adapters-pi"
 OPENCODE_PACKAGE = "nemo-fabric-adapters-opencode"
+QWEN_PACKAGE = "nemo-fabric-adapters-qwen"
 KILO_PACKAGE = "nemo-fabric-adapters-kilo"
 
 
@@ -73,8 +75,10 @@ def set_typescript_project_version(root: Path, version: str) -> None:
     adapters_package_path = root / ADAPTERS_DIRECTORY / "package.json"
     adapters_lock_path = root / ADAPTERS_DIRECTORY / "package-lock.json"
     common_package_path = root / ADAPTERS_DIRECTORY / "common" / "package.json"
+    cline_package_path = root / ADAPTERS_DIRECTORY / "cline" / "package.json"
     pi_package_path = root / ADAPTERS_DIRECTORY / "pi" / "package.json"
     opencode_package_path = root / ADAPTERS_DIRECTORY / "opencode" / "package.json"
+    qwen_package_path = root / ADAPTERS_DIRECTORY / "qwen" / "package.json"
     kilo_package_path = root / ADAPTERS_DIRECTORY / "kilo" / "package.json"
 
     contract_package = _read_json_object(contract_package_path)
@@ -82,8 +86,10 @@ def set_typescript_project_version(root: Path, version: str) -> None:
     adapters_package = _read_json_object(adapters_package_path)
     adapters_lock = _read_json_object(adapters_lock_path)
     common_package = _read_json_object(common_package_path)
+    cline_package = _read_json_object(cline_package_path)
     pi_package = _read_json_object(pi_package_path)
     opencode_package = _read_json_object(opencode_package_path)
+    qwen_package = _read_json_object(qwen_package_path)
     kilo_package = _read_json_object(kilo_package_path)
 
     contract_lock_packages = _require_object(
@@ -106,6 +112,10 @@ def set_typescript_project_version(root: Path, version: str) -> None:
         adapters_lock_packages.get("common"),
         f"{COMMON_PACKAGE} metadata in {adapters_lock_path}",
     )
+    adapters_lock_cline = _require_object(
+        adapters_lock_packages.get("cline"),
+        f"{CLINE_PACKAGE} metadata in {adapters_lock_path}",
+    )
     adapters_lock_pi = _require_object(
         adapters_lock_packages.get("pi"),
         f"{PI_PACKAGE} metadata in {adapters_lock_path}",
@@ -113,6 +123,10 @@ def set_typescript_project_version(root: Path, version: str) -> None:
     adapters_lock_opencode = _require_object(
         adapters_lock_packages.get("opencode"),
         f"{OPENCODE_PACKAGE} metadata in {adapters_lock_path}",
+    )
+    adapters_lock_qwen = _require_object(
+        adapters_lock_packages.get("qwen"),
+        f"{QWEN_PACKAGE} metadata in {adapters_lock_path}",
     )
     adapters_lock_kilo = _require_object(
         adapters_lock_packages.get("kilo"),
@@ -143,6 +157,10 @@ def set_typescript_project_version(root: Path, version: str) -> None:
     _require_named_package(
         adapters_lock_common, COMMON_PACKAGE, f"common entry of {adapters_lock_path}"
     )
+    _require_named_package(cline_package, CLINE_PACKAGE, str(cline_package_path))
+    _require_named_package(
+        adapters_lock_cline, CLINE_PACKAGE, f"cline entry of {adapters_lock_path}"
+    )
     _require_named_package(pi_package, PI_PACKAGE, str(pi_package_path))
     _require_named_package(
         adapters_lock_pi, PI_PACKAGE, f"pi entry of {adapters_lock_path}"
@@ -154,6 +172,10 @@ def set_typescript_project_version(root: Path, version: str) -> None:
         adapters_lock_opencode,
         OPENCODE_PACKAGE,
         f"opencode entry of {adapters_lock_path}",
+    )
+    _require_named_package(qwen_package, QWEN_PACKAGE, str(qwen_package_path))
+    _require_named_package(
+        adapters_lock_qwen, QWEN_PACKAGE, f"qwen entry of {adapters_lock_path}"
     )
     _require_named_package(kilo_package, KILO_PACKAGE, str(kilo_package_path))
     _require_named_package(
@@ -168,8 +190,10 @@ def set_typescript_project_version(root: Path, version: str) -> None:
             (adapters_package_path, adapters_package),
             (adapters_lock_path, adapters_lock),
             (common_package_path, common_package),
+            (cline_package_path, cline_package),
             (pi_package_path, pi_package),
             (opencode_package_path, opencode_package),
+            (qwen_package_path, qwen_package),
             (kilo_package_path, kilo_package),
         )
     }
@@ -184,10 +208,14 @@ def set_typescript_project_version(root: Path, version: str) -> None:
         adapters_lock_contract,
         common_package,
         adapters_lock_common,
+        cline_package,
+        adapters_lock_cline,
         pi_package,
         adapters_lock_pi,
         opencode_package,
         adapters_lock_opencode,
+        qwen_package,
+        adapters_lock_qwen,
         kilo_package,
         adapters_lock_kilo,
     ):
@@ -196,19 +224,27 @@ def set_typescript_project_version(root: Path, version: str) -> None:
     for package, description in (
         (common_package, str(common_package_path)),
         (adapters_lock_common, f"common entry of {adapters_lock_path}"),
+        (cline_package, str(cline_package_path)),
+        (adapters_lock_cline, f"cline entry of {adapters_lock_path}"),
         (pi_package, str(pi_package_path)),
         (adapters_lock_pi, f"pi entry of {adapters_lock_path}"),
         (opencode_package, str(opencode_package_path)),
         (adapters_lock_opencode, f"opencode entry of {adapters_lock_path}"),
+        (qwen_package, str(qwen_package_path)),
+        (adapters_lock_qwen, f"qwen entry of {adapters_lock_path}"),
         (kilo_package, str(kilo_package_path)),
         (adapters_lock_kilo, f"kilo entry of {adapters_lock_path}"),
     ):
         _set_exact_dependency(package, CONTRACT_PACKAGE, version, description)
     for package, description in (
+        (cline_package, str(cline_package_path)),
+        (adapters_lock_cline, f"cline entry of {adapters_lock_path}"),
         (pi_package, str(pi_package_path)),
         (adapters_lock_pi, f"pi entry of {adapters_lock_path}"),
         (opencode_package, str(opencode_package_path)),
         (adapters_lock_opencode, f"opencode entry of {adapters_lock_path}"),
+        (qwen_package, str(qwen_package_path)),
+        (adapters_lock_qwen, f"qwen entry of {adapters_lock_path}"),
         (kilo_package, str(kilo_package_path)),
         (adapters_lock_kilo, f"kilo entry of {adapters_lock_path}"),
     ):
@@ -220,8 +256,10 @@ def set_typescript_project_version(root: Path, version: str) -> None:
         adapters_package_path: adapters_package,
         adapters_lock_path: adapters_lock,
         common_package_path: common_package,
+        cline_package_path: cline_package,
         pi_package_path: pi_package,
         opencode_package_path: opencode_package,
+        qwen_package_path: qwen_package,
         kilo_package_path: kilo_package,
     }
     changed_paths = [
