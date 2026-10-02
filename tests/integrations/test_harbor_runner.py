@@ -645,7 +645,9 @@ def test_harbor_lifecycle_populates_context_after_run(tmp_path: Path):
         encoding="utf-8",
     )
 
-    Trial._populate_agent_context(SimpleNamespace(agent=agent), context)
+    Trial._populate_agent_context(
+        SimpleNamespace(agent=agent, user_agent=None), context
+    )
 
     assert context.metadata["fabric"]["status"] == "succeeded"
     assert context.n_input_tokens == 12
@@ -654,17 +656,48 @@ def test_harbor_lifecycle_populates_context_after_run(tmp_path: Path):
     assert context.cost_usd == 0.25
 
 
-def test_harbor_018_factory_loads_fabric_agent(tmp_path: Path):
+def test_harbor_023_options_schema_and_preflight():
+    from harbor.agents.factory import AgentFactory
+    from harbor.models.trial.config import AgentConfig
+    from nemo_fabric.integrations.harbor import FabricAgent
+
+    schema = FabricAgent.options_schema()
+    assert "fabric_adapter_id" in schema["required"]
+    assert "fabric_telemetry" in schema["properties"]
+    assert FabricAgent.capabilities.atif is True
+    for field in ("skills", "mcp_servers"):
+        if field in type(FabricAgent.capabilities).model_fields:
+            assert getattr(FabricAgent.capabilities, field) is True
+
+    agent = AgentConfig(
+        import_path="nemo_fabric.integrations.harbor:FabricAgent",
+        kwargs={"fabric_adapter_id": "nvidia.fabric.hermes"},
+    )
+    AgentFactory.run_preflight(agent)
+
+    agent.kwargs["unexpected_option"] = True
+    with pytest.raises(ValueError, match="Unknown option 'unexpected_option'"):
+        AgentFactory.run_preflight(agent)
+    del agent.kwargs["unexpected_option"]
+
+    agent.kwargs["fabric_workspace"] = "relative/path"
+    with pytest.raises(ValueError, match="fabric_workspace must be an absolute"):
+        AgentFactory.run_preflight(agent)
+
+
+def test_harbor_023_factory_loads_fabric_agent(tmp_path: Path):
     from harbor.agents.factory import AgentFactory
 
     agent = AgentFactory.create_agent_from_import_path(
         "nemo_fabric.integrations.harbor:FabricAgent",
         logs_dir=tmp_path,
         fabric_adapter_id="nvidia.fabric.hermes",
+        fabric_max_turns="12",
     )
 
     assert agent.name() == "fabric"
     assert agent.SUPPORTS_ATIF is True
+    assert agent.fabric_max_turns == 12
 
 
 def test_swebench_mcp_config_uses_the_bundled_repo_inspector():
