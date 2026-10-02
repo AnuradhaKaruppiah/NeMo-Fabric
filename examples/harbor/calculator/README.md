@@ -23,6 +23,10 @@ The credential-free smoke does not require an API key. Export `NVIDIA_API_KEY`
 for OpenClaw and Pi runs; `ANTHROPIC_API_KEY` for Claude; or
 `OPENAI_API_KEY` for Codex. The first image build can take several minutes.
 
+Harbor 0.23 resolves literal `${VAR}` values in `--ae` against the host
+environment. The commands below keep those templates quoted so the shell does
+not put API keys in the Harbor process arguments.
+
 ## Prepare the Build Context
 
 Harbor builds `task/environment/Dockerfile` with the environment directory as
@@ -90,7 +94,7 @@ uv run --extra harbor harbor run \
   --ak fabric_model_base_url=https://integrate.api.nvidia.com/v1 \
   --ak fabric_model_api_key_env=NVIDIA_API_KEY \
   --ak fabric_runtime_timeout_seconds=600 \
-  --ae "NVIDIA_API_KEY=$NVIDIA_API_KEY" \
+  --ae 'NVIDIA_API_KEY=${NVIDIA_API_KEY}' \
   --job-name fabric-openclaw \
   --jobs-dir "$RUNS_DIR" \
   --n-concurrent 1 \
@@ -117,7 +121,7 @@ uv run --extra harbor harbor run \
   --ak fabric_workspace=/app \
   --ak fabric_max_turns=20 \
   --ak fabric_runtime_timeout_seconds=600 \
-  --ae "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" \
+  --ae 'ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}' \
   --job-name fabric-claude \
   --jobs-dir "$RUNS_DIR" \
   --n-concurrent 1 \

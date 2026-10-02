@@ -33,7 +33,7 @@ separate CLI installation.
 
 For a cached ChatGPT or Codex API-key login, NeMo Fabric reuses the
 authentication state under `CODEX_HOME` (default: `~/.codex`). Sign in with
-Codex before running Fabric. Set `CODEX_HOME` to the same location for login
+Codex before running NeMo Fabric. Set `CODEX_HOME` to the same location for login
 and execution if you use a nondefault credential store.
 
 For noninteractive OpenAI API-key authentication, set
