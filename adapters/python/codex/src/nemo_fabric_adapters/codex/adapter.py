@@ -619,12 +619,11 @@ def child_environment(
         values[api_key_env] = os.environ[api_key_env]
     configured = context.environment.env
     values.update(configured)
-    if (
-        model_config.provider == "openai"
-        and api_key_env is not None
-        and api_key_env in values
-    ):
-        values["OPENAI_API_KEY"] = values[api_key_env]
+    if model_config.provider == "openai" and api_key_env is not None:
+        if api_key_env in values:
+            values["OPENAI_API_KEY"] = values[api_key_env]
+        if "CODEX_HOME" not in configured:
+            values["CODEX_HOME"] = str(state_dir(context, base_dir) / "api-key-home")
     if model_config.provider != "openai":
         codex_home = state_dir(context, base_dir) / "custom-provider-home"
         values["CODEX_HOME"] = str(codex_home)
@@ -1299,7 +1298,9 @@ class CodexRuntime:
             self._relay = relay
             self._gateway_process = _start_relay_gateway(context, base_dir, relay)
             client_config = sdk_config(agent_config, context, base_dir, relay)
-            if _selected_model_config(agent_config).provider != "openai":
+            model_config = _selected_model_config(agent_config)
+            api_key_env = model_config.api_key_env
+            if model_config.provider != "openai" or api_key_env is not None:
                 await asyncio.to_thread(
                     Path(client_config.env["CODEX_HOME"]).mkdir,
                     parents=True,
@@ -1307,6 +1308,14 @@ class CodexRuntime:
                 )
             client = AsyncCodex(config=client_config)
             self._client = client
+            if model_config.provider == "openai" and api_key_env is not None:
+                api_key = client_config.env.get(api_key_env)
+                if not api_key:
+                    raise AdapterConfigError(
+                        "codex_invalid_configuration",
+                        f"{api_key_env} is required for Codex API-key authentication",
+                    )
+                await client.login_api_key(api_key)
             await _register_skill_roots(
                 client, _native_skill_paths(agent_config, base_dir)
             )

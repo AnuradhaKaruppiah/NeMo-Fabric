@@ -107,6 +107,10 @@ else:
             default="/tmp/nemo-fabric-config",
             description="Task-local destination for the uploaded bundle.",
         )
+        fabric_discovery_paths: list[str] | None = Field(
+            default=None,
+            description="Task-local adapter descriptor paths for Fabric discovery.",
+        )
         fabric_workspace: str = Field(
             default=HARBOR_DEFAULT_WORKSPACE,
             description="Absolute task workspace path.",
@@ -182,6 +186,13 @@ else:
                 raise ValueError(
                     "fabric_model_api_key_env must be a non-empty environment variable name without surrounding whitespace"
                 )
+            return value
+
+        @field_validator("fabric_discovery_paths")
+        @classmethod
+        def validate_discovery_paths(cls, value: list[str] | None) -> list[str] | None:
+            if value is not None and any(not path.strip() for path in value):
+                raise ValueError("fabric_discovery_paths must contain non-empty paths")
             return value
 
         @field_validator("fabric_blocked_tools", "fabric_enabled_tools")
@@ -269,6 +280,7 @@ else:
             extra_env: dict[str, str] | None = None,
             *args: Any,
             fabric_model_api_key_env: str | None = None,
+            fabric_discovery_paths: list[str] | None = None,
             **kwargs: Any,
         ) -> None:
             super().__init__(
@@ -279,6 +291,7 @@ else:
                 fabric_config_base_dir=fabric_config_base_dir,
                 fabric_config_bundle=fabric_config_bundle,
                 fabric_config_target=fabric_config_target,
+                fabric_discovery_paths=fabric_discovery_paths,
                 fabric_workspace=fabric_workspace,
                 fabric_harness_settings=fabric_harness_settings,
                 fabric_model_base_url=fabric_model_base_url,
@@ -303,6 +316,7 @@ else:
             self.fabric_config_base_dir = options.fabric_config_base_dir
             self.fabric_config_bundle = options.fabric_config_bundle
             self.fabric_config_target = options.fabric_config_target
+            self.fabric_discovery_paths = list(options.fabric_discovery_paths or [])
             self.fabric_workspace = options.fabric_workspace
             self.fabric_harness_settings = dict(options.fabric_harness_settings or {})
             self.fabric_model_base_url = options.fabric_model_base_url
@@ -450,7 +464,10 @@ else:
                     HarborMcpServer.model_validate(server.model_dump(mode="python"))
                     for server in self.mcp_servers
                 ),
-                discovery_paths=("adapters",) if self.fabric_config_bundle else (),
+                discovery_paths=(
+                    *(("adapters",) if self.fabric_config_bundle else ()),
+                    *self.fabric_discovery_paths,
+                ),
             )
 
         def _resolve_environment_config_base_dir(self) -> str:
@@ -664,6 +681,11 @@ def harbor_harness_defaults(adapter_id: str) -> dict[str, Any]:
     if adapter_id == "nvidia.fabric.claude":
         return {
             "permission_mode": "bypassPermissions",
+        }
+    if adapter_id == "nvidia.fabric.codex":
+        return {
+            "sandbox": "workspace-write",
+            "approval_mode": "deny_all",
         }
     return {}
 

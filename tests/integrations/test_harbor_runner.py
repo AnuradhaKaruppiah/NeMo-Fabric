@@ -229,19 +229,19 @@ def test_codex_adapter_maps_fabric_request_to_sdk(tmp_path):
     payload = {
         "base_dir": str(tmp_path),
         "config": {
-                "harness": {
-                    "settings": {
-                        "sandbox": "workspace-write",
-                        "reasoning_effort": "high",
-                    }
-                },
-                "models": {
-                    "default": {
-                        "provider": "openai",
-                        "model": "openai/gpt-5.4",
-                    }
-                },
-                "runtime": {},
+            "harness": {
+                "settings": {
+                    "sandbox": "workspace-write",
+                    "reasoning_effort": "high",
+                }
+            },
+            "models": {
+                "default": {
+                    "provider": "openai",
+                    "model": "openai/gpt-5.4",
+                }
+            },
+            "runtime": {},
         },
         "runtime_context": {
             "runtime_id": "harbor-test",
@@ -289,13 +289,17 @@ def test_claude_calculator_run_uses_current_adapter_contract():
     dockerfile = CALCULATOR_DOCKERFILE.read_text(encoding="utf-8")
     assert "-e /opt/nemo-fabric/adapter-contract/python" in dockerfile
     assert "-e /opt/nemo-fabric/adapters/python/claude" in dockerfile
-    assert "-e /opt/nemo-fabric/adapters/python/hermes" in dockerfile
+    assert (
+        "git clone https://github.com/NousResearch/hermes-agent.git" not in dockerfile
+    )
     assert "-e /opt/nemo-fabric/adapters/python/openclaw" in dockerfile
     assert "-e /opt/nemo-fabric/sdk/python/nemo-fabric-runtime" in dockerfile
     assert '-e "/opt/nemo-fabric/sdk/python/nemo-fabric[' in dockerfile
-    assert "nemo-fabric[claude,hermes-agent,openclaw,relay]" in dockerfile
+    assert "nemo-fabric[claude,openclaw]" in dockerfile
     assert "node:24.16.0-bookworm-slim" in dockerfile
-    assert "npm install --global openclaw@2026.9.4 --allow-scripts=openclaw" in dockerfile
+    assert (
+        "npm install --global openclaw@2026.9.4 --allow-scripts=openclaw" in dockerfile
+    )
     assert "@openai/codex" not in dockerfile
 
 
@@ -353,6 +357,19 @@ def test_harbor_calculator_documents_explicit_cli_commands():
     assert "--model nvidia/nemotron-3-nano-omni-30b-a3b-reasoning" in calculator
     assert "--model anthropic/claude-sonnet-4-5" in calculator
     assert "fabric_adapter_id=nvidia.fabric.openclaw" in calculator
+    assert "fabric_adapter_id=nvidia.fabric.pi" in calculator
+    pi_command = calculator.split("## 4. Pi", 1)[1].split("## 5. Codex", 1)[0]
+    assert "fabric_max_turns" not in pi_command
+    assert "fabric_adapter_id=nvidia.fabric.codex" in calculator
+    assert "fabric_model_api_key_env=OPENAI_API_KEY" in calculator
+    codex_command = calculator.split("## 5. Codex", 1)[1].split(
+        "## Inspect Results", 1
+    )[0]
+    assert "fabric_max_turns" not in codex_command
+    assert "fabric_discovery_paths=" in calculator
+    assert "pi.fabric-adapter.json" in calculator
+    assert "-e '/opt/nemo-fabric/adapters/python/codex[harness]'" in dockerfile
+    assert "--workspace nemo-fabric-adapters-pi" in dockerfile
     assert "fabric_model_api_key_env=NVIDIA_API_KEY" in calculator
     assert 'CALCULATOR_DIR="$PWD/examples/harbor/calculator"' in calculator
     assert "calculator/README.md" in landing
@@ -362,19 +379,19 @@ def test_harbor_calculator_documents_explicit_cli_commands():
     assert f"nemo-fabric=={package_version}" in landing
     assert f"nemo-fabric-adapters-hermes=={package_version}" in landing
     assert "Hermes Agent 0.20 and later is no longer installable from PyPI" in landing
-    assert documented_root_extras(
-        "\n".join((calculator, dockerfile, landing, swebench))
-    ) <= declared_extras
+    assert (
+        documented_root_extras("\n".join((calculator, dockerfile, landing, swebench)))
+        <= declared_extras
+    )
     assert "fabric_adapter_id" in landing
     assert 'export TMPDIR="$HOME/harbor-tmp"' in landing
     assert "raw.githubusercontent.com/NVIDIA/NeMo-Relay/main/install.sh" in swebench
     assert (
         "FABRIC_PACKAGE="
-        f"'nemo-fabric[claude,hermes-agent,relay]=={package_version}'"
-        in swebench
+        f"'nemo-fabric[claude,hermes-agent,relay]=={package_version}'" in swebench
     )
     assert "PIP_FIND_LINKS" not in swebench
-    assert 'PATH=/tmp/nemo-fabric-config/.relay/bin:$PATH' in swebench
+    assert "PATH=/tmp/nemo-fabric-config/.relay/bin:$PATH" in swebench
     assert "--dataset swe-bench/swe-bench-verified" in swebench
     for value in (
         '--path "$OPENCODE_SWEBENCH_TASK"',
@@ -385,7 +402,9 @@ def test_harbor_calculator_documents_explicit_cli_commands():
         assert swebench.count(value) == 2
     assert "--job-name django-13741-opencode-install" not in swebench
     assert "--job-name django-13741-opencode" not in swebench
-    assert 'OPENCODE_JOB_NAME="django-13741-opencode-$(date +%Y%m%d-%H%M%S)"' in swebench
+    assert (
+        'OPENCODE_JOB_NAME="django-13741-opencode-$(date +%Y%m%d-%H%M%S)"' in swebench
+    )
     assert '--job-name "${OPENCODE_JOB_NAME}-install"' in swebench
     assert '--job-name "$OPENCODE_JOB_NAME"' in swebench
     assert "--ae 'NVIDIA_API_KEY=${NVIDIA_API_KEY}'" in swebench
@@ -542,7 +561,9 @@ def test_swebench_matrix_translates_harbor_inputs_to_typed_config(tmp_path: Path
     assert base.mcp is None
     assert base.tools is None
     assert base.telemetry is None
-    assert relay.models["default"].model == "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+    assert (
+        relay.models["default"].model == "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+    )
     assert relay.skills is not None
     assert relay.skills.paths == ["/harbor/skills"]
     assert relay.mcp is not None
@@ -570,10 +591,14 @@ def test_swebench_matrix_translates_harbor_inputs_to_typed_config(tmp_path: Path
 
     # TODO: Remove the bundled copies and these equality checks after Fabric
     # discovers adapter descriptors directly from source checkouts and wheels.
-    assert (SWEBENCH_ROOT / "adapters/hermes/hermes.fabric-adapter.json").read_text() == (
+    assert (
+        SWEBENCH_ROOT / "adapters/hermes/hermes.fabric-adapter.json"
+    ).read_text() == (
         ROOT / "adapters/python/hermes/hermes.fabric-adapter.json"
     ).read_text()
-    assert (SWEBENCH_ROOT / "adapters/claude/claude.fabric-adapter.json").read_text() == (
+    assert (
+        SWEBENCH_ROOT / "adapters/claude/claude.fabric-adapter.json"
+    ).read_text() == (
         ROOT / "adapters/python/claude/claude.fabric-adapter.json"
     ).read_text()
     hermes_descriptor = json.loads(
@@ -662,8 +687,31 @@ def test_harbor_023_options_schema_and_preflight():
     from nemo_fabric.integrations.harbor import FabricAgent
 
     schema = FabricAgent.options_schema()
-    assert "fabric_adapter_id" in schema["required"]
-    assert "fabric_telemetry" in schema["properties"]
+    assert schema["required"] == ["fabric_adapter_id"]
+    assert set(schema["properties"]) == {
+        "fabric_adapter_id",
+        "fabric_blocked_tools",
+        "fabric_config_base_dir",
+        "fabric_config_bundle",
+        "fabric_config_target",
+        "fabric_cwd",
+        "fabric_discovery_paths",
+        "fabric_enabled_tools",
+        "fabric_environment_env",
+        "fabric_harness_settings",
+        "fabric_install_command",
+        "fabric_max_turns",
+        "fabric_model_api_key_env",
+        "fabric_model_base_url",
+        "fabric_package",
+        "fabric_python",
+        "fabric_runtime_timeout_seconds",
+        "fabric_system_instruction",
+        "fabric_telemetry",
+        "fabric_timeout_sec",
+        "fabric_venv_path",
+        "fabric_workspace",
+    }
     assert FabricAgent.capabilities.atif is True
     for field in ("skills", "mcp_servers"):
         if field in type(FabricAgent.capabilities).model_fields:
