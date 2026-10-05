@@ -279,6 +279,24 @@ The variant maps the NVIDIA model endpoint, replacement review instruction,
 read-oriented tool policy, maximum turns, and default code-review skill. Kilo
 Code does not currently support Relay through this adapter.
 
+To use a different OpenAI-compatible model endpoint, override the model ID,
+URL, and credential environment variable. For a trusted LAN HTTP server, add
+the explicit opt-in shown below. If the server does not require authentication,
+set the environment variable to any nonempty placeholder:
+
+```bash
+LOCAL_MODEL_KEY=local .venv/bin/python -m examples.code_review_agent \
+  --variant kilo \
+  --model "my-org/my-model" \
+  --base-url "http://192.168.1.10:8000/v1" \
+  --api-key-env LOCAL_MODEL_KEY \
+  --allow-insecure-http-model-endpoint \
+  --input "Review calculator.py" --show-output
+```
+
+The opt-in sends the credential over an unencrypted network connection. Omit
+it for HTTPS or loopback endpoints.
+
 ### Pi (`pi`)
 
 Install Node.js 22.19 or later, and follow the

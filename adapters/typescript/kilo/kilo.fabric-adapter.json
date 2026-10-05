@@ -31,6 +31,10 @@
     "required": ["provider", "model", "api_key_env"],
     "additionalProperties": false
   },
-  "settings_schema": {"type": "object", "additionalProperties": false},
+  "settings_schema": {
+    "type": "object",
+    "properties": {"allow_insecure_http_model_endpoint": {"type": "boolean"}},
+    "additionalProperties": false
+  },
   "capabilities": {"streaming": false, "cancellation": false, "updates": false, "service": false}
 }

@@ -19,16 +19,16 @@ function loopbackHostname(hostname: string): boolean {
   return hostname === "localhost" || hostname === "::1" || hostname === "[::1]" || /^127(?:\.\d{1,3}){3}$/u.test(hostname);
 }
 
-function validEndpoint(value: string): boolean {
+function validEndpoint(value: string, allowInsecureHttp: boolean): boolean {
   try {
     const url = new URL(value);
-    return url.protocol === "https:" || (url.protocol === "http:" && loopbackHostname(url.hostname));
+    return url.protocol === "https:" || (url.protocol === "http:" && (loopbackHostname(url.hostname) || allowInsecureHttp));
   } catch {
     return false;
   }
 }
 
-function validateModel(model: AgentModelConfig): KiloModel {
+function validateModel(model: AgentModelConfig, allowInsecureHttp: boolean): KiloModel {
   if (model.max_tokens != null) {
     throw new LifecycleError("kilo_max_tokens_unsupported", "Kilo Code does not support models.max_tokens through this adapter");
   }
@@ -42,7 +42,7 @@ function validateModel(model: AgentModelConfig): KiloModel {
   ) {
     throw new LifecycleError("kilo_invalid_model", "Kilo Code model configuration does not match the adapter schema");
   }
-  if (model.base_url != null && (typeof model.base_url !== "string" || !validEndpoint(model.base_url))) {
+  if (model.base_url != null && (typeof model.base_url !== "string" || !validEndpoint(model.base_url, allowInsecureHttp))) {
     throw new LifecycleError("kilo_invalid_model", "Kilo Code model configuration does not match the adapter schema");
   }
   if (model.temperature != null && (typeof model.temperature !== "number" || !Number.isFinite(model.temperature))) {
@@ -62,6 +62,7 @@ function validateModel(model: AgentModelConfig): KiloModel {
 }
 
 export function selectModel(config: AgentConfig): KiloModel {
+  const allowInsecureHttp = config.harness?.settings?.allow_insecure_http_model_endpoint === true;
   const entries = Object.entries(config.models ?? {});
   if (entries.length === 0) {
     throw new LifecycleError("kilo_model_required", "The Kilo Code adapter requires one configured model");
@@ -70,7 +71,7 @@ export function selectModel(config: AgentConfig): KiloModel {
   if (selected === undefined) {
     throw new LifecycleError("kilo_model_ambiguous", "Configure a default model role when the Kilo Code adapter receives multiple models");
   }
-  return validateModel(selected);
+  return validateModel(selected, allowInsecureHttp);
 }
 
 export function selectSystemInstruction(config: AgentConfig): string | undefined {

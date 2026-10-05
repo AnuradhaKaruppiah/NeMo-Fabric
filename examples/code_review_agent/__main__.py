@@ -67,6 +67,19 @@ async def _invoke_runtimes(runtimes: list[Any], input_value: object) -> list[Any
 async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--variant", choices=CONFIG_BUILDERS, default="hermes")
+    parser.add_argument(
+        "--model", help="Override the selected variant's default model ID."
+    )
+    parser.add_argument("--base-url", help="Override the default model endpoint URL.")
+    parser.add_argument(
+        "--api-key-env",
+        help="Override the environment variable containing the model credential.",
+    )
+    parser.add_argument(
+        "--allow-insecure-http-model-endpoint",
+        action="store_true",
+        help="Allow a non-loopback HTTP model endpoint with the Kilo adapter.",
+    )
     parser.add_argument("--relay", action="store_true")
     parser.add_argument(
         "--pi-relay-extension-path",
@@ -184,6 +197,10 @@ async def main() -> None:
         )
     if args.pi_relay_extension_path is not None and args.variant != "pi":
         parser.error("--pi-relay-extension-path requires --variant pi")
+    if args.allow_insecure_http_model_endpoint and args.variant != "kilo":
+        parser.error("--allow-insecure-http-model-endpoint requires --variant kilo")
+    if args.allow_insecure_http_model_endpoint and args.base_url is None:
+        parser.error("--allow-insecure-http-model-endpoint requires --base-url")
     if (
         args.variant == "pi"
         and args.relay
@@ -193,6 +210,14 @@ async def main() -> None:
         parser.error("Pi Relay runs require --pi-relay-extension-path")
 
     config = CONFIG_BUILDERS[args.variant]()
+    if args.model is not None:
+        config.models["default"].model = args.model
+    if args.base_url is not None:
+        config.models["default"].base_url = args.base_url
+    if args.api_key_env is not None:
+        config.models["default"].api_key_env = args.api_key_env
+    if args.allow_insecure_http_model_endpoint:
+        config.harness.settings["allow_insecure_http_model_endpoint"] = True
     if args.skill_path is not None:
         config = with_skill_paths(config, *args.skill_path)
     elif args.no_skills:

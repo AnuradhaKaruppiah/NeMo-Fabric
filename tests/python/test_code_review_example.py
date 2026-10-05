@@ -354,6 +354,70 @@ def test_example_entrypoint_plans_without_starting_a_runtime():
             assert telemetry_plan is None
 
 
+def test_kilo_model_endpoint_overrides_project_into_plan():
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "examples.code_review_agent",
+            "--variant",
+            "kilo",
+            "--model",
+            "nvidia/nemotron-3-ultra-550b-a55b",
+            "--base-url",
+            "http://10.86.19.10:8000/v1",
+            "--api-key-env",
+            "LOCAL_MODEL_KEY",
+            "--allow-insecure-http-model-endpoint",
+            "--plan",
+        ],
+        cwd=BASE_DIR.parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    agent_config = json.loads(completed.stdout)["agent_config"]
+    assert agent_config["models"]["default"] == {
+        "provider": "nvidia",
+        "model": "nvidia/nemotron-3-ultra-550b-a55b",
+        "api_key_env": "LOCAL_MODEL_KEY",
+        "base_url": "http://10.86.19.10:8000/v1",
+    }
+    assert agent_config["harness"]["settings"] == {
+        "allow_insecure_http_model_endpoint": True
+    }
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        (["--variant", "kilo"], "requires --base-url"),
+        (
+            ["--variant", "pi", "--base-url", "http://10.0.0.1/v1"],
+            "requires --variant kilo",
+        ),
+    ],
+)
+def test_example_entrypoint_restricts_insecure_http_opt_in(options, message):
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "examples.code_review_agent",
+            *options,
+            "--allow-insecure-http-model-endpoint",
+            "--plan",
+        ],
+        cwd=BASE_DIR.parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert message in completed.stderr
+
+
 @pytest.mark.parametrize(
     ("options", "expected_paths"),
     [

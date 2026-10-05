@@ -44,7 +44,10 @@ The adapter supports the following normalized configuration:
 
 When `base_url` is set, it must identify an OpenAI-compatible model-provider
 endpoint. It is not the address of the Kilo Code server. Without `base_url`,
-the configured provider and model must be supported by Kilo Code.
+the configured provider and model must be supported by Kilo Code. HTTPS is
+required except for loopback HTTP. For a trusted LAN HTTP endpoint, explicitly
+set `harness.settings.allow_insecure_http_model_endpoint` to `true`; the model
+credential is then sent over an unencrypted connection.
 
 ### MCP Configuration
 
