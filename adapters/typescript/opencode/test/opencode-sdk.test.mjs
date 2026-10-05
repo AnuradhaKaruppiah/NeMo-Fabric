@@ -284,6 +284,56 @@ test("configures validated Fabric skill directories for OpenCode", async () => {
   }
 });
 
+test("aborts a stalled skill discovery request at the discovery deadline", async () => {
+  const originalTimeout = AbortSignal.timeout;
+  AbortSignal.timeout = () => {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 0);
+    return controller.signal;
+  };
+  const baseDir = await mkdtemp(join(tmpdir(), "fabric-opencode-stalled-skill-"));
+  const skillDirectory = join(baseDir, "skills", "review");
+  let closed = false;
+  try {
+    await mkdir(skillDirectory, { recursive: true });
+    await writeFile(join(skillDirectory, "SKILL.md"), "---\nname: review\n---\nReview the change.\n", "utf8");
+    const factory = new OpenCodeSdkSessionFactory(async () => ({
+      OpenCode: {
+        async create() {
+          return {
+            skill: {
+              async list(_input, requestOptions) {
+                if (requestOptions?.signal === undefined) {
+                  throw new Error("OpenCode request options did not include an abort signal");
+                }
+                return new Promise((_resolve, reject) => {
+                  requestOptions.signal.addEventListener("abort", () => reject(requestOptions.signal.reason), {
+                    once: true,
+                  });
+                });
+              },
+            },
+            sessions: {
+              async create() { throw new Error("a stalled skill request must fail before session creation"); },
+              async remove() {},
+            },
+            async close() { closed = true; },
+          };
+        },
+      },
+    }));
+    const input = startInput();
+    input.baseDir = baseDir;
+    input.config.skills = { paths: ["skills/review"] };
+
+    await assert.rejects(factory.create(input), (error) => error.code === "opencode_skill_load_failed");
+    assert.equal(closed, true);
+  } finally {
+    AbortSignal.timeout = originalTimeout;
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
 test("rejects a missing Fabric skill directory before loading the OpenCode SDK", async () => {
   const input = startInput();
   input.config.skills = { paths: ["skills/missing"] };

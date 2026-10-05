@@ -206,10 +206,29 @@ async function verifyLoadedSkills(
   // skill appears or the bounded discovery window expires.
   const deadline = Date.now() + SKILL_DISCOVERY_TIMEOUT_MS;
   while (true) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      throw new LifecycleError(
+        "opencode_skill_load_failed",
+        "OpenCode did not load every configured NeMo Fabric skill",
+      );
+    }
+    const signal = AbortSignal.timeout(remainingMs);
     let loaded: Array<{ name?: unknown; path?: unknown }>;
     try {
-      loaded = (await client.skill.list({ location: { directory: workspace } })).data;
+      loaded = (
+        await client.skill.list(
+          { location: { directory: workspace } },
+          { signal },
+        )
+      ).data;
     } catch {
+      if (signal.aborted) {
+        throw new LifecycleError(
+          "opencode_skill_load_failed",
+          "OpenCode did not load every configured NeMo Fabric skill",
+        );
+      }
       throw new LifecycleError("opencode_skill_status_unavailable", "OpenCode could not determine the configured skill status");
     }
     const byLocation = new Map(
@@ -253,7 +272,14 @@ async function verifyLoadedSkills(
         "OpenCode did not load every configured NeMo Fabric skill",
       );
     }
-    await new Promise((resolve) => setTimeout(resolve, SKILL_DISCOVERY_POLL_INTERVAL_MS));
+    const pollDelayMs = Math.min(SKILL_DISCOVERY_POLL_INTERVAL_MS, deadline - Date.now());
+    if (pollDelayMs <= 0) {
+      throw new LifecycleError(
+        "opencode_skill_load_failed",
+        "OpenCode did not load every configured NeMo Fabric skill",
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollDelayMs));
   }
 }
 
