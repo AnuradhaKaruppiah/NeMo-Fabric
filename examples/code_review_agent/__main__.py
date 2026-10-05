@@ -78,7 +78,7 @@ async def main() -> None:
     parser.add_argument(
         "--allow-insecure-http-model-endpoint",
         action="store_true",
-        help="Allow a non-loopback HTTP model endpoint with the Kilo adapter.",
+        help="Allow a private IPv4 HTTP model endpoint with the Kilo adapter.",
     )
     parser.add_argument("--relay", action="store_true")
     parser.add_argument(
@@ -201,6 +201,8 @@ async def main() -> None:
         parser.error("--allow-insecure-http-model-endpoint requires --variant kilo")
     if args.allow_insecure_http_model_endpoint and args.base_url is None:
         parser.error("--allow-insecure-http-model-endpoint requires --base-url")
+    if args.allow_insecure_http_model_endpoint and args.api_key_env is None:
+        parser.error("--allow-insecure-http-model-endpoint requires --api-key-env")
     if (
         args.variant == "pi"
         and args.relay

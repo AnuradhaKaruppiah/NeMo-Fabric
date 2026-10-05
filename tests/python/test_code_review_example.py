@@ -394,6 +394,10 @@ def test_kilo_model_endpoint_overrides_project_into_plan():
     [
         (["--variant", "kilo"], "requires --base-url"),
         (
+            ["--variant", "kilo", "--base-url", "http://10.0.0.1/v1"],
+            "requires --api-key-env",
+        ),
+        (
             ["--variant", "pi", "--base-url", "http://10.0.0.1/v1"],
             "requires --variant kilo",
         ),

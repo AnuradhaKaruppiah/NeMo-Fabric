@@ -280,8 +280,9 @@ read-oriented tool policy, maximum turns, and default code-review skill. Kilo
 Code does not currently support Relay through this adapter.
 
 To use a different OpenAI-compatible model endpoint, override the model ID,
-URL, and credential environment variable. For a trusted LAN HTTP server, add
-the explicit opt-in shown below. If the server does not require authentication,
+URL, and credential environment variable. For a trusted private IPv4 HTTP
+server, add the explicit opt-in shown below. If the server does not require
+authentication,
 set the environment variable to any nonempty placeholder:
 
 ```bash
@@ -294,8 +295,10 @@ LOCAL_MODEL_KEY=local .venv/bin/python -m examples.code_review_agent \
   --input "Review calculator.py" --show-output
 ```
 
-The opt-in sends the credential over an unencrypted network connection. Omit
-it for HTTPS or loopback endpoints.
+The opt-in sends the credential and review content over an unencrypted network
+connection. Use a dedicated credential for that server, or a placeholder when
+it requires none. Public IP addresses and hostnames remain blocked; omit the
+opt-in for HTTPS or loopback endpoints.
 
 ### Pi (`pi`)
 

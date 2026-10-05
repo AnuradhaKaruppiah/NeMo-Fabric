@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isIP } from "node:net";
+
 import type { AgentConfig, AgentModelConfig } from "nemo-fabric-adapter-contract";
 import { LifecycleError } from "nemo-fabric-adapters-common";
 
@@ -19,10 +21,18 @@ function loopbackHostname(hostname: string): boolean {
   return hostname === "localhost" || hostname === "::1" || hostname === "[::1]" || /^127(?:\.\d{1,3}){3}$/u.test(hostname);
 }
 
+function privateIpv4Hostname(hostname: string): boolean {
+  if (isIP(hostname) !== 4) return false;
+  const [first = 0, second = 0] = hostname.split(".").map(Number);
+  return first === 10 || (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168);
+}
+
 function validEndpoint(value: string, allowInsecureHttp: boolean): boolean {
   try {
     const url = new URL(value);
-    return url.protocol === "https:" || (url.protocol === "http:" && (loopbackHostname(url.hostname) || allowInsecureHttp));
+    return url.protocol === "https:" || (url.protocol === "http:" &&
+      (loopbackHostname(url.hostname) || (allowInsecureHttp && privateIpv4Hostname(url.hostname))));
   } catch {
     return false;
   }
