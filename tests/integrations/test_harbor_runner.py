@@ -20,6 +20,7 @@ CALCULATOR_FABRIC_ROOT = CALCULATOR_ROOT / "task" / "environment" / "fabric"
 SWEBENCH_ROOT = ROOT / "examples" / "harbor" / "swebench"
 SWEBENCH_README = SWEBENCH_ROOT / "README.md"
 SWEBENCH_MCP_CONFIG = SWEBENCH_ROOT / "mcp" / "repo-inspector.mcp.json"
+SWEBENCH_CLINE_DOCKERFILE = SWEBENCH_ROOT / "cline" / "Dockerfile"
 SWEBENCH_OPENCODE_DOCKERFILE = SWEBENCH_ROOT / "opencode" / "Dockerfile"
 INTEGRATION_README = ROOT / "examples" / "harbor" / "README.md"
 SDK_INTEGRATION_README = (
@@ -229,19 +230,19 @@ def test_codex_adapter_maps_fabric_request_to_sdk(tmp_path):
     payload = {
         "base_dir": str(tmp_path),
         "config": {
-                "harness": {
-                    "settings": {
-                        "sandbox": "workspace-write",
-                        "reasoning_effort": "high",
-                    }
-                },
-                "models": {
-                    "default": {
-                        "provider": "openai",
-                        "model": "openai/gpt-5.4",
-                    }
-                },
-                "runtime": {},
+            "harness": {
+                "settings": {
+                    "sandbox": "workspace-write",
+                    "reasoning_effort": "high",
+                }
+            },
+            "models": {
+                "default": {
+                    "provider": "openai",
+                    "model": "openai/gpt-5.4",
+                }
+            },
+            "runtime": {},
         },
         "runtime_context": {
             "runtime_id": "harbor-test",
@@ -289,13 +290,17 @@ def test_claude_calculator_run_uses_current_adapter_contract():
     dockerfile = CALCULATOR_DOCKERFILE.read_text(encoding="utf-8")
     assert "-e /opt/nemo-fabric/adapter-contract/python" in dockerfile
     assert "-e /opt/nemo-fabric/adapters/python/claude" in dockerfile
-    assert "-e /opt/nemo-fabric/adapters/python/hermes" in dockerfile
+    assert (
+        "git clone https://github.com/NousResearch/hermes-agent.git" not in dockerfile
+    )
     assert "-e /opt/nemo-fabric/adapters/python/openclaw" in dockerfile
     assert "-e /opt/nemo-fabric/sdk/python/nemo-fabric-runtime" in dockerfile
     assert '-e "/opt/nemo-fabric/sdk/python/nemo-fabric[' in dockerfile
-    assert "nemo-fabric[claude,hermes-agent,openclaw,relay]" in dockerfile
+    assert "nemo-fabric[claude,openclaw]" in dockerfile
     assert "node:24.16.0-bookworm-slim" in dockerfile
-    assert "npm install --global openclaw@2026.9.4 --allow-scripts=openclaw" in dockerfile
+    assert (
+        "npm install --global openclaw@2026.9.4 --allow-scripts=openclaw" in dockerfile
+    )
     assert "@openai/codex" not in dockerfile
 
 
@@ -340,7 +345,7 @@ def test_harbor_calculator_documents_explicit_cli_commands():
     assert '--ak "fabric_config_bundle=$TASK_DIR/environment/fabric"' in calculator
     assert "uv run --extra harbor --extra" not in calculator
     assert landing.count("uv run --extra harbor harbor run") == 0
-    assert swebench.count("uv run --extra harbor harbor run") == 7
+    assert swebench.count("uv run --extra harbor harbor run") == 9
     assert "--agent-import-path" not in landing + calculator + swebench
     assert "fabric_config_path" not in calculator
     assert "fabric_config_path" not in landing
@@ -353,6 +358,19 @@ def test_harbor_calculator_documents_explicit_cli_commands():
     assert "--model nvidia/nemotron-3-nano-omni-30b-a3b-reasoning" in calculator
     assert "--model anthropic/claude-sonnet-4-5" in calculator
     assert "fabric_adapter_id=nvidia.fabric.openclaw" in calculator
+    assert "fabric_adapter_id=nvidia.fabric.pi" in calculator
+    pi_command = calculator.split("## 4. Pi", 1)[1].split("## 5. Codex", 1)[0]
+    assert "fabric_max_turns" not in pi_command
+    assert "fabric_adapter_id=nvidia.fabric.codex" in calculator
+    assert "fabric_model_api_key_env=OPENAI_API_KEY" in calculator
+    codex_command = calculator.split("## 5. Codex", 1)[1].split(
+        "## Inspect Results", 1
+    )[0]
+    assert "fabric_max_turns" not in codex_command
+    assert "fabric_discovery_paths=" in calculator
+    assert "pi.fabric-adapter.json" in calculator
+    assert "-e '/opt/nemo-fabric/adapters/python/codex[harness]'" in dockerfile
+    assert "--workspace nemo-fabric-adapters-pi" in dockerfile
     assert "fabric_model_api_key_env=NVIDIA_API_KEY" in calculator
     assert 'CALCULATOR_DIR="$PWD/examples/harbor/calculator"' in calculator
     assert "calculator/README.md" in landing
@@ -362,34 +380,46 @@ def test_harbor_calculator_documents_explicit_cli_commands():
     assert f"nemo-fabric=={package_version}" in landing
     assert f"nemo-fabric-adapters-hermes=={package_version}" in landing
     assert "Hermes Agent 0.20 and later is no longer installable from PyPI" in landing
-    assert documented_root_extras(
-        "\n".join((calculator, dockerfile, landing, swebench))
-    ) <= declared_extras
+    assert (
+        documented_root_extras("\n".join((calculator, dockerfile, landing, swebench)))
+        <= declared_extras
+    )
     assert "fabric_adapter_id" in landing
     assert 'export TMPDIR="$HOME/harbor-tmp"' in landing
     assert "raw.githubusercontent.com/NVIDIA/NeMo-Relay/main/install.sh" in swebench
     assert (
         "FABRIC_PACKAGE="
-        f"'nemo-fabric[claude,hermes-agent,relay]=={package_version}'"
-        in swebench
+        f"'nemo-fabric[claude,hermes-agent,relay]=={package_version}'" in swebench
     )
     assert "PIP_FIND_LINKS" not in swebench
-    assert 'PATH=/tmp/nemo-fabric-config/.relay/bin:$PATH' in swebench
+    assert "PATH=/tmp/nemo-fabric-config/.relay/bin:$PATH" in swebench
     assert "--dataset swe-bench/swe-bench-verified" in swebench
     for value in (
         '--path "$OPENCODE_SWEBENCH_TASK"',
         "fabric_adapter_id=nvidia.fabric.opencode",
-        "fabric_config_target=/opt/nemo-fabric-config",
-        "fabric_python=/opt/nemo-fabric-venv/bin/python",
     ):
         assert swebench.count(value) == 2
+    assert swebench.count("fabric_config_target=/opt/nemo-fabric-config") == 4
+    assert swebench.count("fabric_python=/opt/nemo-fabric-venv/bin/python") == 4
     assert "--job-name django-13741-opencode-install" not in swebench
     assert "--job-name django-13741-opencode" not in swebench
-    assert 'OPENCODE_JOB_NAME="django-13741-opencode-$(date +%Y%m%d-%H%M%S)"' in swebench
+    assert (
+        'OPENCODE_JOB_NAME="django-13741-opencode-$(date +%Y%m%d-%H%M%S)"' in swebench
+    )
     assert '--job-name "${OPENCODE_JOB_NAME}-install"' in swebench
     assert '--job-name "$OPENCODE_JOB_NAME"' in swebench
+    for value in (
+        '--path "$CLINE_SWEBENCH_TASK"',
+        "fabric_adapter_id=nvidia.fabric.cline",
+    ):
+        assert swebench.count(value) == 2
+    assert swebench.count("--model nvidia/nemotron-3-super-120b-a12b") == 1
+    assert 'CLINE_JOB_NAME="django-13741-cline-$(date +%Y%m%d-%H%M%S)"' in swebench
+    assert '--job-name "${CLINE_JOB_NAME}-install"' in swebench
+    assert '--job-name "$CLINE_JOB_NAME"' in swebench
     assert "--ae 'NVIDIA_API_KEY=${NVIDIA_API_KEY}'" in swebench
     assert '"$RUNS_DIR/$OPENCODE_JOB_NAME/result.json"' in swebench
+    assert '"$RUNS_DIR/$CLINE_JOB_NAME/result.json"' in swebench
     assert "export JOB_NAME=django-13741-hermes" in swebench
     for flag in (
         "--path",
@@ -439,6 +469,16 @@ def test_swebench_opencode_image_uses_locked_npm_dependencies():
     assert "--ignore-scripts" in dockerfile
     assert "package-lock.json" in dockerfile
     assert "--no-package-lock" not in dockerfile
+
+
+def test_swebench_cline_image_uses_supported_sdk_and_locked_adapter_dependencies():
+    dockerfile = SWEBENCH_CLINE_DOCKERFILE.read_text(encoding="utf-8")
+
+    assert "npm ci" in dockerfile
+    assert "--workspace nemo-fabric-adapters-cline" in dockerfile
+    assert "@cline/sdk@0.0.83" in dockerfile
+    assert "--ignore-scripts" in dockerfile
+    assert "package-lock.json" in dockerfile
 
 
 def test_harbor_calculator_setup_and_solution_fail_fast():
@@ -542,7 +582,9 @@ def test_swebench_matrix_translates_harbor_inputs_to_typed_config(tmp_path: Path
     assert base.mcp is None
     assert base.tools is None
     assert base.telemetry is None
-    assert relay.models["default"].model == "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+    assert (
+        relay.models["default"].model == "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+    )
     assert relay.skills is not None
     assert relay.skills.paths == ["/harbor/skills"]
     assert relay.mcp is not None
@@ -570,10 +612,14 @@ def test_swebench_matrix_translates_harbor_inputs_to_typed_config(tmp_path: Path
 
     # TODO: Remove the bundled copies and these equality checks after Fabric
     # discovers adapter descriptors directly from source checkouts and wheels.
-    assert (SWEBENCH_ROOT / "adapters/hermes/hermes.fabric-adapter.json").read_text() == (
+    assert (
+        SWEBENCH_ROOT / "adapters/hermes/hermes.fabric-adapter.json"
+    ).read_text() == (
         ROOT / "adapters/python/hermes/hermes.fabric-adapter.json"
     ).read_text()
-    assert (SWEBENCH_ROOT / "adapters/claude/claude.fabric-adapter.json").read_text() == (
+    assert (
+        SWEBENCH_ROOT / "adapters/claude/claude.fabric-adapter.json"
+    ).read_text() == (
         ROOT / "adapters/python/claude/claude.fabric-adapter.json"
     ).read_text()
     hermes_descriptor = json.loads(
@@ -645,7 +691,9 @@ def test_harbor_lifecycle_populates_context_after_run(tmp_path: Path):
         encoding="utf-8",
     )
 
-    Trial._populate_agent_context(SimpleNamespace(agent=agent), context)
+    Trial._populate_agent_context(
+        SimpleNamespace(agent=agent, user_agent=None), context
+    )
 
     assert context.metadata["fabric"]["status"] == "succeeded"
     assert context.n_input_tokens == 12
@@ -654,17 +702,71 @@ def test_harbor_lifecycle_populates_context_after_run(tmp_path: Path):
     assert context.cost_usd == 0.25
 
 
-def test_harbor_018_factory_loads_fabric_agent(tmp_path: Path):
+def test_harbor_023_options_schema_and_preflight():
+    from harbor.agents.factory import AgentFactory
+    from harbor.models.trial.config import AgentConfig
+    from nemo_fabric.integrations.harbor import FabricAgent
+
+    schema = FabricAgent.options_schema()
+    assert schema["required"] == ["fabric_adapter_id"]
+    assert set(schema["properties"]) == {
+        "fabric_adapter_id",
+        "fabric_blocked_tools",
+        "fabric_config_base_dir",
+        "fabric_config_bundle",
+        "fabric_config_target",
+        "fabric_cwd",
+        "fabric_discovery_paths",
+        "fabric_enabled_tools",
+        "fabric_environment_env",
+        "fabric_harness_settings",
+        "fabric_install_command",
+        "fabric_max_turns",
+        "fabric_model_api_key_env",
+        "fabric_model_base_url",
+        "fabric_package",
+        "fabric_python",
+        "fabric_runtime_timeout_seconds",
+        "fabric_system_instruction",
+        "fabric_telemetry",
+        "fabric_timeout_sec",
+        "fabric_venv_path",
+        "fabric_workspace",
+    }
+    assert FabricAgent.capabilities.atif is True
+    for field in ("skills", "mcp_servers"):
+        if field in type(FabricAgent.capabilities).model_fields:
+            assert getattr(FabricAgent.capabilities, field) is True
+
+    agent = AgentConfig(
+        import_path="nemo_fabric.integrations.harbor:FabricAgent",
+        kwargs={"fabric_adapter_id": "nvidia.fabric.hermes"},
+    )
+    AgentFactory.run_preflight(agent)
+
+    agent.kwargs["unexpected_option"] = True
+    with pytest.raises(ValueError, match="Unknown option 'unexpected_option'"):
+        AgentFactory.run_preflight(agent)
+    del agent.kwargs["unexpected_option"]
+
+    agent.kwargs["fabric_workspace"] = "relative/path"
+    with pytest.raises(ValueError, match="fabric_workspace must be an absolute"):
+        AgentFactory.run_preflight(agent)
+
+
+def test_harbor_023_factory_loads_fabric_agent(tmp_path: Path):
     from harbor.agents.factory import AgentFactory
 
     agent = AgentFactory.create_agent_from_import_path(
         "nemo_fabric.integrations.harbor:FabricAgent",
         logs_dir=tmp_path,
         fabric_adapter_id="nvidia.fabric.hermes",
+        fabric_max_turns="12",
     )
 
     assert agent.name() == "fabric"
     assert agent.SUPPORTS_ATIF is True
+    assert agent.fabric_max_turns == 12
 
 
 def test_swebench_mcp_config_uses_the_bundled_repo_inspector():
