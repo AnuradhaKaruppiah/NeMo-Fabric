@@ -602,7 +602,7 @@ export async function loadOpenCodeSdk(
   } catch {
     throw new LifecycleError(
       "opencode_harness_unavailable",
-      "The OpenCode v2 harness is not installed. Install compatible packages with: npm install @opencode/core@2.0.3 @opencode/sdk@2.0.3",
+      "The OpenCode v2 harness is not installed. Install compatible packages with: npm install @opencode/core@2.0.23 @opencode/sdk@2.0.23",
     );
   }
   try {
@@ -614,7 +614,7 @@ export async function loadOpenCodeSdk(
 }
 
 async function loadEmbeddedOpenCodeCreate(): Promise<EmbeddedOpenCodeCreate> {
-  // @opencode/sdk@2.0.3 exposes its two-argument Promise SDK entry point as a
+  // The OpenCode SDK exposes its two-argument Promise SDK entry point as a
   // packaged file but does not export it from the package root. Resolve the
   // package root first so this remains valid when npm hoists dependencies. The
   // adapter exact-pins its Core and SDK peers while this private-file workaround
@@ -799,7 +799,7 @@ export class OpenCodeSdkSessionFactory implements OpenCodeSessionFactory {
       );
       const embedOptions = await this.embedOptionsLoader(configContent);
       // The OpenCode convenience namespace silently ignores the embed argument.
-      // Use the v2.0.3 Promise SDK entry point for production and retain the
+      // Use the Promise SDK entry point for production and retain the
       // public convenience API only for injected unit-test doubles.
       const createEmbeddedClient =
         this.sdkLoader === loadOpenCodeSdk
