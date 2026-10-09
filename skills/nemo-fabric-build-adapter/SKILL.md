@@ -63,6 +63,10 @@ translation:
   and `extension_schemas` where applicable. Use
   `model_schema` only for static model/provider compatibility and model settings;
   keep credential validity and provider availability in startup validation.
+- New adapters that consume `models.<role>.top_p` or `.max_tokens` should declare
+  the corresponding normalized `config.accepts` field. Existing descriptors
+  that declare either name through `extension_schemas.model` remain compatible
+  and receive it in `AgentModelConfig.extensions`.
 - Declare runtime requirements and telemetry outputs without secret values.
 - Leave optional capability flags false unless the installed NeMo Fabric runtime
   exposes and tests that adapter operation. Set `capabilities.streaming` only
@@ -220,9 +224,11 @@ units, defaults, validation bounds, and overflow behavior. Do not overload
 
 Keep session state separate from invocation state. Conversation context,
 required artifact references, and live workspace state may persist until
-`stop`; timeout state, counters, terminal markers, result assembly, usage, and
+`stop`; timeout state, invocation counters, terminal markers, result assembly, usage, and
 telemetry scopes reset for each `invoke`. Independent runtime instances must
 never share mutable continuation state.
+
+Normalize usage per invocation in `AgentUsage`. If the target reports cumulative session totals, retain a session-local baseline and difference successive observed counters rather than summing cumulative snapshots or using only the last model response. Missing or reset counters remain unknown. Report `cached_input_tokens` when available and declare whether `input_tokens` includes cache with `input_tokens_include_cache`; omit the flag when the target's semantics are unknown. Preserve available usage on unsuccessful terminal results. Do not infer missing cost or promote estimates to `cost_usd`.
 
 Test observable continuation rather than merely calling `invoke` twice: make
 the second result depend on the first turn without caller-side replay, then
@@ -232,12 +238,18 @@ for an adapter-owned history pattern.
 
 For in-process Relay SDK telemetry where the adapter owns the invocation-level
 Agent scope, wrap that scope with
-`nemo_fabric_adapters.common.utils.relay_request_context(context.request_id)`.
-The helper uses a UUID request ID as Relay's propagated root and always returns
-`nemo_fabric_request_id` metadata, including for non-UUID request IDs. Do not
-apply this pattern to an external Relay gateway or an upstream integration that
-creates an isolated scope context unless its boundary accepts a per-turn
-propagation context.
+`relay_request_context(context.request_id, request.relay_session_root)` from
+`nemo_fabric_adapters.common.utils`. The helper uses a UUID request ID
+as Relay's propagated root and always returns `nemo_fabric_request_id` metadata,
+including for non-UUID request IDs. When the caller sets the typed
+`AgentRunRequest.relay_session_root` to a UUID string Relay accepts, that value becomes the root
+instead, a UUID request ID stays the parent (otherwise the session root is), and
+`nemo_fabric_session_root` is added to the metadata, so the caller's invocations
+share one Relay session. Context keys do not control propagation. An unusable
+session root falls back to a usable UUID request ID without raising; if neither
+value is usable, the helper returns `nullcontext()` without setting propagation. Do not apply this pattern to an external Relay gateway or an
+upstream integration that creates an isolated scope context unless its boundary
+accepts a per-turn propagation context.
 
 ## Handle Custom Agents
 

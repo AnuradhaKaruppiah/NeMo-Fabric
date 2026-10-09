@@ -103,7 +103,8 @@ def test_partial_relay_config_defaults_to_observability_version_3(tmp_path):
     }
 
 
-def test_uuid_request_id_seeds_relay_propagation(tmp_path, monkeypatch):
+@pytest.mark.parametrize("session_root", [None, "018f47a4-0000-7d94-8e61-9f0f89b5d312"])
+def test_uuid_request_id_seeds_relay_propagation(tmp_path, monkeypatch, session_root):
     request_id = "018f47a4-3af7-7d94-8e61-9f0f89b5d312"
     request_scope = MagicMock()
     request_context = MagicMock(
@@ -117,9 +118,9 @@ def test_uuid_request_id_seeds_relay_propagation(tmp_path, monkeypatch):
 
     @asynccontextmanager
     async def plugin_context(_config):
-        yield None
+        yield SimpleNamespace(report={"config": {"diagnostics": []}})
 
-    plugin_api = SimpleNamespace(plugin=MagicMock(side_effect=plugin_context))
+    plugin_api = SimpleNamespace(activate=MagicMock(side_effect=plugin_context))
     monkeypatch.setattr(
         telemetry_module,
         "_load_plugin_config",
@@ -157,12 +158,13 @@ def test_uuid_request_id_seeds_relay_propagation(tmp_path, monkeypatch):
             base_dir=tmp_path,
             agent_name="email-phishing",
             model_name="test-model",
+            session_root=session_root,
         ):
             pass
 
     asyncio.run(run())
 
-    request_context.assert_called_once_with(request_id)
+    request_context.assert_called_once_with(request_id, session_root)
     request_scope.__enter__.assert_called_once_with()
     request_scope.__exit__.assert_called_once()
     scope_api.scope.assert_called_once_with(

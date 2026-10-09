@@ -115,8 +115,41 @@ def test_validate_hermes_telemetry_provider_rejects_mixed_native_and_relay():
         )
 
 
+def test_validate_hermes_relay_compatibility_accepts_supported_checkout():
+    telemetry.validate_hermes_relay_compatibility()
+
+
+def test_validate_hermes_relay_compatibility_rejects_relay_08(monkeypatch):
+    monkeypatch.setattr(telemetry, "version", lambda _name: "0.8.4")
+
+    with pytest.raises(RuntimeError, match="requires nemo-relay 0.9; found 0.8.4"):
+        telemetry.validate_hermes_relay_compatibility()
+
+
+async def test_runtime_start_rejects_published_hermes_relay_before_setup(
+    monkeypatch, tmp_path: Path
+):
+    from agent import relay_runtime
+
+    monkeypatch.delattr(relay_runtime, "resolve_plugin_sources")
+    payload = {
+        "base_dir": str(tmp_path),
+        "config": _agent_config(
+            {"models": {"default": {"provider": "nvidia", "model": "test-model"}}}
+        ),
+        "runtime_context": _runtime_context(
+            artifact_root=str(tmp_path / "artifacts"), providers=["relay"]
+        ).to_mapping(),
+    }
+
+    with pytest.raises(RuntimeError, match="does not support Relay 0.9 telemetry"):
+        await adapter.HermesRuntime().start(payload)
+
+    assert not (tmp_path / "artifacts" / ".fabric").exists()
+
+
 def test_descriptor_uses_the_typed_agent_config_contract():
-    """The Hermes descriptor declares its typed config and model extensions."""
+    """The Hermes descriptor declares its typed normalized config."""
     descriptor_path = (
         Path(__file__).parents[2]
         / "adapters"
@@ -131,6 +164,8 @@ def test_descriptor_uses_the_typed_agent_config_contract():
         "models",
         "models.base_url",
         "models.temperature",
+        "models.top_p",
+        "models.max_tokens",
         "instructions.system",
         "runtime.max_turns",
         "tools.enabled",
@@ -139,19 +174,7 @@ def test_descriptor_uses_the_typed_agent_config_contract():
         "mcp.auth.oauth2",
         "skills",
     ]
-    assert descriptor["extension_schemas"]["model"]["properties"] == {
-        "top_p": {
-            "type": "number",
-            "minimum": 0,
-            "maximum": 1,
-            "description": "Nucleus sampling probability passed to the model provider.",
-        },
-        "max_tokens": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "Maximum number of tokens for responses from this model role.",
-        },
-    }
+    assert "model" not in descriptor["extension_schemas"]
     assert descriptor["config"]["system_instruction_modes"] == ["replace"]
 
 
@@ -380,6 +403,21 @@ def test_finalize_hermes_relay_session_uses_legacy_plugin_hook(monkeypatch):
     )
 
 
+def test_finalize_hermes_relay_session_flushes_relay_after_the_hook(monkeypatch):
+    nemo_relay = pytest.importorskip("nemo_relay")
+    order: list[str] = []
+    hermes_cli = ModuleType("hermes_cli")
+    hermes_lifecycle = ModuleType("hermes_cli.lifecycle")
+    hermes_lifecycle.finalize_session = lambda **_: order.append("finalize")  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "hermes_cli", hermes_cli)
+    monkeypatch.setitem(sys.modules, "hermes_cli.lifecycle", hermes_lifecycle)
+    monkeypatch.setattr(nemo_relay.subscribers, "flush", lambda: order.append("flush"))
+
+    telemetry.finalize_hermes_relay_session("session-1")
+
+    assert order == ["finalize", "flush"]
+
+
 async def test_runtime_start_stages_upstream_relay_plugin_configuration(
     monkeypatch,
     tmp_path: Path,
@@ -502,7 +540,6 @@ def test_build_hermes_config_maps_fabric_config_to_hermes_config():
     config = configuration.build_hermes_config(
         agent_config,
         workspace="/workspace/repo",
-        relay_enabled=True,
     )
 
     assert config == {
@@ -534,7 +571,7 @@ def test_build_hermes_config_maps_fabric_config_to_hermes_config():
             },
         },
         "platform_toolsets": {"cli": ["git"]},
-        "plugins": {"enabled": ["custom/plugin", "observability/nemo_relay"]},
+        "plugins": {"enabled": ["custom/plugin"]},
     }
 
 
@@ -639,7 +676,6 @@ def test_hermes_config_variation_matrix_surfaces_supported_capabilities(
     config = configuration.build_hermes_config(
         agent_config,
         workspace=str(tmp_path / "workspace"),
-        relay_enabled=True,
     )
     plugin_config = common_utils.load_relay_plugin_config(payload)
     observability = plugin_config["components"][0]["config"]
@@ -663,7 +699,7 @@ def test_hermes_config_variation_matrix_surfaces_supported_capabilities(
         },
     }
     assert config["platform_toolsets"] == {"cli": ["git", "shell"]}
-    assert config["plugins"]["enabled"] == ["observability/nemo_relay"]
+    assert "plugins" not in config
     assert observability["atof"]["sinks"][0]["output_directory"] == str(
         tmp_path / "relay" / "atof" / "runtime-matrix"
     )
@@ -1021,6 +1057,23 @@ async def test_runtime_reports_failed_oauth_mcp_authentication(monkeypatch):
     assert runtime._mcp_authentication_checked is False
 
 
+def test_build_hermes_config_disables_session_title_generation_only_for_relay():
+    agent_config = _agent_config(
+        {
+            "harness": {"settings": {}},
+            "models": {"default": {"provider": "nvidia", "model": "nvidia/test-model"}},
+        }
+    )
+
+    ordinary_config = configuration.build_hermes_config(agent_config, workspace=".")
+    relay_config = configuration.build_hermes_config(
+        agent_config, workspace=".", relay_enabled=True
+    )
+
+    assert "auxiliary" not in ordinary_config
+    assert relay_config["auxiliary"] == {"title_generation": {"enabled": False}}
+
+
 def test_write_hermes_config_writes_file(tmp_path: Path):
     agent_config = _agent_config(
         {
@@ -1362,10 +1415,8 @@ async def test_persistent_runtime_reuses_hermes_agent_session_and_history(
                     "model": "test-model",
                     "api_key_env": "TEST_API_KEY",
                     "temperature": 0.2,
-                    "extensions": {
-                        "top_p": 0.85,
-                        "max_tokens": 768,
-                    },
+                    "top_p": 0.85,
+                    "max_tokens": 768,
                 }
             },
         }

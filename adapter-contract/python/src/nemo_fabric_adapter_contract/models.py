@@ -147,6 +147,8 @@ class AgentModelConfig(AgentContractBlock):
     model: str
     api_key_env: str | None = _optional()
     temperature: float | None = _optional()
+    top_p: float | None = _optional()
+    max_tokens: int | None = _optional()
     base_url: str | None = _optional()
     settings: dict[str, JsonValue] = _json_dict()
 
@@ -163,6 +165,17 @@ class AgentModelConfig(AgentContractBlock):
         _nonblank(self.model, "model")
         if self.api_key_env is not None:
             _nonblank(self.api_key_env, "api_key_env")
+        if self.top_p is not None and not 0 <= self.top_p <= 1:
+            raise ContractValidationError(
+                "must be between zero and one",
+                path=("top_p",),
+            )
+        if self.max_tokens is not None and self.max_tokens < 1:
+            raise ContractValidationError(
+                "must be greater than zero",
+                path=("max_tokens",),
+            )
+        _bounded_int(self.max_tokens, "max_tokens", (1 << 64) - 1)
         if self.base_url is not None:
             _nonblank(self.base_url, "base_url")
 
@@ -426,6 +439,7 @@ class AgentRunRequest(AgentContractBlock):
     """Southbound invocation request passed to an adapter target."""
 
     input: JsonValue = _json_value_field()
+    relay_session_root: str | None = _optional()
     context: dict[str, JsonValue] = _json_dict()
 
 
@@ -490,12 +504,15 @@ class AgentUsage(AgentContractBlock):
     """Normalized model usage reported by an adapter target."""
 
     input_tokens: int | None = _optional()
+    cached_input_tokens: int | None = _optional()
+    input_tokens_include_cache: bool | None = _optional()
     output_tokens: int | None = _optional()
     total_tokens: int | None = _optional()
     cost_usd: float | None = _optional()
 
     def _validate(self) -> None:
         _bounded_int(self.input_tokens, "input_tokens", (1 << 64) - 1)
+        _bounded_int(self.cached_input_tokens, "cached_input_tokens", (1 << 64) - 1)
         _bounded_int(self.output_tokens, "output_tokens", (1 << 64) - 1)
         _bounded_int(self.total_tokens, "total_tokens", (1 << 64) - 1)
         if self.cost_usd is not None and self.cost_usd < 0:

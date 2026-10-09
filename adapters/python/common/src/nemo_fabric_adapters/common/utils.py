@@ -259,20 +259,40 @@ def native_telemetry_config(payload: dict[str, Any]) -> dict[str, Any]:
     return config if isinstance(config, dict) else {}
 
 
-def relay_request_context(request_id: str) -> tuple[Any, dict[str, str]]:
-    """Use a UUID request ID as Relay's propagated root and preserve metadata."""
+def _uuid_or_none(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = uuid.UUID(value)
+    except ValueError:
+        return None
+    # Relay derives the OTel span id from the low 8 bytes and rejects a zero one.
+    if not any(parsed.bytes[8:]):
+        return None
+    return str(parsed)
+
+
+def relay_request_context(
+    request_id: str,
+    session_root: str | None = None,
+) -> tuple[Any, dict[str, str]]:
+    """Root Relay at a usable session root, else a UUID request ID; preserve metadata."""
 
     metadata = {"nemo_fabric_request_id": request_id}
-    try:
-        request_uuid = str(uuid.UUID(request_id))
-    except ValueError:
+    request_uuid = _uuid_or_none(request_id)
+    session_uuid = _uuid_or_none(session_root)
+
+    root_uuid = session_uuid or request_uuid
+    if root_uuid is None:
         return nullcontext(), metadata
+    if session_uuid is not None:
+        metadata["nemo_fabric_session_root"] = session_uuid
 
     from nemo_relay import PropagationContext
     from nemo_relay import create_scope_stack_from_propagation
     from nemo_relay import use_scope_stack
 
-    propagation = PropagationContext(request_uuid, root_uuid=request_uuid)
+    propagation = PropagationContext(request_uuid or root_uuid, root_uuid=root_uuid)
     stack = create_scope_stack_from_propagation(propagation)
     return use_scope_stack(stack), metadata
 
@@ -334,11 +354,14 @@ def reject_inherited_relay_plugin_config(report: Any) -> None:
 
     if not isinstance(report, dict):
         raise RuntimeError("NeMo Relay did not return a plugin activation report")
-    diagnostics = report.get("diagnostics")
+    config_report = report.get("config")
+    diagnostics = (
+        config_report.get("diagnostics") if isinstance(config_report, dict) else None
+    )
     if not isinstance(diagnostics, list):
         raise RuntimeError("NeMo Relay returned an invalid plugin activation report")
     inherited = []
-    # Relay 0.7.2 exposes the source only in this message. Keep the system-policy
+    # Relay exposes the source only in this message. Keep the system-policy
     # allowlist exact and fail closed until Relay provides a structured source path.
     message_prefix = "inherited plugin configuration from discovered file: "
     system_config = Path("/etc/nemo-relay/plugins.toml")

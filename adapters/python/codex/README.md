@@ -31,28 +31,24 @@ separate CLI installation.
 
 ## Authentication
 
-NeMo Fabric reuses the authentication state that Codex stores under `CODEX_HOME`
-(default: `~/.codex`). NeMo Fabric does not perform an interactive login, copy
-credentials, or mutate the user's Codex configuration.
+For a cached ChatGPT or Codex API-key login, NeMo Fabric reuses the
+authentication state under `CODEX_HOME` (default: `~/.codex`). Sign in with
+Codex before running NeMo Fabric. Set `CODEX_HOME` to the same location for login
+and execution if you use a nondefault credential store.
 
-Codex supports two OpenAI authentication modes:
+For noninteractive OpenAI API-key authentication, set
+`models.<role>.api_key_env` to the name of an environment variable containing
+the key. The adapter calls the Codex SDK's `login_api_key` during startup. It
+creates a private, temporary `CODEX_HOME` outside Fabric artifacts for this
+login, even if the host has another `CODEX_HOME`, and removes it after the
+runtime stops or startup fails. This mode uses OpenAI Platform billing rather
+than ChatGPT plan credits.
 
-- **ChatGPT login:** Sign in through Codex with a ChatGPT plan. NeMo Fabric can then
-  run without `OPENAI_API_KEY` while that cached login remains valid.
-- **API key login:** Provision the same Codex credential store with an OpenAI
-  API key. This mode uses OpenAI Platform billing rather than ChatGPT plan
-  credits.
-
-For a nondefault credential store, set `CODEX_HOME` before both login and the
-NeMo Fabric invocation. Treat `CODEX_HOME/auth.json` as a secret when Codex uses
-file-based credential storage. Refer to the
+Treat any Codex `CODEX_HOME/auth.json` as a secret when Codex uses file-based
+credential storage. Do not copy it into NeMo Fabric configuration or artifacts.
+Refer to the
 [Codex authentication documentation](https://developers.openai.com/codex/auth/)
-for login, headless setup, and credential-storage options.
-
-The adapter forwards `OPENAI_API_KEY` and a selected model's `api_key_env` to
-the SDK runtime. The current real-agent acceptance path validates an existing
-Codex login; it does not yet claim a raw environment variable as a complete
-login flow.
+for login and credential-storage options.
 
 The native `openai` provider retains Codex authentication and endpoint
 discovery. For another provider name, configure both
@@ -83,6 +79,8 @@ The result includes the SDK's typed terminal response, turn status, token
 usage, timing, and completed thread items. It does not expose CLI commands,
 return codes, stdout, or stderr.
 
+Normalized `usage` contains invocation-local token counts from the SDK's cumulative thread totals, including cached input tokens. Input tokens already include cached tokens (`input_tokens_include_cache=True`). Reused threads report the difference from the previous invocation rather than counting the thread total again. Missing, invalid, or reset counters remain unknown; a missing snapshot requires a new baseline before differences can be reported. The adapter preserves native usage in `output.usage`, does not infer cost, and retains available usage on unsuccessful results. If the SDK raises before returning usage, normalized usage remains unavailable.
+
 ## Configuration
 
 Use normalized `FabricConfig` fields for portable configuration:
@@ -102,6 +100,8 @@ Use normalized `FabricConfig` fields for portable configuration:
   registers each directory as a process-scoped Codex skill root so Codex can
   select matching skills through its normal discovery behavior.
 - `telemetry` enables native OpenTelemetry or NeMo Relay observability.
+
+Invocation deadlines return the normalized error code `timeout` (previously `codex_timed_out`). The adapter interrupts the active turn and closes the SDK before returning that outcome.
 
 The Codex adapter does not declare `tools.blocked` support. The current Codex
 runtime has per-MCP-server tool filters, but it does not provide one complete
@@ -146,7 +146,7 @@ Codex state variables, the selected model's `api_key_env`, and explicit
 
 ## Relay Integration
 
-Relay requires a NeMo Relay CLI in the `>=0.7.2,<0.8` range on `PATH`. The
+Relay requires a NeMo Relay CLI in the `>=0.9,<0.10` range on `PATH`. The
 Codex adapter does not provide a separate `relay` extra; its `harness` and
 `full` extras install the compatible CLI through `nemo-relay-cli-bin`. The root
 `nemo-fabric[relay]` extra installs only the Relay Python package.

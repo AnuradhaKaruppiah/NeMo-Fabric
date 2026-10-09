@@ -27,7 +27,7 @@ application-facing Python SDK contract:
 - creating harness, environment, capability, and telemetry variants from deep
   copies;
 - resolving relative workspace and skill paths with `base_dir`;
-- running maintained Hermes Agent, Codex, Claude, Deep Agents, and Pi
+- running maintained Hermes Agent, Codex, Claude, Cline, Deep Agents, and Pi
   adapters through the Python SDK.
 
 Complete the [code-review setup](code_review_agent/README.md#set-up), then run:
@@ -37,6 +37,14 @@ just build-all
 .venv/bin/python -m examples.code_review_agent \
   --input "Reply with exactly: NeMo Fabric works"
 ```
+
+The Pi variant supports Relay telemetry with `nemo-relay>=0.9.0,<0.10.0` and an
+explicit extension path. Pass
+`--variant pi --relay --stream --pi-relay-extension-path <PATH>` to collect
+per-invocation model-turn ATOF records for successful Relay redirects, then
+print one JSON document containing `atof_records` and the separate terminal
+`result`. Relay retains redirect-decision marks in configured ATOF artifacts, while
+Pi's startup `model_redirect` marks are not included in `atof_records`.
 
 ## LangGraph Custom Agent
 
@@ -75,8 +83,9 @@ The walkthroughs include:
   smoke test and optional LLM-backed Hermes Agent and Claude runs;
 - an NVIDIA-labs Object Oriented Agents (NOOA) BenchAgent walkthrough with
   Harbor reward, Relay ATOF/ATIF verification, and a real SWE-Bench task; and
-- a SWE-Bench workflow for running Hermes Agent and Claude, comparing capability
-  variations, inspecting Relay telemetry, and verifying real coding tasks.
+- a SWE-Bench workflow for running Hermes Agent, OpenCode, and Claude, comparing
+  capability variations, inspecting Relay telemetry, and verifying real coding
+  tasks.
 
 Start with the shared setup and execution model in the
 [Harbor guide](harbor/README.md).

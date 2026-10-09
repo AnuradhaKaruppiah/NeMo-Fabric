@@ -164,6 +164,93 @@ def test_agent_run_result_discards_oversized_token_count():
     assert result.usage is None
 
 
+@pytest.mark.parametrize("failed", [False, True])
+def test_native_usage_preserves_known_counters_without_inventing_cost(failed):
+    output = {
+        "response": "done",
+        "failed": failed,
+        "usage": {
+            "total": {
+                "inputTokens": 40,
+                "cachedInputTokens": 10,
+                "outputTokens": 8,
+                "totalTokens": 48,
+            },
+            "last": {"inputTokens": 3, "outputTokens": 1, "totalTokens": 4},
+            "estimated_cost_usd": 0.25,
+        },
+    }
+
+    result = adapter._agent_run_result(output)
+
+    assert result.usage.to_mapping() == {
+        "input_tokens": 40,
+        "cached_input_tokens": 10,
+        "input_tokens_include_cache": True,
+        "output_tokens": 8,
+        "total_tokens": 48,
+    }
+    assert result.usage.cost_usd is None
+    assert result.output["usage"] == output["usage"]
+
+
+def test_cumulative_usage_is_invocation_local_and_missing_counts_are_not_guessed():
+    totals = dict.fromkeys(
+        ("input_tokens", "cached_input_tokens", "output_tokens", "total_tokens"), 0
+    )
+    first = adapter._agent_run_result(
+        {"usage": {"total": {"inputTokens": 40, "outputTokens": 8}}}, totals
+    )
+    second = adapter._agent_run_result(
+        {
+            "usage": {
+                "total": {"inputTokens": 60, "outputTokens": 12, "cachedInputTokens": 5}
+            }
+        },
+        totals,
+    )
+    assert first.usage.input_tokens == 40
+    assert second.usage.input_tokens == 20
+    assert second.usage.output_tokens == 4
+    assert second.usage.cached_input_tokens is None
+    assert second.usage.total_tokens is None
+    adapter._agent_run_result({}, totals)
+    missing_baseline = adapter._agent_run_result(
+        {"usage": {"total": {"inputTokens": 90}}}, totals
+    )
+    assert missing_baseline.usage is None
+    resumed = adapter._agent_run_result(
+        {"usage": {"total": {"inputTokens": 100}}}, totals
+    )
+    assert resumed.usage.input_tokens == 10
+
+
+@pytest.mark.parametrize("invalid", [-1, 1 << 64, True, 1.5, "20", None])
+def test_native_usage_rejects_invalid_counters_independently(invalid):
+    result = adapter._agent_run_result(
+        {
+            "usage": {"total": {"inputTokens": invalid, "outputTokens": 8}},
+        }
+    )
+    assert result.usage.input_tokens is None
+    assert result.usage.output_tokens == 8
+    assert result.usage.cost_usd is None
+
+
+def test_reset_cumulative_counter_rebaselines_without_negative_usage():
+    totals = {"input_tokens": 40, "output_tokens": 8}
+    reset = adapter._agent_run_result(
+        {"usage": {"total": {"inputTokens": 10, "outputTokens": 12}}}, totals
+    )
+    assert reset.usage.input_tokens is None
+    assert reset.usage.output_tokens == 4
+    resumed = adapter._agent_run_result(
+        {"usage": {"total": {"inputTokens": 20, "outputTokens": 14}}}, totals
+    )
+    assert resumed.usage.input_tokens == 10
+    assert resumed.usage.output_tokens == 2
+
+
 def mock_turn_handle(result=None):
     mock_handle = MagicMock(spec=AsyncTurnHandle)
     outcome = successful_result() if result is None else result
@@ -322,6 +409,89 @@ def mock_codex_fixture(monkeypatch):
     mock_codex.side_effect = build_client
     monkeypatch.setattr(adapter, "AsyncCodex", mock_codex)
     return mock_codex
+
+
+def test_explicit_openai_api_key_logs_in_under_invocation_home(
+    codex_payload, mock_codex, monkeypatch, tmp_path
+):
+    codex_payload["config"]["models"]["default"]["api_key_env"] = (
+        "FABRIC_CODEX_TEST_KEY"
+    )
+    monkeypatch.setenv("FABRIC_CODEX_TEST_KEY", "test-api-key")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "existing-codex-home"))
+    codex_payload["runtime_context"]["environment"]["env"] = {
+        "CODEX_HOME": str(tmp_path / "artifacts" / "unsafe-home")
+    }
+
+    output = invoke_once(codex_payload)
+
+    assert output["completed"] is True
+    client = mock_codex.instances[0]
+    client.login_api_key.assert_awaited_once_with("test-api-key")
+    assert client.config.env["OPENAI_API_KEY"] == "test-api-key"
+    api_key_home = Path(client.config.env["CODEX_HOME"])
+    assert not api_key_home.is_relative_to(tmp_path / "artifacts")
+    assert not api_key_home.exists()
+    assert os.environ["CODEX_HOME"] == str(tmp_path / "existing-codex-home")
+
+
+def test_explicit_openai_api_key_missing_fails_before_thread_start(
+    codex_payload, mock_codex, monkeypatch
+):
+    codex_payload["config"]["models"]["default"]["api_key_env"] = (
+        "FABRIC_CODEX_TEST_KEY"
+    )
+    monkeypatch.delenv("FABRIC_CODEX_TEST_KEY", raising=False)
+
+    error = runtime_start_error(codex_payload)
+
+    assert error.code == "codex_invalid_configuration"
+    assert "FABRIC_CODEX_TEST_KEY is required" in error.message
+    assert mock_codex.instances == []
+
+
+def test_explicit_openai_api_key_failed_login_removes_private_home(
+    codex_payload, mock_codex, monkeypatch, tmp_path
+):
+    codex_payload["config"]["models"]["default"]["api_key_env"] = (
+        "FABRIC_CODEX_TEST_KEY"
+    )
+    monkeypatch.setenv("FABRIC_CODEX_TEST_KEY", "test-api-key")
+    build_client = mock_codex.side_effect
+
+    def build_failing_client(*args, **kwargs):
+        client = build_client(*args, **kwargs)
+        client.login_api_key.side_effect = RuntimeError("login failed")
+        return client
+
+    mock_codex.side_effect = build_failing_client
+
+    error = runtime_start_error(codex_payload)
+
+    assert error.code == "codex_turn_failed"
+    client = mock_codex.instances[0]
+    api_key_home = Path(client.config.env["CODEX_HOME"])
+    assert not api_key_home.is_relative_to(tmp_path / "artifacts")
+    assert not api_key_home.exists()
+    client.close.assert_awaited_once()
+
+
+def test_explicit_openai_api_key_rejects_temp_home_under_artifacts(
+    codex_payload, mock_codex, monkeypatch, tmp_path
+):
+    codex_payload["config"]["models"]["default"]["api_key_env"] = (
+        "FABRIC_CODEX_TEST_KEY"
+    )
+    monkeypatch.setenv("FABRIC_CODEX_TEST_KEY", "test-api-key")
+    artifact_root = tmp_path / "artifacts"
+    artifact_root.mkdir()
+    monkeypatch.setattr(adapter.tempfile, "tempdir", str(artifact_root))
+
+    error = runtime_start_error(codex_payload)
+
+    assert error.code == "codex_invalid_configuration"
+    assert mock_codex.instances == []
+    assert list(artifact_root.iterdir()) == []
 
 
 def test_single_invocation_uses_native_thread_and_turn_contract(
@@ -1134,7 +1304,8 @@ async def test_relay_atif_timeout_fails_successful_turn_explicitly(
 
     await runtime.start(lifecycle_start_payload(codex_payload))
     try:
-        output = result_view(await runtime.invoke(*lifecycle_invocation(codex_payload)))
+        result = await runtime.invoke(*lifecycle_invocation(codex_payload))
+        output = result_view(result)
         late_atif.write_text(
             '{"schema_version":"ATIF-v1.7","steps":[]}', encoding="utf-8"
         )
@@ -1156,6 +1327,9 @@ async def test_relay_atif_timeout_fails_successful_turn_explicitly(
     wait_for_atif.assert_awaited_once()
     assert output["relay_runtime"]["enabled"] is True
     assert output["relay_artifacts"] == []
+    assert result.usage.input_tokens == 10
+    assert result.usage.output_tokens == 3
+    assert result.usage.cost_usd is None
     assert unavailable["error"]["code"] == "codex_runtime_unavailable"
     assert "relay_runtime" not in unavailable
     assert "relay_artifacts" not in unavailable
@@ -1667,7 +1841,7 @@ def test_timeout_interrupts_native_turn_and_closes_sdk(
     output = invoke_once(codex_payload)
 
     client = mock_codex.instances[0]
-    assert output["error"]["code"] == "codex_timed_out"
+    assert output["error"]["code"] == "timeout"
     assert client.thread.handle.interrupted is True
     assert client.closed is True
 

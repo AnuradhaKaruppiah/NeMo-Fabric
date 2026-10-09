@@ -8,7 +8,7 @@ description = "Development environment for NVIDIA NeMo Fabric"
 requires-python = ">=3.11"
 dependencies = [
   "nemo-fabric",
-  "nemo-fabric-runtime == 0.4.0",
+  "nemo-fabric-runtime == 0.5.0",
 ]
 
 [project.optional-dependencies]
@@ -32,6 +32,10 @@ mini-swe-agent = [
   "nemo-fabric[mini-swe-agent]",
 ]
 
+openhands = [
+  "nemo-fabric[openhands]",
+]
+
 nooa = [
   "nemo-fabric[nooa]",
 ]
@@ -40,12 +44,16 @@ remote-agent = [
   "nemo-fabric[remote-agent]",
 ]
 
+openclaw = [
+  "nemo-fabric[openclaw]",
+]
+
 harbor = [
   "nemo-fabric[harbor]",
 ]
 
 hermes-agent = [
-  "nemo-fabric[hermes-agent]; python_version < '3.14'",
+  "nemo-fabric[hermes-agent]; python_version < '3.15'",
 ]
 
 relay = [
@@ -61,12 +69,13 @@ adapters = [
   # Install the deepagents adapter with its optional [relay] extra so the dev
   # and test environments exercise the SDK-native NeMo Relay integration.
   "nemo-fabric-adapters-deepagents[relay]",
-  "nemo-fabric-adapters-hermes; python_version < '3.14'",
-  "hermes-agent==0.21.0; python_version < '3.14'",
+  "nemo-fabric-adapters-hermes; python_version < '3.15'",
   # Install the mini-SWE-agent adapter with Relay so focused adapter tests cover
   # its optional subclass-based telemetry integration.
   "nemo-fabric-adapters-mini-swe-agent[relay]",
+  "nemo-fabric-adapters-openhands",
   "nemo-fabric-adapters-nooa; python_version >= '3.12' and python_version < '3.14'",
+  "nemo-fabric-adapters-openclaw",
   "nemo-fabric-adapters-remote-agent[harness]",
 ]
 
@@ -78,9 +87,11 @@ adapter-tests = [
   "nemo-fabric-adapters-claude[harness]",
   "nemo-fabric-adapters-codex[harness]",
   "nemo-fabric-adapters-deepagents[harness]",
-  "nemo-fabric-adapters-hermes[full]; python_version < '3.14'",
+  "nemo-fabric-adapters-hermes; python_version < '3.15'",
   "nemo-fabric-adapters-mini-swe-agent[harness]",
+  "nemo-fabric-adapters-openhands",
   "nemo-fabric-adapters-nooa[full]; python_version >= '3.12' and python_version < '3.14'",
+  "nemo-fabric-adapters-openclaw",
   "nemo-fabric-adapters-remote-agent[full]",
 ]
 
@@ -112,6 +123,7 @@ package = [
 ]
 
 test = [
+  "nemo-fabric-adapter-catalog",
   "fastapi~=0.138",
   "mcp>=1.28.1,<2.0",
   "mcp-server-time~=2026.7",
@@ -129,12 +141,9 @@ test = [
 [tool.uv]
 package = false
 default-groups = ["adapters", "collector", "dev", "test"]
-# Hermes v0.20.1 imports the top-level registration_lifecycle module but omits
-# it from setuptools' py-modules, so standard editable installs cannot import it.
-config-settings-package = { "hermes-agent" = { editable_mode = "compat" } }
 
 [tool.uv.sources]
-hermes-agent = { path = "external/hermes-agent", editable = true, marker = "python_version < '3.14'" }
+nemo-fabric-adapter-catalog = { path = "sdk/python/nemo-fabric-adapter-catalog", editable = true }
 nemo-fabric = { path = "sdk/python/nemo-fabric", editable = true }
 nemo-fabric-collector = { path = "sdk/python/nemo-fabric-collector", editable = true }
 nemo-fabric-runtime = { path = "sdk/python/nemo-fabric-runtime", editable = true }
@@ -145,7 +154,9 @@ nemo-fabric-adapters-codex = { path = "adapters/python/codex", editable = true }
 nemo-fabric-adapters-deepagents = { path = "adapters/python/deepagents", editable = true }
 nemo-fabric-adapters-hermes = { path = "adapters/python/hermes", editable = true }
 nemo-fabric-adapters-mini-swe-agent = { path = "adapters/python/mini-swe-agent", editable = true }
+nemo-fabric-adapters-openhands = { path = "adapters/python/openhands", editable = true }
 nemo-fabric-adapters-nooa = { path = "adapters/python/nooa", editable = true }
+nemo-fabric-adapters-openclaw = { path = "adapters/python/openclaw", editable = true }
 nemo-fabric-adapters-remote-agent = { path = "adapters/python/remote-agent", editable = true }
 
 [tool.pytest.ini_options]

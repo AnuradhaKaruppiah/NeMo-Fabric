@@ -29,6 +29,31 @@ from nemo_fabric_adapter_contract.pydantic_support import type_adapter
 ROOT = Path(__file__).resolve().parents[2]
 
 
+@pytest.mark.parametrize("includes_cache", [True, False, None])
+def test_usage_cache_semantics_round_trip(includes_cache):
+    usage = AgentUsage(
+        input_tokens=12,
+        cached_input_tokens=4,
+        input_tokens_include_cache=includes_cache,
+    )
+    restored = AgentUsage.from_mapping(usage.to_mapping())
+    assert restored.input_tokens == 12
+    assert restored.cached_input_tokens == 4
+    assert restored.input_tokens_include_cache is includes_cache
+
+
+@pytest.mark.parametrize("value", [-1, 1 << 64, True, 1.5])
+def test_usage_rejects_invalid_cache_counter(value):
+    with pytest.raises(ContractValidationError):
+        AgentUsage(cached_input_tokens=value)
+
+
+@pytest.mark.parametrize("value", [0, 1, "true"])
+def test_usage_rejects_invalid_cache_semantics(value):
+    with pytest.raises(ContractValidationError):
+        AgentUsage(input_tokens_include_cache=value)
+
+
 def test_agent_run_request_contains_only_southbound_request_fields():
     request = AgentRunRequest(
         input={"messages": [{"role": "user", "content": "hello"}]},
@@ -41,6 +66,7 @@ def test_agent_run_request_contains_only_southbound_request_fields():
     }
     assert {item.name for item in fields(AgentRunRequest)} == {
         "input",
+        "relay_session_root",
         "context",
         "extensions",
     }
@@ -200,3 +226,13 @@ def test_contract_dataclasses_validate_assignment():
 def test_agent_artifact_rejects_unsafe_paths(path: str):
     with pytest.raises(ContractValidationError, match="artifact path must be"):
         AgentArtifact(name="output", kind="file", path=path)
+
+
+def test_typed_session_root_round_trips_in_adapter_request():
+    root = "018f47a4-3af7-7d94-8e61-9f0f89b5d312"
+    request = AgentRunRequest(input="hello", relay_session_root=root)
+    assert request.to_mapping() == {"input": "hello", "relay_session_root": root}
+    assert AgentRunRequest.from_mapping(request.to_mapping()) == request
+    assert "relay_session_root" not in AgentRunRequest(input="hello").to_mapping()
+    with pytest.raises(ContractValidationError):
+        AgentRunRequest(input="hello", relay_session_root=123)

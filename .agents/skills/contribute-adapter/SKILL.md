@@ -45,12 +45,19 @@ Follow these repository-specific requirements after applying the public skill:
    `[tool.uv.sources]`, `python_projects` in `justfile`, applicable catalogs,
    and CI enumerations. Ship its descriptor under
    `share/nemo-fabric/adapters/<name>`.
-5. Regenerate lockfiles and inspect the root and leaf wheel metadata. Verify
+5. Update `examples/code_review_agent/` and `examples/harbor/calculator/` to
+   support the new adapter.
+6. If the new adapter provides a coding harness, update
+   `examples/harbor/swebench/` to support it. Skip this step for adapters with
+   non-coding harnesses.
+7. Regenerate lockfiles and inspect the root and leaf wheel metadata. Verify
    root-to-leaf delegation and every published leaf extra.
 
 Keep descriptor claims, implementation, focused tests, public documentation,
 catalog entries, and packaged metadata synchronized. Start with the narrowest
 truthful capability set.
+
+For usage changes, verify invocation-local accounting through the adapter contract and consumer SDK, including warm-session deltas, unknown counters, cache semantics, and unsuccessful results. Keep generated schemas and language bindings in parity; use the shared `cached_input_tokens` and `input_tokens_include_cache` fields instead of consumer-specific parsing of native output.
 
 For `instructions.system`, keep `config.system_instruction_modes`, planning
 behavior, direct adapter validation, and target-native composition synchronized.

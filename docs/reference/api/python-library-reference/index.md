@@ -11,7 +11,9 @@ SPDX-License-Identifier: Apache-2.0 -->
 ## Modules
 
 - [`nemo_fabric.client`](./nemo_fabric.client.md#module-nemo_fabricclient): Native Python client for resolving and running NVIDIA NeMo Fabric agents.
+- [`nemo_fabric.capabilities`](./nemo_fabric.capabilities.md#module-nemo_fabriccapabilities): Metadata-only adapter inspection for host-side admission.
 - [`nemo_fabric.runtime`](./nemo_fabric.runtime.md#module-nemo_fabricruntime): Runtime lifecycle support for the NVIDIA NeMo Fabric Python SDK.
+- [`nemo_fabric.service`](./nemo_fabric.service.md#module-nemo_fabricservice): Long-lived service lifecycle support for the NeMo Fabric Python SDK.
 - [`nemo_fabric.streaming`](./nemo_fabric.streaming.md#module-nemo_fabricstreaming): NVIDIA NeMo Relay streaming support for the NVIDIA NeMo Fabric Python SDK.
 - [`nemo_fabric.openai_streaming`](./nemo_fabric.openai_streaming.md#module-nemo_fabricopenai_streaming): Adapter-native OpenAI streaming for the NVIDIA NeMo Fabric Python SDK.
 - [`nemo_fabric.models`](./nemo_fabric.models.md#module-nemo_fabricmodels): Pydantic SDK models for NVIDIA NeMo Fabric configuration and requests.
@@ -21,8 +23,11 @@ SPDX-License-Identifier: Apache-2.0 -->
 ## Classes
 
 - [`client.Fabric`](./nemo_fabric.client.md#class-fabric): Primary Python entrypoint for NeMo Fabric.
+- [`capabilities.AdapterCapabilityProfile`](./nemo_fabric.capabilities.md#class-adaptercapabilityprofile): Declared support for a standalone runtime, not observed execution provenance.
 - [`runtime.Runtime`](./nemo_fabric.runtime.md#class-runtime): One logical, stateful harness execution.
 - [`runtime.RuntimeStatus`](./nemo_fabric.runtime.md#class-runtimestatus): Lifecycle state of a runtime.
+- [`service.Service`](./nemo_fabric.service.md#class-service): One prepared or attached long-lived adapter service.
+- [`service.ServiceStatus`](./nemo_fabric.service.md#class-servicestatus): Lifecycle state of a prepared or attached service.
 - [`streaming.InvokeStream`](./nemo_fabric.streaming.md#class-invokestream): Async iterator of raw ATOF records for one runtime invocation.
 - [`openai_streaming.OpenAIInvokeStream`](./nemo_fabric.openai_streaming.md#class-openaiinvokestream): Async iterator of OpenAI chat-completion chunks for one invocation.
 - [`models.DiscoveryConfig`](./nemo_fabric.models.md#class-discoveryconfig): Explicit local descriptor discovery paths.
@@ -69,9 +74,11 @@ SPDX-License-Identifier: Apache-2.0 -->
 - [`types.RunOutput`](./nemo_fabric.types.md#class-runoutput): Normalized adapter output.
 - [`types.RunPlan`](./nemo_fabric.types.md#class-runplan): Immutable execution plan produced before a runtime is started.
 - [`types.RunResult`](./nemo_fabric.types.md#class-runresult): Normalized terminal result from one NeMo Fabric invocation.
-- [`types.RunUsage`](./nemo_fabric.types.md#class-runusage): Normalized invocation usage reported by an adapter target.
+- [`types.RunUsage`](./nemo_fabric.types.md#class-runusage): Normalized invocation-local usage reported by an adapter target.
 - [`types.RuntimeCapabilities`](./nemo_fabric.types.md#class-runtimecapabilities): Operations declared by the resolved runtime and adapter.
 - [`types.RuntimeHandle`](./nemo_fabric.types.md#class-runtimehandle): Opaque identity and binding for one started runtime.
+- [`types.ServiceHandle`](./nemo_fabric.types.md#class-servicehandle): Opaque identity and binding for one prepared or attached service.
+- [`types.ServiceReference`](./nemo_fabric.types.md#class-servicereference): Reference to an already-running caller-owned service.
 - [`types.TelemetryRef`](./nemo_fabric.types.md#class-telemetryref): Reference to external or persisted telemetry for a run.
 - [`errors.FabricCapabilityError`](./nemo_fabric.errors.md#class-fabriccapabilityerror): Operation rejected by resolved runtime capabilities or implementation status.
 - [`errors.FabricConfigError`](./nemo_fabric.errors.md#class-fabricconfigerror): Invalid SDK input, request shape, factory, or resolved config.
@@ -82,7 +89,7 @@ SPDX-License-Identifier: Apache-2.0 -->
 
 ## Functions
 
-- No functions
+- [`capabilities.inspect_adapter`](./nemo_fabric.capabilities.md#function-inspect_adapter): Inspect a standalone runtime using descriptor metadata without loading its SDK.
 
 
 ---

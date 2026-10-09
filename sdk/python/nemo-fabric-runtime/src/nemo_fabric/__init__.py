@@ -4,6 +4,8 @@
 """Python SDK surface for NeMo Fabric."""
 
 from nemo_fabric.client import Fabric
+from nemo_fabric.capabilities import AdapterCapabilityProfile
+from nemo_fabric.capabilities import inspect_adapter
 from nemo_fabric.errors import FabricCapabilityError
 from nemo_fabric.errors import FabricConfigError
 from nemo_fabric.errors import FabricError
@@ -45,6 +47,8 @@ from nemo_fabric.models import WorkflowConfig
 from nemo_fabric.openai_streaming import OpenAIInvokeStream
 from nemo_fabric.runtime import Runtime
 from nemo_fabric.runtime import RuntimeStatus
+from nemo_fabric.service import Service
+from nemo_fabric.service import ServiceStatus
 from nemo_fabric.streaming import InvokeStream
 from nemo_fabric.types import AdapterInfo
 from nemo_fabric.types import ArtifactManifest
@@ -61,9 +65,12 @@ from nemo_fabric.types import RunResult
 from nemo_fabric.types import RunUsage
 from nemo_fabric.types import RuntimeCapabilities
 from nemo_fabric.types import RuntimeHandle
+from nemo_fabric.types import ServiceHandle
+from nemo_fabric.types import ServiceReference
 from nemo_fabric.types import TelemetryRef
 
 __all__ = [
+    "AdapterCapabilityProfile",
     "AdapterInfo",
     "ArtifactManifest",
     "ArtifactRef",
@@ -116,6 +123,10 @@ __all__ = [
     "RuntimeConfig",
     "Runtime",
     "RuntimeStatus",
+    "Service",
+    "ServiceHandle",
+    "ServiceReference",
+    "ServiceStatus",
     "SkillConfig",
     "TelemetryConfig",
     "TelemetryProviderConfig",
@@ -123,4 +134,5 @@ __all__ = [
     "ToolsConfig",
     "ToolDefinitionConfig",
     "WorkflowConfig",
+    "inspect_adapter",
 ]

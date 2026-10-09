@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 from inspect import signature
 from pathlib import Path
 from typing import Any
@@ -54,6 +56,10 @@ from nemo_fabric import RuntimeCapabilities
 from nemo_fabric import RuntimeConfig
 from nemo_fabric import EnvironmentHandle
 from nemo_fabric import RuntimeHandle
+from nemo_fabric import Service
+from nemo_fabric import ServiceHandle
+from nemo_fabric import ServiceReference
+from nemo_fabric import ServiceStatus
 from nemo_fabric import SkillConfig
 from nemo_fabric import TelemetryConfig
 from nemo_fabric import ToolDefinitionConfig
@@ -955,7 +961,6 @@ def test_fabric_config_authors_first_class_relay_observability():
             "atif": {
                 "enabled": True,
                 "agent_name": "fabric-tests",
-                "model_name": "unknown",
                 "output_directory": "./artifacts/relay",
                 "filename_template": "trajectory-{session_id}.atif.json",
             },
@@ -990,6 +995,16 @@ def test_fabric_config_authors_first_class_relay_observability():
             "unsupported_value": "error",
         },
     }
+
+
+def test_relay_atif_model_name_serializes_only_when_explicit():
+    assert "model_name" not in RelayAtifConfig(enabled=True).to_mapping()
+    assert (
+        RelayAtifConfig(enabled=True, model_name="trajectory-model").to_mapping()[
+            "model_name"
+        ]
+        == "trajectory-model"
+    )
 
 
 @pytest.mark.parametrize("version", [1, 2, 4, True, 3.0, "3"])
@@ -1725,6 +1740,18 @@ def _runtime() -> dict[str, Any]:
     }
 
 
+def _service() -> dict[str, Any]:
+    return {
+        "service_id": "service-1",
+        "service_binding": "fabric-service-binding-test",
+        "adapter_id": "test.fabric.shim",
+        "service_type": "test_service",
+        "ownership": "fabric_owned",
+        "connection": {"endpoint": "http://127.0.0.1:1234"},
+        "metadata": {"ready": True},
+    }
+
+
 def _run_result(**updates: Any) -> dict[str, Any]:
     result = {
         "agent_name": "demo",
@@ -1757,6 +1784,9 @@ class NativeRecorder:
         self.config_base_dir_calls: list[str | None] = []
         self.stopped = 0
         self.fail_invoke = False
+        self.prepared = 0
+        self.attached: list[dict[str, Any]] = []
+        self.released = 0
 
     def plan_config(
         self,
@@ -1770,6 +1800,31 @@ class NativeRecorder:
     def start_runtime(self, plan_json: str) -> str:
         assert json.loads(plan_json)["agent_name"] == "demo"
         return json.dumps(_runtime())
+
+    def prepare_service(self, plan_json: str) -> str:
+        assert json.loads(plan_json)["agent_name"] == "demo"
+        self.prepared += 1
+        return json.dumps(_service())
+
+    def attach_service(self, plan_json: str, reference_json: str) -> str:
+        assert json.loads(plan_json)["agent_name"] == "demo"
+        self.attached.append(json.loads(reference_json))
+        service = _service()
+        service["ownership"] = "caller_owned"
+        return json.dumps(service)
+
+    def start_runtime_with_service(self, plan_json: str, service_json: str) -> str:
+        assert json.loads(plan_json)["agent_name"] == "demo"
+        service = json.loads(service_json)
+        runtime = _runtime()
+        runtime["service_id"] = service["service_id"]
+        return json.dumps(runtime)
+
+    def release_service(self, plan_json: str, service_json: str) -> str:
+        assert json.loads(plan_json)["agent_name"] == "demo"
+        assert json.loads(service_json)["service_id"] == "service-1"
+        self.released += 1
+        return json.dumps([])
 
     def invoke_runtime(
         self, plan_json: str, runtime_json: str, request_json: str
@@ -1895,6 +1950,17 @@ def test_run_request_constructor_generates_request_metadata():
     assert request.context == {}
 
 
+def test_run_request_has_typed_relay_session_root():
+    root = "018f47a4-3af7-7d94-8e61-9f0f89b5d312"
+    request = RunRequest(input="hello", relay_session_root=root)
+    assert request.relay_session_root == root
+    assert request.to_mapping()["relay_session_root"] == root
+    assert "relay_session_root" not in request.extra_fields
+    assert "relay_session_root" not in RunRequest(input="hello").to_mapping()
+    with pytest.raises(ValidationError):
+        RunRequest(input="hello", relay_session_root=123)
+
+
 def test_run_request_preserves_extension_fields():
     request = RunRequest(
         input={"messages": [{"role": "user", "content": "hello"}]},
@@ -1949,6 +2015,8 @@ def test_run_result_wraps_normalized_usage():
             output="done",
             usage={
                 "input_tokens": 3,
+                "cached_input_tokens": 1,
+                "input_tokens_include_cache": True,
                 "output_tokens": 5,
                 "total_tokens": 8,
                 "cost_usd": 0.25,
@@ -1959,29 +2027,40 @@ def test_run_result_wraps_normalized_usage():
 
     assert isinstance(result.usage, RunUsage)
     assert result.usage.total_tokens == 8
+    assert result.usage.cached_input_tokens == 1
+    assert result.usage.input_tokens_include_cache is True
     assert result.usage.cost_usd == 0.25
     assert isinstance(result.usage.cost_usd, float)
     assert result.usage.metadata == {"provider": "test"}
 
 
+@pytest.mark.parametrize(
+    "field", ["input_tokens", "cached_input_tokens", "output_tokens", "total_tokens"]
+)
 @pytest.mark.parametrize("value", [-1, True, 1.5])
-def test_run_usage_rejects_invalid_token_counts(value):
+def test_run_usage_rejects_invalid_token_counts(field, value):
     with pytest.raises(FabricConfigError, match="nonnegative integer"):
-        RunUsage.from_mapping({"input_tokens": value})
+        RunUsage.from_mapping({field: value})
 
 
-@pytest.mark.parametrize("field", ["input_tokens", "output_tokens", "total_tokens"])
+@pytest.mark.parametrize(
+    "field", ["input_tokens", "cached_input_tokens", "output_tokens", "total_tokens"]
+)
 def test_run_usage_rejects_token_counts_above_uint64(field):
     with pytest.raises(FabricConfigError, match="no greater than"):
         RunUsage.from_mapping({field: 1 << 64})
 
 
-@pytest.mark.parametrize(
-    "value", [-1, True, float("nan"), float("inf"), float("-inf")]
-)
+@pytest.mark.parametrize("value", [-1, True, float("nan"), float("inf"), float("-inf")])
 def test_run_usage_rejects_invalid_costs(value):
     with pytest.raises(FabricConfigError, match="finite"):
         RunUsage.from_mapping({"cost_usd": value})
+
+
+@pytest.mark.parametrize("value", [0, 1, "true", [], {}])
+def test_run_usage_rejects_nonboolean_cache_semantics(value):
+    with pytest.raises(FabricConfigError, match="boolean"):
+        RunUsage.from_mapping({"input_tokens_include_cache": value})
 
 
 def test_run_result_exposes_detached_json_values():
@@ -2221,6 +2300,7 @@ async def test_runtime_invoke_accepts_run_request():
         request=RunRequest(
             input="hello",
             request_id="request-2",
+            relay_session_root="018f47a4-3af7-7d94-8e61-9f0f89b5d312",
             context={"job_id": "job-2"},
             overrides={"request": True, "limits": {"request": 1}},
         ),
@@ -2231,6 +2311,7 @@ async def test_runtime_invoke_accepts_run_request():
     assert native.requests[0] == {
         "input": "hello",
         "request_id": "request-2",
+        "relay_session_root": "018f47a4-3af7-7d94-8e61-9f0f89b5d312",
         "context": {"job_id": "job-2"},
         "overrides": {
             "runtime": True,
@@ -2351,6 +2432,233 @@ async def test_start_runtime_returns_runtime_with_typed_handle():
 
     assert runtime.runtime_id == "runtime-1"
     assert isinstance(runtime.handle, RuntimeHandle)
+
+
+async def test_service_lifecycle_prepares_connects_and_releases():
+    native = NativeRecorder()
+    client = NativeClient(native)
+    service = await client.prepare_service(_fabric_config())
+
+    assert isinstance(service, Service)
+    assert isinstance(service.handle, ServiceHandle)
+    assert service.handle.adapter_id == "test.fabric.shim"
+    assert service.status is ServiceStatus.ACTIVE
+    async with await client.start_runtime(_fabric_config(), service=service) as runtime:
+        assert runtime.handle.service_id == service.service_id
+
+    await service.release()
+    await service.release()
+    assert service.status is ServiceStatus.RELEASED
+    assert native.prepared == 1
+    assert native.released == 1
+
+
+async def test_attach_service_passes_typed_non_secret_reference():
+    native = NativeRecorder()
+    client = NativeClient(native)
+    reference = ServiceReference.from_mapping(
+        {
+            "adapter_id": "test.fabric.shim",
+            "service_type": "test_service",
+            "connection": {
+                "endpoint": "http://127.0.0.1:1234",
+                "token_env": "TEST_SERVICE_TOKEN",
+            },
+        }
+    )
+
+    service = await client.attach_service(_fabric_config(), reference)
+    try:
+        assert service.handle.ownership == "caller_owned"
+        assert native.attached == [reference.to_mapping()]
+    finally:
+        await service.release()
+
+
+@pytest.mark.parametrize("operation", ["prepare", "attach"])
+async def test_invalid_native_service_handle_is_released(operation: str):
+    class InvalidHandleRecorder(NativeRecorder):
+        @staticmethod
+        def _invalid_service() -> str:
+            service = _service()
+            service["service_type"] = ""
+            return json.dumps(service)
+
+        def prepare_service(self, plan_json: str) -> str:
+            self.prepared += 1
+            return self._invalid_service()
+
+        def attach_service(self, plan_json: str, reference_json: str) -> str:
+            self.attached.append(json.loads(reference_json))
+            return self._invalid_service()
+
+    native = InvalidHandleRecorder()
+    client = NativeClient(native)
+
+    with pytest.raises(FabricConfigError, match="service type"):
+        if operation == "prepare":
+            await client.prepare_service(_fabric_config())
+        else:
+            await client.attach_service(
+                _fabric_config(),
+                ServiceReference.from_mapping(
+                    {
+                        "adapter_id": "test.fabric.shim",
+                        "service_type": "test_service",
+                    }
+                ),
+            )
+
+    assert native.released == 1
+
+
+async def test_service_release_prevents_concurrent_runtime_start():
+    release_started = threading.Event()
+    finish_release = threading.Event()
+
+    class BlockingReleaseRecorder(NativeRecorder):
+        def __init__(self) -> None:
+            super().__init__()
+            self.service_starts = 0
+
+        def start_runtime_with_service(self, plan_json: str, service_json: str) -> str:
+            self.service_starts += 1
+            return super().start_runtime_with_service(plan_json, service_json)
+
+        def release_service(self, plan_json: str, service_json: str) -> str:
+            release_started.set()
+            assert finish_release.wait(timeout=5)
+            return super().release_service(plan_json, service_json)
+
+    native = BlockingReleaseRecorder()
+    client = NativeClient(native)
+    service = await client.prepare_service(_fabric_config())
+    release = asyncio.create_task(service.release())
+    while not release_started.is_set():
+        await asyncio.sleep(0)
+    assert service.status is ServiceStatus.RELEASING
+
+    start = asyncio.create_task(client.start_runtime(_fabric_config(), service=service))
+    await asyncio.sleep(0)
+    assert native.service_starts == 0
+    finish_release.set()
+    await release
+    with pytest.raises(FabricConfigError, match="service must be active"):
+        await start
+
+    assert native.service_starts == 0
+
+
+async def test_runtime_planning_holds_service_release_guard():
+    planning_started = threading.Event()
+    finish_planning = threading.Event()
+
+    class BlockingPlanRecorder(NativeRecorder):
+        block_planning = False
+
+        def plan_config(
+            self,
+            config_json: str,
+            base_dir: str | None = None,
+        ) -> str:
+            if self.block_planning:
+                planning_started.set()
+                assert finish_planning.wait(timeout=5)
+            return super().plan_config(config_json, base_dir)
+
+    native = BlockingPlanRecorder()
+    client = NativeClient(native)
+    service = await client.prepare_service(_fabric_config())
+    native.block_planning = True
+    start = asyncio.create_task(client.start_runtime(_fabric_config(), service=service))
+    while not planning_started.is_set():
+        await asyncio.sleep(0)
+
+    release = asyncio.create_task(service.release())
+    await asyncio.sleep(0)
+    assert service.status is ServiceStatus.RELEASING
+    assert native.released == 0
+
+    finish_planning.set()
+    runtime = await start
+    await release
+    await runtime.stop()
+    assert native.released == 1
+
+
+async def test_failed_service_release_blocks_start_and_can_be_retried():
+    class FailOnceReleaseRecorder(NativeRecorder):
+        def __init__(self) -> None:
+            super().__init__()
+            self.release_attempts = 0
+
+        def release_service(self, plan_json: str, service_json: str) -> str:
+            self.release_attempts += 1
+            if self.release_attempts == 1:
+                raise RuntimeError("release failed")
+            return super().release_service(plan_json, service_json)
+
+    native = FailOnceReleaseRecorder()
+    client = NativeClient(native)
+    service = await client.prepare_service(_fabric_config())
+
+    with pytest.raises(FabricRuntimeError, match="release failed"):
+        await service.release()
+    assert service.status is ServiceStatus.FAILED
+    with pytest.raises(FabricConfigError, match="service must be active"):
+        await client.start_runtime(_fabric_config(), service=service)
+
+    await service.release()
+    assert service.status is ServiceStatus.RELEASED
+    assert native.release_attempts == 2
+
+
+async def test_service_in_use_release_keeps_service_active():
+    class ServiceInUseError(RuntimeError):
+        pass
+
+    class ServiceInUseRecorder(NativeRecorder):
+        def __init__(self) -> None:
+            super().__init__()
+            self.ServiceInUseError = ServiceInUseError
+
+        def release_service(self, plan_json: str, service_json: str) -> str:
+            raise self.ServiceInUseError(
+                'service `service-1` has active runtimes: ["runtime-1"]'
+            )
+
+    service = await NativeClient(ServiceInUseRecorder()).prepare_service(
+        _fabric_config()
+    )
+
+    with pytest.raises(FabricRuntimeError, match="active runtimes"):
+        await service.release()
+
+    assert service.status is ServiceStatus.ACTIVE
+
+
+async def test_cancelled_service_prepare_releases_completed_native_service():
+    started = threading.Event()
+    finish = threading.Event()
+
+    class BlockingPrepareRecorder(NativeRecorder):
+        def prepare_service(self, plan_json: str) -> str:
+            started.set()
+            assert finish.wait(timeout=5)
+            return super().prepare_service(plan_json)
+
+    native = BlockingPrepareRecorder()
+    task = asyncio.create_task(NativeClient(native).prepare_service(_fabric_config()))
+    while not started.is_set():
+        await asyncio.sleep(0)
+
+    task.cancel()
+    finish.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert native.prepared == 1
+    assert native.released == 1
 
 
 async def test_runtime_state_errors_use_sdk_error_hierarchy():

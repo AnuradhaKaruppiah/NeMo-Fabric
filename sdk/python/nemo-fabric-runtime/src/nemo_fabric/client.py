@@ -8,26 +8,32 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
+import math
 import os
 from collections.abc import Mapping
 from contextlib import AsyncExitStack
 from typing import Any
 
 from nemo_fabric._collector_client import _AtofCollectorClient
+from nemo_fabric.capabilities import _verify_adapter_descriptor
 from nemo_fabric.errors import (
     FabricConfigError,
     FabricError,
     FabricNativeUnavailableError,
     FabricRuntimeError,
+    _runtime_error,
 )
 from nemo_fabric.models import FabricConfig, RunRequest
 from nemo_fabric.runtime import (
     Runtime,
+    _PI_ADAPTER_ID,
     _call_blocking,
     _json_mapping,
     _run_native_lifecycle,
     _run_request_payload,
 )
+from nemo_fabric.service import Service
+from nemo_fabric.service import ServiceStatus
 from nemo_fabric.streaming import (
     _configured_stream_sink,
     _relay_enabled,
@@ -39,12 +45,17 @@ from nemo_fabric.types import (
     EnvironmentReference,
     RunPlan,
     RunResult,
+    ServiceHandle,
+    ServiceReference,
 )
 
 try:
     _native = importlib.import_module("nemo_fabric._native")
 except ImportError:
     _native = None
+
+
+_COLLECTOR_CONTROL_TIMEOUT_MARGIN_SECONDS = 1.0
 
 
 class Fabric:
@@ -157,6 +168,7 @@ class Fabric:
         base_dir: str | os.PathLike[str] | None = None,
         input: Any = None,
         request: RunRequest | None = None,
+        expected_descriptor_sha256: str | None = None,
     ) -> RunResult:
         """Execute one complete start, invoke, and stop lifecycle.
 
@@ -170,6 +182,8 @@ class Fabric:
             base_dir: Base directory for resolving relative paths.
             input: JSON-compatible invocation input.
             request: Complete validated ``RunRequest``.
+            expected_descriptor_sha256: Optional host-inspection fingerprint.
+                Reject descriptor drift before starting the runtime.
 
         Returns:
             The normalized ``RunResult``, including output, artifacts,
@@ -185,6 +199,8 @@ class Fabric:
         """
 
         plan = await _call_blocking(lambda: self.plan(config, base_dir=base_dir))
+        if expected_descriptor_sha256 is not None:
+            _verify_adapter_descriptor(plan, expected_descriptor_sha256)
         request_payload = _run_request_payload(
             input=input,
             request=request,
@@ -202,6 +218,9 @@ class Fabric:
         overrides: Mapping[str, Any] | None = None,
         streaming: bool = False,
         launch_collector: bool | None = None,
+        completion_wait_timeout: float = 1.0,
+        service: Service | None = None,
+        expected_descriptor_sha256: str | None = None,
     ) -> Runtime:
         """Start a stateful runtime for one or more ordered invocations.
 
@@ -209,7 +228,9 @@ class Fabric:
         recursively merged below invocation-scoped overrides. With NVIDIA NeMo
         Relay enabled, ``streaming=True`` uses collector-backed streaming.
         By default, streaming starts an embedded collector. Set
-        ``launch_collector=False`` to use an externally managed collector.
+        ``launch_collector=False`` to use an externally managed collector. Pi
+        requires the embedded collector because its ATOF records do not carry
+        NeMo Fabric request IDs.
 
         Args:
             config: Complete typed ``FabricConfig``.
@@ -220,8 +241,17 @@ class Fabric:
                 streaming for ``Runtime.invoke_stream()``.
             launch_collector: Whether to launch an embedded collector. ``None``
                 defaults to ``True`` when streaming is enabled. ``False`` uses
-                an externally managed collector. This argument cannot be set
-                unless ``streaming=True``.
+                an externally managed collector. Pi does not support ``False``.
+                This argument cannot be set unless ``streaming=True``.
+            completion_wait_timeout: Maximum seconds the embedded collector
+                waits for a Pi ``agent_settled`` marker after invocation. Increase
+                this value when Relay delivery can be delayed. This value is
+                ignored unless Pi streaming uses the embedded collector.
+            service: Optional prepared or attached service. When supplied, the
+                runtime connects to that service instead of creating its own.
+            expected_descriptor_sha256: Optional descriptor fingerprint from host
+                inspection. Matching metadata does not qualify an attached service's
+                deployment-owned skills or MCP configuration.
 
         Returns:
             An active ``Runtime``. Use it as an asynchronous context
@@ -230,7 +260,8 @@ class Fabric:
         Raises:
             FabricConfigError: If inputs or overrides are invalid, streaming is
                 requested without NeMo Relay enabled, ``launch_collector`` is
-                set without streaming, or an external collector has no sink.
+                set without streaming, Pi is configured with an external
+                collector, or an external collector has no sink.
             FabricNativeUnavailableError: If the native extension is not
                 installed.
             FabricRuntimeError: If runtime startup fails.
@@ -242,6 +273,9 @@ class Fabric:
             overrides=overrides,
             streaming=streaming,
             launch_collector=launch_collector,
+            completion_wait_timeout=completion_wait_timeout,
+            service=service,
+            expected_descriptor_sha256=expected_descriptor_sha256,
         )
 
     async def prepare_environment(
@@ -399,11 +433,19 @@ class Fabric:
         overrides: Mapping[str, Any] | None = None,
         streaming: bool = False,
         launch_collector: bool | None = None,
+        completion_wait_timeout: float = 1.0,
+        service: Service | None = None,
+        expected_descriptor_sha256: str | None = None,
     ) -> Runtime:
         runtime_overrides = _json_mapping(overrides, "runtime overrides")
+        if service is not None and not isinstance(service, Service):
+            raise FabricConfigError("service must be a Service")
         collector: AsyncExitStack | None = None
         collector_client: _AtofCollectorClient | None = None
         runtime_config = config
+        uses_pi_adapter = (
+            config.harness is not None and config.harness.adapter_id == _PI_ADAPTER_ID
+        )
 
         async def close_streaming_resources() -> None:
             try:
@@ -417,6 +459,48 @@ class Fabric:
             raise FabricConfigError("launch_collector requires streaming=True")
         if streaming and not _relay_enabled(config):
             raise FabricConfigError("streaming requires Relay telemetry to be enabled")
+        if (
+            streaming
+            and launch_collector is not False
+            and uses_pi_adapter
+            and (
+                isinstance(completion_wait_timeout, bool)
+                or not isinstance(completion_wait_timeout, (int, float))
+                or not math.isfinite(completion_wait_timeout)
+                or completion_wait_timeout <= 0
+            )
+        ):
+            raise FabricConfigError(
+                "completion_wait_timeout must be a finite number greater than zero"
+            )
+        effective_completion_wait_timeout = (
+            float(completion_wait_timeout)
+            if streaming and launch_collector is not False and uses_pi_adapter
+            else 1.0
+        )
+        if streaming and launch_collector is False and uses_pi_adapter:
+            raise FabricConfigError(
+                "Pi Relay streaming requires the embedded collector; "
+                "launch_collector=False is not supported"
+            )
+        service_guard = AsyncExitStack()
+        service_handle: dict[str, Any] | None = None
+
+        async def close_start_resources() -> None:
+            try:
+                await close_streaming_resources()
+            finally:
+                await service_guard.aclose()
+
+        try:
+            if service is not None:
+                await service_guard.enter_async_context(service._runtime_start())
+                if service.status is not ServiceStatus.ACTIVE:
+                    raise FabricConfigError("service must be active")
+                service_handle = service.handle.to_mapping()
+        except BaseException:
+            await service_guard.aclose()
+            raise
         if streaming:
             try:
                 if launch_collector is not False:
@@ -429,7 +513,12 @@ class Fabric:
                         ) from error
                     collector = AsyncExitStack()
                     collector_base_url = await collector.enter_async_context(
-                        serve_collector(host="127.0.0.1", port=0, standalone=True)
+                        serve_collector(
+                            host="127.0.0.1",
+                            port=0,
+                            standalone=True,
+                            completion_wait_timeout=effective_completion_wait_timeout,
+                        )
                     )
                     runtime_config = _with_stream_sink(config, collector_base_url)
                     stream_sink = _configured_stream_sink(runtime_config)
@@ -442,46 +531,64 @@ class Fabric:
                             "external collector streaming requires a configured "
                             "nemo-fabric-stream collector sink"
                         )
-                collector_client = _AtofCollectorClient.from_sink(stream_sink)
+                collector_client = _AtofCollectorClient.from_sink(
+                    stream_sink,
+                    timeout_seconds=(
+                        max(
+                            stream_sink.timeout_millis / 1000,
+                            effective_completion_wait_timeout
+                            + _COLLECTOR_CONTROL_TIMEOUT_MARGIN_SECONDS,
+                        )
+                        if launch_collector is not False
+                        else None
+                    ),
+                )
                 if runtime_config is config:
                     runtime_config = config.model_copy(deep=True)
                 runtime_stream_sink = _configured_stream_sink(runtime_config)
                 if runtime_stream_sink is not None:
-                    runtime_stream_sink.url = (
-                        f"{collector_client.base_url}/v1/atof"
-                    )
+                    runtime_stream_sink.url = f"{collector_client.base_url}/v1/atof"
             except asyncio.CancelledError:
-                await close_streaming_resources()
+                await close_start_resources()
                 raise
             except FabricError:
-                await close_streaming_resources()
+                await close_start_resources()
                 raise
             except Exception as error:
-                await close_streaming_resources()
+                await close_start_resources()
                 raise FabricRuntimeError(
                     str(error),
                     stage="start",
                     code="collector_start_failed",
                 ) from error
+            except BaseException:
+                await close_start_resources()
+                raise
 
         try:
             plan = await _call_blocking(
                 lambda: self.plan(runtime_config, base_dir=base_dir)
             )
+            if expected_descriptor_sha256 is not None:
+                _verify_adapter_descriptor(plan, expected_descriptor_sha256)
             method = "start_runtime_in" if environment is not None else "start_runtime"
             native = self._require_native_module(method)
         except BaseException:
-            await close_streaming_resources()
+            await close_start_resources()
             raise
         started_runtime: dict[str, Any] | None = None
 
         def start() -> dict[str, Any]:
             nonlocal started_runtime
             plan_json = json.dumps(plan.to_mapping())
-            if environment is None:
-                raw = native.start_runtime(plan_json)
-            else:
+            if environment is not None:
                 raw = native.start_runtime_in(plan_json, _environment_json(environment))
+            elif service_handle is not None:
+                raw = native.start_runtime_with_service(
+                    plan_json, json.dumps(service_handle)
+                )
+            else:
+                raw = native.start_runtime(plan_json)
             started_runtime = json.loads(raw)
             return started_runtime
 
@@ -500,14 +607,18 @@ class Fabric:
                     )
                 except Exception:
                     pass
-            await close_streaming_resources()
+            await close_start_resources()
             raise
         except FabricError:
-            await close_streaming_resources()
+            await close_start_resources()
             raise
         except Exception as error:
-            await close_streaming_resources()
-            raise FabricRuntimeError(str(error), stage="start") from error
+            await close_start_resources()
+            raise _runtime_error(error, stage="start") from error
+        except BaseException:
+            await close_start_resources()
+            raise
+        await service_guard.aclose()
         return Runtime(
             client=self,
             plan=plan,
@@ -516,6 +627,114 @@ class Fabric:
             collector=collector,
             collector_client=collector_client,
         )
+
+    async def prepare_service(
+        self,
+        config: FabricConfig,
+        *,
+        base_dir: str | os.PathLike[str] | None = None,
+    ) -> Service:
+        """Create and supervise a Fabric-owned long-lived service.
+
+        The selected adapter maps the normalized configuration into its service
+        configuration. The returned handle is process-local and can be shared
+        by multiple runtimes created from the same resolved plan.
+
+        Args:
+            config: Complete typed ``FabricConfig``.
+            base_dir: Base directory for resolving relative paths.
+
+        Returns:
+            An active Fabric-owned ``Service``. Use it as an asynchronous
+            context manager to guarantee shutdown.
+
+        Raises:
+            FabricConfigError: If planning or adapter configuration is invalid.
+            FabricNativeUnavailableError: If the native extension is not
+                installed.
+            FabricRuntimeError: If service startup fails.
+        """
+
+        plan = await _call_blocking(lambda: self.plan(config, base_dir=base_dir))
+        native = self._require_native_module("prepare_service")
+        started_service: dict[str, Any] | None = None
+
+        def prepare() -> dict[str, Any]:
+            nonlocal started_service
+            started_service = json.loads(
+                native.prepare_service(json.dumps(plan.to_mapping()))
+            )
+            return started_service
+
+        try:
+            handle = ServiceHandle.from_mapping(await _call_blocking(prepare))
+        except BaseException as error:
+            await _release_registered_service(native, plan, started_service)
+            if isinstance(error, (asyncio.CancelledError, FabricError)):
+                raise
+            if isinstance(error, Exception):
+                raise _runtime_error(error, stage="start") from error
+            raise
+        return Service(client=self, plan=plan, service=handle)
+
+    async def attach_service(
+        self,
+        config: FabricConfig,
+        reference: ServiceReference,
+        *,
+        base_dir: str | os.PathLike[str] | None = None,
+    ) -> Service:
+        """Validate and attach to a caller-owned long-lived service.
+
+        The adapter validates the reference against the normalized
+        configuration and writes any resolved credentials only to private,
+        process-local connection material. Releasing the returned service
+        detaches NeMo Fabric without stopping the caller-owned service.
+
+        Args:
+            config: Complete typed ``FabricConfig``.
+            reference: Adapter-specific endpoint and credential references.
+                Do not include credential values.
+            base_dir: Base directory for resolving relative paths.
+
+        Returns:
+            An active caller-owned ``Service``. Use it as an asynchronous
+            context manager to guarantee detach.
+
+        Raises:
+            FabricConfigError: If the reference, plan, or adapter configuration
+                is invalid.
+            FabricNativeUnavailableError: If the native extension is not
+                installed.
+            FabricRuntimeError: If attachment or validation fails.
+        """
+
+        if not isinstance(reference, ServiceReference):
+            raise FabricConfigError("reference must be a ServiceReference")
+        plan = await _call_blocking(lambda: self.plan(config, base_dir=base_dir))
+        native = self._require_native_module("attach_service")
+        attached_service: dict[str, Any] | None = None
+
+        def attach() -> dict[str, Any]:
+            nonlocal attached_service
+            attached_service = json.loads(
+                native.attach_service(
+                    json.dumps(plan.to_mapping()),
+                    json.dumps(reference.to_mapping()),
+                )
+            )
+            return attached_service
+
+        try:
+            handle = ServiceHandle.from_mapping(await _call_blocking(attach))
+        except BaseException as error:
+            await _release_registered_service(native, plan, attached_service)
+            if isinstance(error, (asyncio.CancelledError, FabricError)):
+                raise
+            if isinstance(error, Exception):
+                raise _runtime_error(error, stage="start") from error
+            raise
+        return Service(client=self, plan=plan, service=handle)
 
     def _native_module(self) -> Any | None:
         return _native
@@ -566,3 +785,25 @@ def _environment_reference_json(reference: EnvironmentReference) -> str:
 
 def _base_dir_arg(base_dir: str | os.PathLike[str] | None) -> str | None:
     return None if base_dir is None else os.fspath(base_dir)
+
+
+async def _release_registered_service(
+    native: Any,
+    plan: RunPlan,
+    service: dict[str, Any] | None,
+) -> None:
+    """Best-effort cleanup after native registration but before SDK handoff."""
+
+    if service is None:
+        return
+    try:
+        await _call_blocking(
+            lambda: json.loads(
+                native.release_service(
+                    json.dumps(plan.to_mapping()),
+                    json.dumps(service),
+                )
+            )
+        )
+    except Exception:
+        pass

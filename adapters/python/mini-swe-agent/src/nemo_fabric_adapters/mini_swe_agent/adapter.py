@@ -96,6 +96,10 @@ class MiniSweAgentRuntime:
             model_kwargs["api_base"] = model.base_url
         if model.temperature is not None:
             model_kwargs["temperature"] = model.temperature
+        if model.top_p is not None:
+            model_kwargs["top_p"] = model.top_p
+        if model.max_tokens is not None:
+            model_kwargs["max_tokens"] = model.max_tokens
         self._model = LitellmModel(
             model_name=(
                 model.model if "/" in model.model else f"{model.provider}/{model.model}"
@@ -127,7 +131,9 @@ class MiniSweAgentRuntime:
         inherited_quarantine = self._telemetry_quarantine is not None
         telemetry_errors: list[str] = []
         if self._relay_enabled:
-            result, telemetry_errors = await self._run_with_relay(task, context)
+            result, telemetry_errors = await self._run_with_relay(
+                task, context, request.relay_session_root
+            )
         else:
             result = await self._run_agent(task)
         failed = result.get("exit_status") != "Submitted"
@@ -184,6 +190,7 @@ class MiniSweAgentRuntime:
         self,
         task: str,
         context: contract.RuntimeContext,
+        session_root: str | None,
     ) -> tuple[dict[str, Any], list[str]]:
         if self._telemetry_quarantine is not None:
             self._agent.begin_relay_invocation(None)
@@ -199,12 +206,12 @@ class MiniSweAgentRuntime:
         try:
             common_utils.reject_ambient_relay_plugin_config()
             assert self._relay_plugin_config is not None
-            async with self._relay_plugin.plugin(
+            async with self._relay_plugin.activate(
                 self._relay_plugin_config
-            ) as activation_report:
-                common_utils.reject_inherited_relay_plugin_config(activation_report)
+            ) as activation:
+                common_utils.reject_inherited_relay_plugin_config(activation.report)
                 request_context, metadata = common_utils.relay_request_context(
-                    context.request_id
+                    context.request_id, session_root
                 )
                 metadata["nemo_fabric_invocation_id"] = context.invocation_id
                 with (

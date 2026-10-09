@@ -126,6 +126,8 @@ def mini_payload_fixture(tmp_path: Path) -> dict:
                     "api_key_env": "TEST_MINI_API_KEY",
                     "base_url": "https://example.test/v1",
                     "temperature": 0.2,
+                    "top_p": 0.8,
+                    "max_tokens": 256,
                 }
             },
             "runtime": {"max_turns": 3},
@@ -173,7 +175,7 @@ def mock_relay_fixture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict:
     @asynccontextmanager
     async def plugin_context(config):
         calls["plugin_configs"].append(config)
-        yield {"diagnostics": []}
+        yield SimpleNamespace(report={"config": {"diagnostics": []}})
 
     @contextmanager
     def request_scope(name, scope_type, **kwargs):
@@ -214,7 +216,7 @@ def mock_relay_fixture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict:
     def tool_end(handle, output, **kwargs):
         calls["tool_ends"].append((handle, output, kwargs))
 
-    monkeypatch.setattr(nemo_relay.plugin, "plugin", plugin_context)
+    monkeypatch.setattr(nemo_relay.plugin, "activate", plugin_context)
     monkeypatch.setattr(nemo_relay, "PropagationContext", propagation_context)
     monkeypatch.setattr(
         nemo_relay,
@@ -263,6 +265,8 @@ def test_mini_swe_agent_descriptor_is_narrow_and_versioned():
             "models",
             "models.base_url",
             "models.temperature",
+            "models.top_p",
+            "models.max_tokens",
             "instructions.system",
             "runtime.max_turns",
         ],
@@ -309,6 +313,8 @@ async def test_mini_swe_agent_maps_config_and_returns_normalized_output(
             "api_key": "test-key",
             "api_base": "https://example.test/v1",
             "temperature": 0.2,
+            "top_p": 0.8,
+            "max_tokens": 256,
         },
     )
     mock_mini["environment_factory"].assert_called_once_with(timeout=45)
@@ -458,6 +464,80 @@ async def test_uuid_request_id_seeds_relay_propagation(
         "nemo_fabric_request_id": request_id,
         "nemo_fabric_invocation_id": "mini-invocation",
     }
+
+
+SESSION_ROOT = "018f47a4-0000-7d94-8e61-9f0f89b5d312"
+REQUEST_UUID = "018f47a4-3af7-7d94-8e61-9f0f89b5d312"
+
+
+@pytest.mark.parametrize(
+    ("request_id", "expected_parent"),
+    [(REQUEST_UUID, REQUEST_UUID), ("request-1", SESSION_ROOT)],
+)
+async def test_typed_session_root_roots_relay_propagation(
+    mock_mini,
+    mini_payload,
+    mock_relay,
+    request_id,
+    expected_parent,
+):
+    mini_payload["runtime_context"].update(
+        {
+            "request_id": request_id,
+            "telemetry": {"relay_enabled": True},
+        }
+    )
+    mini_payload["request"]["relay_session_root"] = SESSION_ROOT
+    mini_payload["request"]["context"] = {"relay_session_root": REQUEST_UUID}
+    runtime = adapter.MiniSweAgentRuntime()
+    start = {**mini_payload, "config": AgentConfig.from_mapping(mini_payload["config"])}
+    await runtime.start(start)
+
+    result = await runtime.invoke(*invocation(mini_payload))
+
+    assert result.status == "succeeded"
+    assert mock_relay["propagation_contexts"] == [(expected_parent, SESSION_ROOT)]
+    assert mock_relay["used_propagation_stacks"] == mock_relay["propagation_stacks"]
+    assert mock_relay["request_scopes"][0][2]["metadata"] == {
+        "nemo_fabric_request_id": request_id,
+        "nemo_fabric_session_root": SESSION_ROOT,
+        "nemo_fabric_invocation_id": "mini-invocation",
+    }
+
+
+@pytest.mark.parametrize(
+    "session_root",
+    ["", "not-a-uuid", None],
+    ids=["empty", "non-uuid", "context-keys-ignored"],
+)
+async def test_unusable_session_root_falls_back_to_the_request_root(
+    mock_mini,
+    mini_payload,
+    mock_relay,
+    session_root,
+):
+    mini_payload["runtime_context"].update(
+        {
+            "request_id": REQUEST_UUID,
+            "telemetry": {"relay_enabled": True},
+        }
+    )
+    mini_payload["request"]["relay_session_root"] = session_root
+    mini_payload["request"]["context"] = {
+        "relay_session_root": SESSION_ROOT,
+        "session_id": SESSION_ROOT,
+    }
+    runtime = adapter.MiniSweAgentRuntime()
+    start = {**mini_payload, "config": AgentConfig.from_mapping(mini_payload["config"])}
+    await runtime.start(start)
+
+    result = await runtime.invoke(*invocation(mini_payload))
+
+    assert result.status == "succeeded"
+    assert mock_relay["propagation_contexts"] == [(REQUEST_UUID, REQUEST_UUID)]
+    assert (
+        "nemo_fabric_session_root" not in mock_relay["request_scopes"][0][2]["metadata"]
+    )
 
 
 async def test_relay_event_failure_degrades_telemetry_without_failing_agent(

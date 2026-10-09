@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Validate the TypeScript packages from a consumer's perspective. This check
-// packs and installs the contract, common host, and Pi adapter in a temporary
-// project, verifies adapter-only behavior, then installs the consumer-managed
-// Pi harness and exercises the packaged lifecycle. check-package.mjs owns each
-// package's manifest policy and exact tarball contents.
+// packs and installs the contract, common host, and harness adapters in a
+// temporary project, verifies adapter-only behavior, then installs each
+// consumer-managed harness and exercises the packaged lifecycle.
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -23,7 +22,11 @@ const repositoryRoot = resolve(scriptDirectory, "../../..");
 const packageRoots = [
   join(repositoryRoot, "adapter-contract/typescript"),
   join(repositoryRoot, "adapters/typescript/common"),
+  join(repositoryRoot, "adapters/typescript/cline"),
   join(repositoryRoot, "adapters/typescript/pi"),
+  join(repositoryRoot, "adapters/typescript/opencode"),
+  join(repositoryRoot, "adapters/typescript/qwen"),
+  join(repositoryRoot, "adapters/typescript/kilo"),
 ];
 
 function npm(args, cwd) {
@@ -61,6 +64,68 @@ function runPiCli(piRoot, consumerRoot, requests) {
   return invocation.stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
 }
 
+function runClineCli(clineRoot, consumerRoot, requests) {
+  const invocation = spawnSync(process.execPath, [join(clineRoot, "dist/cli.js")], {
+    cwd: consumerRoot,
+    encoding: "utf8",
+    input: `${requests.map((request) => JSON.stringify(request)).join("\n")}\n`,
+    timeout: 60_000,
+  });
+  if (invocation.error) {
+    throw invocation.error;
+  }
+  if (invocation.status !== 0) {
+    throw new Error(
+      `Installed Cline CLI failed (status ${invocation.status}, signal ${invocation.signal}): ${invocation.stderr}`,
+    );
+  }
+  return invocation.stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+}
+
+function runOpenCodeCli(opencodeRoot, consumerRoot, requests) {
+  const invocation = spawnSync(process.env.BUN_EXECUTABLE ?? "bun", [join(opencodeRoot, "dist/cli.js")], {
+    cwd: consumerRoot,
+    encoding: "utf8",
+    input: `${requests.map((request) => JSON.stringify(request)).join("\n")}\n`,
+    timeout: 60_000,
+  });
+  if (invocation.error) {
+    throw invocation.error;
+  }
+  if (invocation.status !== 0) {
+    throw new Error(
+      `Installed OpenCode CLI failed (status ${invocation.status}, signal ${invocation.signal}): ${invocation.stderr}`,
+    );
+  }
+  return invocation.stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+}
+
+function runQwenCli(qwenRoot, consumerRoot, requests) {
+  const invocation = spawnSync(process.execPath, [join(qwenRoot, "dist/cli.js")], {
+    cwd: consumerRoot,
+    encoding: "utf8",
+    input: `${requests.map((request) => JSON.stringify(request)).join("\n")}\n`,
+    timeout: 60_000,
+  });
+  if (invocation.error) throw invocation.error;
+  if (invocation.status !== 0) {
+    throw new Error(`Installed Qwen CLI failed (status ${invocation.status}): ${invocation.stderr}`);
+  }
+  return invocation.stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+}
+
+function runKiloCli(kiloRoot, consumerRoot, requests) {
+  const invocation = spawnSync(process.execPath, [join(kiloRoot, "dist/cli.js")], {
+    cwd: consumerRoot,
+    encoding: "utf8",
+    input: `${requests.map((request) => JSON.stringify(request)).join("\n")}\n`,
+    timeout: 60_000,
+  });
+  if (invocation.error) throw invocation.error;
+  if (invocation.status !== 0) throw new Error(`Installed Kilo Code CLI failed: ${invocation.stderr}`);
+  return invocation.stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+}
+
 function startRequest(consumerRoot) {
   return {
     operation: "start",
@@ -92,6 +157,68 @@ function startRequest(consumerRoot) {
         runtime_id: "runtime-install-check",
       },
     },
+  };
+}
+
+function clineStartRequest(consumerRoot) {
+  return {
+    ...startRequest(consumerRoot),
+    payload: {
+      ...startRequest(consumerRoot).payload,
+      agent_name: "cline-install-check",
+    },
+  };
+}
+
+function openCodeStartRequest(consumerRoot) {
+  return {
+    operation: "start",
+    payload: {
+      agent_name: "opencode-install-check",
+      base_dir: consumerRoot,
+      config: {
+        models: {
+          default: {
+            api_key_env: "TEST_API_KEY",
+            model: "gpt-4.1-mini",
+            provider: "openai",
+          },
+        },
+      },
+      runtime_context: {
+        artifacts: {},
+        environment: {
+          control_location: "external_control",
+          env: { TEST_API_KEY: "not-a-real-key" },
+          environment_id: "environment-install-check",
+          ownership: "caller_owned",
+          provider: "local",
+          workspace: consumerRoot,
+        },
+        invocation_id: "invocation-install-check",
+        request_id: "request-install-check",
+        runtime_id: "runtime-install-check",
+      },
+    },
+  };
+}
+
+function qwenStartRequest(consumerRoot) {
+  return {
+    operation: "start",
+    payload: {
+      ...startRequest(consumerRoot).payload,
+      agent_name: "qwen-install-check",
+      config: { models: { default: { api_key_env: "TEST_API_KEY", model: "test-model", provider: "openai" } } },
+    },
+  };
+}
+
+function kiloStartRequest(consumerRoot) {
+  const request = openCodeStartRequest(consumerRoot);
+  return {
+    ...request,
+    payload: {...request.payload, agent_name: "kilo-install-check"},
   };
 }
 
@@ -128,13 +255,54 @@ try {
     consumerRoot,
   );
 
+  const clineRoot = join(consumerRoot, "node_modules/nemo-fabric-adapters-cline");
+  const clineDescriptor = JSON.parse(
+    await readFile(join(clineRoot, "cline.fabric-adapter.json"), "utf8"),
+  );
+  if (clineDescriptor.runner?.command !== "node" || clineDescriptor.runner?.script !== "dist/cli.js") {
+    throw new Error("Installed Cline descriptor does not reference its packaged CLI");
+  }
+  if (await pathExists(join(consumerRoot, "node_modules/@cline/sdk/package.json"))) {
+    throw new Error("Adapter-only install unexpectedly included @cline/sdk");
+  }
+  const [invalidClineResponse] = runClineCli(clineRoot, consumerRoot, [{}]);
+  if (invalidClineResponse.outcome?.error?.code !== "lifecycle_invalid_operation") {
+    throw new Error(
+      `Installed Cline CLI returned an unexpected response: ${JSON.stringify(invalidClineResponse)}`,
+    );
+  }
+  const [missingClineHarnessResponse] = runClineCli(clineRoot, consumerRoot, [clineStartRequest(consumerRoot)]);
+  if (missingClineHarnessResponse.outcome?.error?.code !== "cline_harness_unavailable") {
+    throw new Error(
+      `Adapter-only install did not report the missing Cline harness: ${JSON.stringify(missingClineHarnessResponse)}`,
+    );
+  }
+  npm(
+    [
+      "install",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      "--package-lock=false",
+      "@cline/sdk@0.0.83",
+    ],
+    consumerRoot,
+  );
+  const clineResponses = runClineCli(clineRoot, consumerRoot, [
+    clineStartRequest(consumerRoot),
+    { operation: "stop", payload: { runtime_id: "runtime-install-check" } },
+  ]);
+  if (clineResponses.length !== 2 || clineResponses[0].outcome?.status !== "succeeded") {
+    throw new Error(`Consumer-managed Cline harness failed to start: ${JSON.stringify(clineResponses)}`);
+  }
+
   const piRoot = join(consumerRoot, "node_modules/nemo-fabric-adapters-pi");
   const descriptor = JSON.parse(await readFile(join(piRoot, "pi.fabric-adapter.json"), "utf8"));
   if (descriptor.runner?.command !== "node" || descriptor.runner?.script !== "dist/cli.js") {
     throw new Error("Installed Pi descriptor does not reference its packaged CLI");
   }
 
-  for (const name of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"]) {
+  for (const name of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-mcp"]) {
     if (await pathExists(join(consumerRoot, "node_modules", name, "package.json"))) {
       throw new Error(`Adapter-only install unexpectedly included ${name}`);
     }
@@ -159,8 +327,9 @@ try {
       "--no-audit",
       "--no-fund",
       "--package-lock=false",
-      "@earendil-works/pi-ai@0.84.2",
-      "@earendil-works/pi-coding-agent@0.84.2",
+      "@earendil-works/pi-ai@1.0.3",
+      "@earendil-works/pi-coding-agent@1.0.3",
+      "@earendil-works/pi-mcp@1.0.3",
     ],
     consumerRoot,
   );
@@ -170,6 +339,99 @@ try {
   ]);
   if (responses.length !== 2 || responses[0].outcome?.status !== "succeeded") {
     throw new Error(`Consumer-managed Pi harness failed to start: ${JSON.stringify(responses)}`);
+  }
+
+  const opencodeRoot = join(consumerRoot, "node_modules/nemo-fabric-adapters-opencode");
+  const opencodeDescriptor = JSON.parse(await readFile(join(opencodeRoot, "opencode.fabric-adapter.json"), "utf8"));
+  if (opencodeDescriptor.runner?.command !== "bun" || opencodeDescriptor.runner?.script !== "dist/cli.js") {
+    throw new Error("Installed OpenCode descriptor does not reference its packaged Bun CLI");
+  }
+  if (await pathExists(join(consumerRoot, "node_modules/@opencode/sdk/package.json"))) {
+    throw new Error("Adapter-only install unexpectedly included @opencode/sdk");
+  }
+  if (await pathExists(join(consumerRoot, "node_modules/@opencode/core/package.json"))) {
+    throw new Error("Adapter-only install unexpectedly included @opencode/core");
+  }
+
+  const [invalidOpenCodeResponse] = runOpenCodeCli(opencodeRoot, consumerRoot, [{}]);
+  if (invalidOpenCodeResponse.outcome?.error?.code !== "lifecycle_invalid_operation") {
+    throw new Error(`Installed OpenCode CLI returned an unexpected response: ${JSON.stringify(invalidOpenCodeResponse)}`);
+  }
+
+  const [missingOpenCodeHarnessResponse] = runOpenCodeCli(opencodeRoot, consumerRoot, [openCodeStartRequest(consumerRoot)]);
+  if (missingOpenCodeHarnessResponse.outcome?.error?.code !== "opencode_harness_unavailable") {
+    throw new Error(
+      `Adapter-only install did not report the missing OpenCode harness: ${JSON.stringify(missingOpenCodeHarnessResponse)}`,
+    );
+  }
+
+  npm(
+    [
+      "install",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      "--package-lock=false",
+      "@opencode/core@2.0.23",
+      "@opencode/sdk@2.0.23",
+    ],
+    consumerRoot,
+  );
+  if (!(await pathExists(join(consumerRoot, "node_modules/@opencode/core/package.json")))) {
+    throw new Error("Consumer-managed OpenCode core harness was not installed at the adapter resolution level");
+  }
+  const opencodeResponses = runOpenCodeCli(opencodeRoot, consumerRoot, [
+    openCodeStartRequest(consumerRoot),
+    { operation: "stop", payload: { runtime_id: "runtime-install-check" } },
+  ]);
+  if (opencodeResponses.length !== 2 || opencodeResponses[0].outcome?.status !== "succeeded") {
+    throw new Error(`Consumer-managed OpenCode harness failed to start: ${JSON.stringify(opencodeResponses)}`);
+  }
+
+  const qwenRoot = join(consumerRoot, "node_modules/nemo-fabric-adapters-qwen");
+  const qwenDescriptor = JSON.parse(await readFile(join(qwenRoot, "qwen.fabric-adapter.json"), "utf8"));
+  if (qwenDescriptor.runner?.command !== "node" || qwenDescriptor.runner?.script !== "dist/cli.js") {
+    throw new Error("Installed Qwen descriptor does not reference its packaged Node CLI");
+  }
+  if (await pathExists(join(consumerRoot, "node_modules/@qwen-code/sdk/package.json"))) {
+    throw new Error("Adapter-only install unexpectedly included @qwen-code/sdk");
+  }
+  const [invalidQwenResponse] = runQwenCli(qwenRoot, consumerRoot, [{}]);
+  if (invalidQwenResponse.outcome?.error?.code !== "lifecycle_invalid_operation") {
+    throw new Error(`Installed Qwen CLI returned an unexpected response: ${JSON.stringify(invalidQwenResponse)}`);
+  }
+  const [missingQwenSdkResponse] = runQwenCli(qwenRoot, consumerRoot, [qwenStartRequest(consumerRoot)]);
+  if (missingQwenSdkResponse.outcome?.error?.code !== "qwen_sdk_missing") {
+    throw new Error(`Adapter-only install did not report the missing Qwen SDK: ${JSON.stringify(missingQwenSdkResponse)}`);
+  }
+  npm(["install", "--ignore-scripts", "--no-audit", "--no-fund", "--package-lock=false", "@qwen-code/sdk@0.1.16"], consumerRoot);
+  const qwenResponses = runQwenCli(qwenRoot, consumerRoot, [
+    qwenStartRequest(consumerRoot),
+    { operation: "stop", payload: { runtime_id: "runtime-install-check" } },
+  ]);
+  if (qwenResponses.length !== 2 ||
+      qwenResponses[0].outcome?.status !== "succeeded" ||
+      qwenResponses[1].outcome?.status !== "succeeded") {
+    throw new Error(`Consumer-managed Qwen SDK failed to start: ${JSON.stringify(qwenResponses)}`);
+  }
+
+  const kiloRoot = join(consumerRoot, "node_modules/nemo-fabric-adapters-kilo");
+  const kiloDescriptor = JSON.parse(await readFile(join(kiloRoot, "kilo.fabric-adapter.json"), "utf8"));
+  if (kiloDescriptor.runner?.command !== "node" || kiloDescriptor.runner?.script !== "dist/cli.js") {
+    throw new Error("Installed Kilo Code descriptor does not reference its packaged Node.js CLI");
+  }
+  for (const name of ["@kilocode/cli", "@kilocode/sdk"]) {
+    if (await pathExists(join(consumerRoot, "node_modules", name, "package.json"))) {
+      throw new Error(`Adapter-only install unexpectedly included ${name}`);
+    }
+  }
+  const [invalidKiloResponse] = runKiloCli(kiloRoot, consumerRoot, [{}]);
+  if (invalidKiloResponse.outcome?.error?.code !== "lifecycle_invalid_operation") {
+    throw new Error(`Installed Kilo Code CLI returned an unexpected response: ${JSON.stringify(invalidKiloResponse)}`);
+  }
+  const [missingKiloResponse] = runKiloCli(kiloRoot, consumerRoot, [kiloStartRequest(consumerRoot)]);
+  if (missingKiloResponse.outcome?.error?.code !== "kilo_harness_unavailable") {
+    throw new Error(`Adapter-only install did not report the missing Kilo Code harness: ${JSON.stringify(missingKiloResponse)}`);
   }
 } finally {
   await rm(temporaryRoot, { recursive: true, force: true });

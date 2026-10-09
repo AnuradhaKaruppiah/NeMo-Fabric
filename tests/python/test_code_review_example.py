@@ -3,10 +3,12 @@
 
 """Contract tests for the code-review example."""
 
+import asyncio
 import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 
@@ -16,11 +18,16 @@ from examples.code_review_agent import BASE_DIR
 from examples.code_review_agent import __main__ as main_module
 from examples.code_review_agent import base_config
 from examples.code_review_agent import claude_config
+from examples.code_review_agent import cline_config
 from examples.code_review_agent import codex_config
 from examples.code_review_agent import deepagents_config
 from examples.code_review_agent import hermes_config
+from examples.code_review_agent import kilo_config
 from examples.code_review_agent import nooa_config
+from examples.code_review_agent import openclaw_config
+from examples.code_review_agent import openhands_config
 from examples.code_review_agent import pi_config
+from examples.code_review_agent import qwen_config
 from examples.code_review_agent import with_github_mcp
 from examples.code_review_agent import with_native_otel
 from examples.code_review_agent import with_opensandbox
@@ -36,13 +43,31 @@ from nemo_fabric import RunOutput
 def test_variant_builders_return_independent_complete_configs():
     base = base_config()
     hermes = hermes_config()
+    kilo = kilo_config()
     codex = codex_config()
     claude = claude_config()
+    cline = cline_config()
     deepagents = deepagents_config()
     nooa = nooa_config()
+    openclaw = openclaw_config()
+    openhands = openhands_config()
     pi = pi_config()
+    qwen = qwen_config()
 
-    for config in (base, hermes, codex, claude, deepagents, nooa, pi):
+    for config in (
+        base,
+        hermes,
+        kilo,
+        codex,
+        claude,
+        cline,
+        deepagents,
+        nooa,
+        openclaw,
+        openhands,
+        pi,
+        qwen,
+    ):
         assert isinstance(config, FabricConfig)
         assert config.metadata.name == "code-review-agent"
         assert config.environment is not None
@@ -61,6 +86,13 @@ def test_variant_builders_return_independent_complete_configs():
     assert claude.models["default"].api_key_env == "ANTHROPIC_API_KEY"
     assert claude.mcp is None
     assert claude.skills is None
+    assert cline.harness.adapter_id == "nvidia.fabric.cline"
+    assert cline.models["default"].provider == "nvidia"
+    assert cline.models["default"].api_key_env == "NVIDIA_API_KEY"
+    assert cline.skills is not None
+    assert cline.skills.paths == ["./skills/code-review"]
+    assert cline.tools is not None
+    assert cline.tools.enabled == ["read_files", "search_codebase", "skills"]
     assert deepagents is not base
     assert deepagents.harness is not base.harness
     assert deepagents.harness.adapter_id == "nvidia.fabric.langchain.deepagents"
@@ -77,6 +109,23 @@ def test_variant_builders_return_independent_complete_configs():
     assert pi.skills.paths == ["./skills/code-review"]
     assert pi.tools is not None
     assert pi.tools.enabled == ["read"]
+    assert kilo.harness.adapter_id == "nvidia.fabric.kilo"
+    assert kilo.tools is not None
+    assert kilo.tools.enabled == ["read", "glob", "grep", "skill"]
+    assert kilo.runtime.max_turns == 20
+    assert qwen.harness.adapter_id == "nvidia.fabric.qwen"
+    assert qwen.models["default"].provider == "openai"
+    assert qwen.models["default"].api_key_env == "NVIDIA_API_KEY"
+    assert qwen.skills is not None
+    assert qwen.skills.paths == ["./skills/code-review"]
+    assert qwen.tools is not None
+    assert qwen.tools.blocked == [
+        "exec",
+        "run_shell_command",
+        "edit",
+        "write_file",
+        "notebook_edit",
+    ]
     assert deepagents.models == pi.models
     assert deepagents.instructions == pi.instructions
     assert deepagents.environment.workspace == pi.environment.workspace
@@ -85,6 +134,19 @@ def test_variant_builders_return_independent_complete_configs():
     assert nooa.workflow is not None
     assert nooa.workflow.target_id == "nvidia.nooa.coding-agent"
     assert nooa.skills is not None
+    assert openclaw.harness.adapter_id == "nvidia.fabric.openclaw"
+    assert openclaw.models["default"].provider == "nvidia"
+    assert openclaw.models["default"].api_key_env == "NVIDIA_API_KEY"
+    assert openclaw.skills is not None
+    assert openclaw.skills.paths == ["./skills/code-review"]
+    assert openclaw.tools is not None
+    assert openclaw.tools.enabled == ["read"]
+    assert openhands.harness.adapter_id == "nvidia.fabric.openhands"
+    assert openhands.models["default"].provider == "nvidia"
+    assert openhands.skills is not None
+    assert openhands.skills.paths == ["./skills/code-review"]
+    assert openhands.tools is not None
+    assert openhands.tools.enabled == ["terminal", "file_editor"]
     assert base.mcp is None
     assert base.skills is not None
     skill_path = BASE_DIR / base.skills.paths[0]
@@ -154,7 +216,9 @@ def test_native_otel_variants_match_adapter_contracts():
     deepagents = with_native_otel(deepagents_config())
     assert deepagents.telemetry is not None
     deepagents_config_payload = deepagents.telemetry.providers["native"].config
-    assert plugin.validate(deepagents_config_payload)["diagnostics"] == []
+    assert (
+        plugin.validate_exact(deepagents_config_payload)["config"]["diagnostics"] == []
+    )
 
     with pytest.raises(ValueError, match="does not support native OpenTelemetry"):
         with_native_otel(hermes_config())
@@ -201,7 +265,7 @@ def test_relay_otel_variants_author_v3_endpoints(
             }
         ],
     }
-    assert plugin.validate(plugin_config)["diagnostics"] == []
+    assert plugin.validate_exact(plugin_config)["config"]["diagnostics"] == []
 
 
 def test_variants_plan_from_complete_configs():
@@ -209,10 +273,15 @@ def test_variants_plan_from_complete_configs():
 
     for config in (
         hermes_config(),
+        kilo_config(),
         codex_config(),
         claude_config(),
+        cline_config(),
         deepagents_config(),
+        openclaw_config(),
+        openhands_config(),
         pi_config(),
+        qwen_config(),
     ):
         plan = client.plan(config, base_dir=BASE_DIR)
         assert plan.base_dir == BASE_DIR
@@ -236,11 +305,16 @@ def test_variants_plan_from_complete_configs():
 def test_example_entrypoint_plans_without_starting_a_runtime():
     variants = (
         ("hermes", "nvidia.fabric.hermes"),
+        ("kilo", "nvidia.fabric.kilo"),
         ("codex", "nvidia.fabric.codex"),
         ("claude", "nvidia.fabric.claude"),
+        ("cline", "nvidia.fabric.cline"),
         ("deepagents", "nvidia.fabric.langchain.deepagents"),
         ("nooa", "nvidia.fabric.nooa"),
+        ("openclaw", "nvidia.fabric.openclaw"),
+        ("openhands", "nvidia.fabric.openhands"),
         ("pi", "nvidia.fabric.pi"),
+        ("qwen", "nvidia.fabric.qwen"),
     )
     cases = tuple(
         (
@@ -249,7 +323,9 @@ def test_example_entrypoint_plans_without_starting_a_runtime():
             relay_enabled,
         )
         for variant, adapter_id in variants
-        for relay_enabled in ((False,) if variant == "pi" else (False, True))
+        for relay_enabled in (False, True)
+        if variant not in {"cline", "kilo", "openclaw", "openhands", "qwen"}
+        or not relay_enabled
     )
 
     for options, adapter_id, relay_enabled in cases:
@@ -278,10 +354,80 @@ def test_example_entrypoint_plans_without_starting_a_runtime():
             assert telemetry_plan is None
 
 
+def test_kilo_model_endpoint_overrides_project_into_plan():
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "examples.code_review_agent",
+            "--variant",
+            "kilo",
+            "--model",
+            "nvidia/nemotron-3-ultra-550b-a55b",
+            "--base-url",
+            "http://10.86.19.10:8000/v1",
+            "--api-key-env",
+            "LOCAL_MODEL_KEY",
+            "--allow-insecure-http-model-endpoint",
+            "--plan",
+        ],
+        cwd=BASE_DIR.parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    agent_config = json.loads(completed.stdout)["agent_config"]
+    assert agent_config["models"]["default"] == {
+        "provider": "nvidia",
+        "model": "nvidia/nemotron-3-ultra-550b-a55b",
+        "api_key_env": "LOCAL_MODEL_KEY",
+        "base_url": "http://10.86.19.10:8000/v1",
+    }
+    assert agent_config["harness"]["settings"] == {
+        "allow_insecure_http_model_endpoint": True
+    }
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        (["--variant", "kilo"], "requires --base-url"),
+        (
+            ["--variant", "kilo", "--base-url", "http://10.0.0.1/v1"],
+            "requires --api-key-env",
+        ),
+        (
+            ["--variant", "pi", "--base-url", "http://10.0.0.1/v1"],
+            "requires --variant kilo",
+        ),
+    ],
+)
+def test_example_entrypoint_restricts_insecure_http_opt_in(options, message):
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "examples.code_review_agent",
+            *options,
+            "--allow-insecure-http-model-endpoint",
+            "--plan",
+        ],
+        cwd=BASE_DIR.parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert message in completed.stderr
+
+
 @pytest.mark.parametrize(
     ("options", "expected_paths"),
     [
         (["--variant", "pi"], [BASE_DIR / "skills/code-review"]),
+        (["--variant", "cline"], [BASE_DIR / "skills/code-review"]),
+        (["--variant", "cline", "--no-skills"], []),
         (["--variant", "pi", "--no-skills"], []),
         (["--variant", "deepagents"], [BASE_DIR / "skills/code-review"]),
         (
@@ -358,7 +504,55 @@ def test_pi_variant_projects_explicit_skill_and_tool_policy():
     assert plan.config.runtime.output_schema == "message"
 
 
-def test_pi_variant_rejects_relay_before_planning():
+def test_cline_variant_projects_explicit_skill_and_tool_policy():
+    plan = Fabric().plan(cline_config(), base_dir=BASE_DIR)
+    agent_config = plan.to_mapping()["agent_config"]
+
+    assert agent_config["skills"] == {
+        "paths": [str((BASE_DIR / "skills/code-review").resolve())]
+    }
+    assert agent_config["tools"] == {
+        "enabled": ["read_files", "search_codebase", "skills"]
+    }
+    assert plan.config.runtime.input_schema == "text"
+    assert plan.config.runtime.output_schema == "message"
+
+
+def test_kilo_variant_projects_normalized_configuration():
+    plan = Fabric().plan(kilo_config(), base_dir=BASE_DIR)
+    agent_config = plan.to_mapping()["agent_config"]
+
+    assert agent_config["skills"] == {
+        "paths": [str((BASE_DIR / "skills/code-review").resolve())]
+    }
+    assert agent_config["tools"] == {
+        "enabled": ["read", "glob", "grep", "skill"]
+    }
+    assert agent_config["runtime"]["max_turns"] == 20
+
+
+def test_qwen_variant_projects_explicit_skill_and_tool_policy():
+    plan = Fabric().plan(qwen_config(), base_dir=BASE_DIR)
+    agent_config = plan.to_mapping()["agent_config"]
+
+    assert agent_config["skills"] == {
+        "paths": [str((BASE_DIR / "skills/code-review").resolve())]
+    }
+    assert agent_config["tools"] == {
+        "blocked": [
+            "exec",
+            "run_shell_command",
+            "edit",
+            "write_file",
+            "notebook_edit",
+        ]
+    }
+    assert plan.config.runtime.input_schema == "text"
+    assert plan.config.runtime.output_schema == "message"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_pi_variant_requires_the_relay_extension_for_a_live_run(stream: bool):
     completed = subprocess.run(
         [
             sys.executable,
@@ -367,7 +561,7 @@ def test_pi_variant_rejects_relay_before_planning():
             "--variant",
             "pi",
             "--relay",
-            "--plan",
+            *(["--stream"] if stream else []),
         ],
         cwd=BASE_DIR.parents[1],
         text=True,
@@ -376,7 +570,107 @@ def test_pi_variant_rejects_relay_before_planning():
     )
 
     assert completed.returncode == 2
-    assert "Pi adapter does not support Relay yet" in completed.stderr
+    assert "Pi Relay runs require --pi-relay-extension-path" in completed.stderr
+
+
+def test_openclaw_variant_rejects_relay_telemetry():
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "examples.code_review_agent",
+            "--variant",
+            "openclaw",
+            "--relay",
+        ],
+        cwd=BASE_DIR.parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 2
+    assert "OpenClaw adapter does not support Relay telemetry" in completed.stderr
+
+
+def test_kilo_variant_rejects_relay_telemetry():
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "examples.code_review_agent",
+            "--variant",
+            "kilo",
+            "--relay",
+        ],
+        cwd=BASE_DIR.parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 2
+    assert "Kilo Code adapter does not support Relay telemetry" in completed.stderr
+
+
+def test_cline_variant_rejects_relay_telemetry():
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "examples.code_review_agent",
+            "--variant",
+            "cline",
+            "--relay",
+        ],
+        cwd=BASE_DIR.parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 2
+    assert "Cline adapter does not support Relay telemetry" in completed.stderr
+
+
+def test_openhands_variant_rejects_relay_telemetry():
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "examples.code_review_agent",
+            "--variant",
+            "openhands",
+            "--relay",
+        ],
+        cwd=BASE_DIR.parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 2
+    assert "OpenHands adapter does not support Relay telemetry" in completed.stderr
+
+
+def test_qwen_variant_rejects_relay_telemetry():
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "examples.code_review_agent",
+            "--variant",
+            "qwen",
+            "--relay",
+        ],
+        cwd=BASE_DIR.parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 2
+    assert "Qwen Code adapter does not support Relay telemetry" in completed.stderr
 
 
 @pytest.mark.parametrize(
@@ -434,9 +728,155 @@ async def test_example_entrypoint_shows_response_after_normalized_output(
     }
 
 
+async def test_openclaw_example_shares_service_and_configures_telegram(
+    monkeypatch,
+    capsys,
+):
+    service = MagicMock(service_id="service-1")
+    service_context = MagicMock(name="service_context")
+    service_context.__aenter__ = AsyncMock(return_value=service)
+    service_context.__aexit__ = AsyncMock(return_value=None)
+
+    runtime_contexts = []
+    results = []
+    for index in range(2):
+        result = MagicMock()
+        result.to_mapping.return_value = {
+            "status": "succeeded",
+            "runtime": index,
+        }
+        results.append(result)
+        runtime = MagicMock()
+        runtime.invoke = AsyncMock(return_value=result)
+        runtime_context = MagicMock(name=f"runtime_context_{index}")
+        runtime_context.__aenter__ = AsyncMock(return_value=runtime)
+        runtime_context.__aexit__ = AsyncMock(return_value=None)
+        runtime_contexts.append(runtime_context)
+
+    mock_fabric = MagicMock()
+    mock_fabric.prepare_service = AsyncMock(return_value=service_context)
+    mock_fabric.start_runtime = AsyncMock(side_effect=runtime_contexts)
+    mock_sleep = AsyncMock()
+    monkeypatch.setattr(main_module, "Fabric", lambda: mock_fabric)
+    monkeypatch.setattr(
+        main_module,
+        "asyncio",
+        SimpleNamespace(
+            create_task=asyncio.create_task,
+            gather=asyncio.gather,
+            sleep=mock_sleep,
+        ),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "code_review_agent",
+            "--variant",
+            "openclaw",
+            "--service",
+            "--runtime-count",
+            "2",
+            "--telegram-token-env",
+            "TELEGRAM_BOT_TOKEN",
+            "--telegram-allow-from",
+            "123456789",
+            "--service-duration-seconds",
+            "120",
+        ],
+    )
+
+    await main_module.main()
+
+    captured = capsys.readouterr()
+    output = json.loads(captured.out)
+    assert captured.err == (
+        "OpenClaw Telegram channel is active. You can message the bot while "
+        "Fabric runtimes are running or during the service-only interval.\n"
+        "NeMo Fabric runtimes stopped. "
+        "OpenClaw service service-1 remains active for 120 seconds.\n"
+    )
+    assert output["service_id"] == "service-1"
+    assert len(output["results"]) == 2
+    prepared_config = mock_fabric.prepare_service.call_args.args[0]
+    assert prepared_config.harness.settings["channel_config"] == {
+        "channels": {
+            "telegram": {
+                "accounts": {
+                    "default": {
+                        "botToken": {
+                            "source": "env",
+                            "provider": "default",
+                            "id": "TELEGRAM_BOT_TOKEN",
+                        },
+                        "dmPolicy": "allowlist",
+                        "allowFrom": ["123456789"],
+                    }
+                }
+            }
+        },
+        "bindings": [
+            {
+                "agentId": "default",
+                "match": {"channel": "telegram", "accountId": "default"},
+            }
+        ],
+    }
+    assert mock_fabric.start_runtime.await_count == 2
+    assert all(
+        call.kwargs["service"] is service
+        for call in mock_fabric.start_runtime.await_args_list
+    )
+    mock_sleep.assert_awaited_once_with(120.0)
+    service_context.__aexit__.assert_awaited_once()
+    for runtime_context in runtime_contexts:
+        runtime_context.__aexit__.assert_awaited_once()
+
+
+async def test_openclaw_example_drains_invocations_before_cancelled_cleanup():
+    all_started = asyncio.Event()
+    started = 0
+    cleaned = 0
+
+    async def invoke(*, input):
+        nonlocal cleaned, started
+        started += 1
+        if started == 2:
+            all_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await asyncio.sleep(0)
+            cleaned += 1
+
+    mock_runtimes = [MagicMock(invoke=AsyncMock(side_effect=invoke)) for _ in range(2)]
+
+    task = asyncio.create_task(main_module._invoke_runtimes(mock_runtimes, "review"))
+    await all_started.wait()
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert cleaned == 2
+
+
+@pytest.mark.parametrize(
+    "variant_options",
+    [
+        ["--variant", "nooa"],
+        [
+            "--variant",
+            "pi",
+            "--pi-relay-extension-path",
+            "/tmp/nemo-relay-pi-extension",
+        ],
+    ],
+)
 async def test_example_entrypoint_streams_relay_records_and_terminal_result(
     monkeypatch,
     capsys,
+    variant_options: list[str],
 ):
     result = MagicMock()
     result.output = RunOutput.from_mapping({"response": "streamed response"})
@@ -468,8 +908,7 @@ async def test_example_entrypoint_streams_relay_records_and_terminal_result(
         "argv",
         [
             "code_review_agent",
-            "--variant",
-            "nooa",
+            *variant_options,
             "--relay",
             "--stream",
             "--show-output",
@@ -489,6 +928,12 @@ async def test_example_entrypoint_streams_relay_records_and_terminal_result(
     assert payload["result"]["status"] == "succeeded"
     mock_fabric.start_runtime.assert_awaited_once()
     assert mock_fabric.start_runtime.call_args.kwargs["streaming"] is True
+    if "--pi-relay-extension-path" in variant_options:
+        started_config = mock_fabric.start_runtime.call_args.args[0]
+        assert started_config.harness is not None
+        assert started_config.harness.settings["relay_extension_path"] == (
+            "/tmp/nemo-relay-pi-extension"
+        )
     runtime.invoke_stream.assert_called_once_with(input="review this")
     stream.result.assert_awaited_once_with()
     runtime_context.__aexit__.assert_awaited_once()

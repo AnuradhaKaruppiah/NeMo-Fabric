@@ -673,6 +673,8 @@ The model defines the following fields:
 | `model` | `str` | Yes | — | `MinLen(min_length=1)` | — |
 | `api_key_env` | `str \| None` | No | `None` | — | — |
 | `temperature` | `float \| None` | No | `None` | — | — |
+| `top_p` | `float \| None` | No | `None` | `Strict(strict=True), Ge(ge=0), Le(le=1)` | — |
+| `max_tokens` | `int \| None` | No | `None` | `Strict(strict=True), Gt(gt=0), Le(le=18446744073709551615)` | — |
 | `base_url` | `str \| None` | No | `None` | `MinLen(min_length=1)` | — |
 | `settings` | `dict[str, Any]` | No | `dict()` | — | — |
 
@@ -1549,7 +1551,7 @@ The model defines the following fields:
 | `enabled` | `bool` | No | `False` | — | — |
 | `agent_name` | `str` | No | `'NeMo Relay'` | — | — |
 | `agent_version` | `str \| None` | No | `None` | — | — |
-| `model_name` | `str` | No | `'unknown'` | — | — |
+| `model_name` | `str \| None` | No | `None` | — | — |
 | `tool_definitions` | `list[dict[str, Any]] \| None` | No | `None` | — | — |
 | `extra` | `dict[str, Any] \| None` | No | `None` | — | — |
 | `output_directory` | `str \| Path \| None` | No | `None` | — | — |
@@ -2548,6 +2550,7 @@ The model defines the following fields:
 | Field | Type | Required | Default | Constraints | Description |
 | --- | --- | --- | --- | --- | --- |
 | `input` | `Any` | No | `''` | — | — |
+| `relay_session_root` | `str \| None` | No | `None` | — | UUID propagation root shared across conversation turns; unusable values fall back to the request ID. |
 | `request_id` | `str` | No | `<generated>` | `MinLen(min_length=1)` | — |
 | `context` | `dict[str, Any]` | No | `dict()` | — | — |
 | `overrides` | `dict[str, Any] \| None` | No | `None` | — | — |

@@ -145,14 +145,14 @@ async def test_harbor_integration(tmp_path: Path):
     assert spec["config"]["environment"]["workspace"] == "/testbed"
     assert spec["config"]["models"]["default"]["provider"] == "nvidia"
     assert spec["config"]["models"]["default"]["model"] == "nvidia/test-model"
-    assert spec["config"]["skills"]["paths"] == ["/opt/fabric-demo/skills"]
+    assert spec["config"]["skills"] is None
+    assert spec["skills_dir"] == "/opt/fabric-demo/skills"
     assert spec["config"]["mcp"]["servers"]["github"] == {
         "transport": "streamable-http",
         "url": "https://mcp.example.test",
         "exposure": "harness_native",
     }
     assert "model_name" not in spec
-    assert "skills_dir" not in spec
     assert "mcp_servers" not in spec
 
     fabric_commands = [
@@ -271,6 +271,98 @@ def test_harbor_generated_config_maps_fabric_specific_options(tmp_path: Path):
     assert spec.config.relay.observability.atif.enabled is True
 
 
+def test_harbor_discovers_task_local_pi_descriptor_with_uploaded_bundle(
+    tmp_path: Path,
+):
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    descriptor = "/opt/nemo-fabric/adapters/typescript/pi/pi.fabric-adapter.json"
+    agent = FabricAgent(
+        logs_dir=tmp_path / "logs",
+        fabric_adapter_id="nvidia.fabric.pi",
+        fabric_config_bundle=bundle,
+        fabric_discovery_paths=[descriptor],
+    )
+
+    spec = agent._build_spec("fix it")
+
+    assert spec.config.discovery is not None
+    assert spec.config.discovery.local_paths == ["adapters", descriptor]
+    assert spec.config_base_dir == PurePosixPath("/tmp/nemo-fabric-config")
+
+
+def test_harbor_codex_recipe_preserves_explicit_permissions(tmp_path: Path):
+    agent = FabricAgent(
+        logs_dir=tmp_path,
+        fabric_adapter_id="nvidia.fabric.codex",
+        model_name="openai/gpt-5.4",
+        fabric_harness_settings={
+            "sandbox": "workspace-write",
+            "approval_mode": "deny_all",
+        },
+    )
+
+    assert agent._build_spec("fix it").config.harness.settings == {
+        "sandbox": "workspace-write",
+        "approval_mode": "deny_all",
+    }
+
+
+def test_harbor_generated_config_names_the_model_credential(tmp_path: Path):
+    """Adapters read the key from the variable named in ``api_key_env``; the deepagents
+    adapter refuses a non-OpenAI provider without it, so Harbor runs against
+    build.nvidia.com need a way to set it."""
+    agent = FabricAgent(
+        logs_dir=tmp_path,
+        fabric_adapter_id="nvidia.fabric.langchain.deepagents",
+        fabric_model_base_url="https://integrate.api.nvidia.com/v1",
+        fabric_model_api_key_env="NVIDIA_API_KEY",
+        model_name="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+    )
+
+    model = agent._build_spec("fix it").config.models["default"]
+
+    assert model.provider == "nvidia"
+    assert model.model == "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+    assert model.api_key_env == "NVIDIA_API_KEY"
+    assert model.base_url == "https://integrate.api.nvidia.com/v1"
+
+
+def test_harbor_model_credential_without_a_model_is_rejected(tmp_path: Path):
+    with pytest.raises(ValueError, match="model_api_key_env requires model_name"):
+        FabricAgent(
+            logs_dir=tmp_path,
+            fabric_adapter_id="nvidia.fabric.langchain.deepagents",
+            fabric_model_api_key_env="NVIDIA_API_KEY",
+        )
+
+
+@pytest.mark.parametrize("name", ["", "   ", " NVIDIA_API_KEY", "NVIDIA_API_KEY "])
+def test_harbor_rejects_a_blank_or_padded_model_credential_name(
+    tmp_path: Path, name: str
+):
+    """The value is used verbatim as the variable key inside the container, while
+    ``--ae NAME=value`` binds the unpadded name; a padded value would never resolve."""
+    with pytest.raises(ValueError, match="fabric_model_api_key_env must be"):
+        FabricAgent(
+            logs_dir=tmp_path,
+            fabric_adapter_id="nvidia.fabric.langchain.deepagents",
+            fabric_model_api_key_env=name,
+        )
+
+
+def test_harbor_model_credential_name_is_keyword_only(tmp_path: Path):
+    """Existing callers pass the older options positionally; a new positional slot
+    would silently rebind them."""
+    import inspect
+
+    parameter = inspect.signature(FabricAgent.__init__).parameters[
+        "fabric_model_api_key_env"
+    ]
+
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+
+
 def test_harbor_requires_a_nonempty_adapter_id(tmp_path: Path):
     with pytest.raises(ValueError, match="must not be empty"):
         FabricAgent(
@@ -350,13 +442,12 @@ def test_harbor_propagates_runtime_identity(tmp_path: Path):
         "harbor_session_id": "trial__agent",
         "harbor_context_id": "594025f3-7d65-4655-8576-4bee95002eae",
     }
-    assert agent.SUPPORTS_ATIF is True
+    assert agent.SUPPORTS_ATIF is False
 
 
 async def test_harbor_structured_package_install_is_shell_safe(tmp_path: Path):
     with (
-        Path(__file__).resolve().parents[2]
-        / "sdk/python/nemo-fabric/pyproject.toml"
+        Path(__file__).resolve().parents[2] / "sdk/python/nemo-fabric/pyproject.toml"
     ).open("rb") as file:
         package_version = tomllib.load(file)["project"]["version"]
     fabric_package = f"nemo-fabric[codex,harbor]=={package_version}"
@@ -402,14 +493,17 @@ async def test_harbor_structured_package_install_is_shell_safe(tmp_path: Path):
     }
 
 
-async def test_harbor_custom_install_uses_explicit_runner_environment(tmp_path: Path):
+async def test_harbor_custom_install_preserves_explicit_adapter_python(tmp_path: Path):
     with pytest.warns(DeprecationWarning, match="fabric_install_command"):
         agent = FabricAgent(
             logs_dir=tmp_path,
             fabric_adapter_id="nvidia.fabric.hermes",
             fabric_python="/tmp/custom-fabric/bin/python",
             fabric_install_command="install-fabric-for-test",
-            extra_env={"NVIDIA_API_KEY": "test-key", "ADAPTER_PYTHON": "/wrong/python"},
+            extra_env={
+                "NVIDIA_API_KEY": "test-key",
+                "ADAPTER_PYTHON": "/opt/hermes-venv/bin/python",
+            },
         )
     environment = FakeHarborEnvironment()
 
@@ -429,7 +523,7 @@ async def test_harbor_custom_install_uses_explicit_runner_environment(tmp_path: 
     runner_index = environment.commands.index(runner)
     assert environment.environments[runner_index] == {
         "NVIDIA_API_KEY": "test-key",
-        "ADAPTER_PYTHON": "/tmp/custom-fabric/bin/python",
+        "ADAPTER_PYTHON": "/opt/hermes-venv/bin/python",
     }
 
 

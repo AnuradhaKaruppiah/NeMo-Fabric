@@ -1471,7 +1471,7 @@ def _install_relay_doubles(
 
     @asynccontextmanager
     async def activate(_config: dict[str, Any]):
-        yield {"diagnostics": []}
+        yield SimpleNamespace(report={"config": {"diagnostics": []}})
 
     install = MagicMock(name="install_nemo_relay")
     uninstall = MagicMock(name="uninstall_nemo_relay")
@@ -1479,19 +1479,19 @@ def _install_relay_doubles(
     relay_module = types.ModuleType("nemo_relay")
     relay_module.__path__ = []  # type: ignore[attr-defined]
     relay_module.ScopeType = SimpleNamespace(Agent="agent")
-    relay_module.plugin = SimpleNamespace(plugin=activate)
+    relay_module.plugin = SimpleNamespace(activate=activate)
     relay_module.scope = MagicMock(name="scope")
     relay_module.scope.get_handle.side_effect = lambda: current[0]
     relay_module.scope.scope.side_effect = enter_scope
     nooa_module = types.ModuleType("nooa")
     nooa_module.__path__ = []  # type: ignore[attr-defined]
-    middleware_module = types.ModuleType("nooa.nemo_relay_middleware")
-    middleware_module.install_nemo_relay = install
+    middleware_module = types.ModuleType("nemo_fabric_adapters.nooa.relay_compat")
+    middleware_module.install_nemo_relay_compat = install
     monkeypatch.setitem(sys.modules, "nemo_relay", relay_module)
     monkeypatch.setitem(sys.modules, "nooa", nooa_module)
     monkeypatch.setitem(
         sys.modules,
-        "nooa.nemo_relay_middleware",
+        "nemo_fabric_adapters.nooa.relay_compat",
         middleware_module,
     )
     return install, scope_metadata
@@ -1506,7 +1506,7 @@ async def test_relay_lifecycle_correlates_once_and_collects_current_artifacts(
     monkeypatch.setattr(
         nooa_telemetry.importlib.metadata,
         "version",
-        MagicMock(return_value="0.7.2"),
+        MagicMock(return_value="0.9.0"),
     )
     monkeypatch.setattr(
         nooa_telemetry.common_utils,
@@ -1587,7 +1587,7 @@ async def test_relay_records_none_result_and_collects_artifacts(
     monkeypatch.setattr(
         nooa_telemetry.importlib.metadata,
         "version",
-        MagicMock(return_value="0.7.2"),
+        MagicMock(return_value="0.9.0"),
     )
     monkeypatch.setattr(
         nooa_telemetry.common_utils,
@@ -1662,7 +1662,7 @@ def test_relay_scope_comparison_handles_absent_baseline(
 
 
 @pytest.mark.usefixtures("nemo_relay")
-async def test_relay_072_emits_correlated_atof_and_atif(
+async def test_relay_emits_correlated_atof_and_atif(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -1714,12 +1714,12 @@ async def test_relay_072_emits_correlated_atof_and_atif(
     install = MagicMock(return_value=MagicMock())
     nooa_module = types.ModuleType("nooa")
     nooa_module.__path__ = []  # type: ignore[attr-defined]
-    middleware_module = types.ModuleType("nooa.nemo_relay_middleware")
-    middleware_module.install_nemo_relay = install
+    middleware_module = types.ModuleType("nemo_fabric_adapters.nooa.relay_compat")
+    middleware_module.install_nemo_relay_compat = install
     monkeypatch.setitem(sys.modules, "nooa", nooa_module)
     monkeypatch.setitem(
         sys.modules,
-        "nooa.nemo_relay_middleware",
+        "nemo_fabric_adapters.nooa.relay_compat",
         middleware_module,
     )
     telemetry = nooa_telemetry.RelayTelemetry(
@@ -1761,7 +1761,7 @@ async def test_relay_scope_leak_preserves_result_and_quarantines_later_turns(
     monkeypatch.setattr(
         nooa_telemetry.importlib.metadata,
         "version",
-        MagicMock(return_value="0.7.2"),
+        MagicMock(return_value="0.9.0"),
     )
     monkeypatch.setattr(
         nooa_telemetry.common_utils,

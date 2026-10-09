@@ -12,6 +12,7 @@ import logging
 import math
 import os
 import subprocess
+import tempfile
 import webbrowser
 from dataclasses import asdict, dataclass, is_dataclass
 from enum import Enum
@@ -110,6 +111,12 @@ INHERITED_ENV_NAMES = {
     "no_proxy",
 }
 LOGGER = logging.getLogger(__name__)
+USAGE_FIELDS = {
+    "input_tokens": "inputTokens",
+    "cached_input_tokens": "cachedInputTokens",
+    "output_tokens": "outputTokens",
+    "total_tokens": "totalTokens",
+}
 
 
 @dataclass(frozen=True)
@@ -619,12 +626,9 @@ def child_environment(
         values[api_key_env] = os.environ[api_key_env]
     configured = context.environment.env
     values.update(configured)
-    if (
-        model_config.provider == "openai"
-        and api_key_env is not None
-        and api_key_env in values
-    ):
-        values["OPENAI_API_KEY"] = values[api_key_env]
+    if model_config.provider == "openai" and api_key_env is not None:
+        if api_key_env in values:
+            values["OPENAI_API_KEY"] = values[api_key_env]
     if model_config.provider != "openai":
         codex_home = state_dir(context, base_dir) / "custom-provider-home"
         values["CODEX_HOME"] = str(codex_home)
@@ -997,7 +1001,7 @@ def adapter_failure(error: CodexAdapterError) -> dict[str, Any]:
 
 def sdk_failure(error: BaseException) -> dict[str, Any]:
     if isinstance(error, TimeoutError):
-        return _failure("codex_timed_out", "Codex invocation timed out")
+        return _failure("timeout", "Codex invocation timed out")
     if isinstance(error, TransportClosedError):
         return _failure(
             "codex_connection_failed", "Codex SDK runtime connection closed"
@@ -1022,7 +1026,42 @@ def sdk_failure(error: BaseException) -> dict[str, Any]:
     )
 
 
-def _agent_run_result(output: dict[str, Any]) -> AgentRunResult:
+def _normalize_usage(
+    value: Any, cumulative_totals: dict[str, int]
+) -> AgentUsage | None:
+    """Difference thread totals, never the last model response, into invocation usage."""
+    if not isinstance(value, dict):
+        cumulative_totals.clear()
+        return None
+    cumulative = isinstance(value.get("total"), dict)
+    counters = value["total"] if cumulative else value
+    observed = {
+        name: count
+        for name, alias in USAGE_FIELDS.items()
+        if isinstance((count := counters.get(name, counters.get(alias))), int)
+        and not isinstance(count, bool)
+        and 0 <= count <= (1 << 64) - 1
+    }
+    if cumulative:
+        tokens = {
+            name: count - cumulative_totals[name]
+            for name, count in observed.items()
+            if name in cumulative_totals and count >= cumulative_totals[name]
+        }
+    else:
+        tokens = observed
+    # Missing snapshots invalidate the baseline; the next snapshot only rebaselines.
+    cumulative_totals.clear()
+    if cumulative:
+        cumulative_totals.update(observed)
+    if not tokens:
+        return None
+    return AgentUsage(**tokens, input_tokens_include_cache=True)
+
+
+def _agent_run_result(
+    output: dict[str, Any], cumulative_totals: dict[str, int] | None = None
+) -> AgentRunResult:
     normalized = dict(output)
     failed = bool(normalized.pop("failed", False))
     reported_error = normalized.pop("error", None)
@@ -1036,16 +1075,12 @@ def _agent_run_result(output: dict[str, Any]) -> AgentRunResult:
             retryable=bool(reported.get("retryable", False)),
             extensions=metadata if isinstance(metadata, dict) else {},
         )
-    raw_usage = normalized.get("usage")
-    usage = raw_usage if isinstance(raw_usage, dict) else {}
-    tokens = {
-        name: value
-        for name in ("input_tokens", "output_tokens", "total_tokens")
-        if isinstance((value := usage.get(name)), int)
-        and not isinstance(value, bool)
-        and 0 <= value <= (1 << 64) - 1
-    }
-    agent_usage = AgentUsage(**tokens) if tokens else None
+    baseline = (
+        dict.fromkeys(USAGE_FIELDS, 0)
+        if cumulative_totals is None
+        else cumulative_totals
+    )
+    agent_usage = _normalize_usage(normalized.get("usage"), baseline)
     return AgentRunResult(
         status=AgentRunStatus.FAILED if failed else AgentRunStatus.SUCCEEDED,
         output=normalized,
@@ -1276,8 +1311,10 @@ class CodexRuntime:
         self._thread: Any = None
         self._relay: CodexRelaySettings | None = None
         self._gateway_process: subprocess.Popen[Any] | None = None
+        self._api_key_home: tempfile.TemporaryDirectory | None = None
         self._mcp_authentication_checked = False
         self._unusable = False
+        self._usage_totals: dict[str, int] = dict.fromkeys(USAGE_FIELDS, 0)
 
     async def start(self, payload: dict[str, Any]) -> None:
         if self._client is not None:
@@ -1299,7 +1336,29 @@ class CodexRuntime:
             self._relay = relay
             self._gateway_process = _start_relay_gateway(context, base_dir, relay)
             client_config = sdk_config(agent_config, context, base_dir, relay)
-            if _selected_model_config(agent_config).provider != "openai":
+            model_config = _selected_model_config(agent_config)
+            api_key_env = model_config.api_key_env
+            api_key = None
+            if model_config.provider == "openai" and api_key_env is not None:
+                api_key = client_config.env.get(api_key_env)
+                if not api_key:
+                    raise AdapterConfigError(
+                        "codex_invalid_configuration",
+                        f"{api_key_env} is required for Codex API-key authentication",
+                    )
+                self._api_key_home = tempfile.TemporaryDirectory(
+                    prefix="nemo-fabric-codex-"
+                )
+                private_home = Path(self._api_key_home.name).resolve()
+                if private_home.is_relative_to(
+                    _artifact_root(context, base_dir).resolve()
+                ):
+                    raise AdapterConfigError(
+                        "codex_invalid_configuration",
+                        "Temporary Codex credential directory must be outside artifacts",
+                    )
+                client_config.env["CODEX_HOME"] = str(private_home)
+            elif model_config.provider != "openai":
                 await asyncio.to_thread(
                     Path(client_config.env["CODEX_HOME"]).mkdir,
                     parents=True,
@@ -1307,6 +1366,8 @@ class CodexRuntime:
                 )
             client = AsyncCodex(config=client_config)
             self._client = client
+            if api_key is not None:
+                await client.login_api_key(api_key)
             await _register_skill_roots(
                 client, _native_skill_paths(agent_config, base_dir)
             )
@@ -1338,6 +1399,7 @@ class CodexRuntime:
         self._base_dir = base_dir
         self._fabric_runtime_id = fabric_runtime_id
         self._thread = thread
+        self._usage_totals = dict.fromkeys(USAGE_FIELDS, 0)
 
     async def invoke(
         self,
@@ -1405,20 +1467,18 @@ class CodexRuntime:
                 )
                 if finalized is None:
                     self._unusable = True
-                    return _agent_run_result(
-                        _relay_output(
-                            adapter_failure(
-                                AdapterRelayError(
-                                    "codex_relay_atif_timeout",
-                                    "NeMo Relay did not finalize an ATIF artifact before the deadline",
-                                    metadata={
-                                        "timeout_seconds": relay_artifacts.ATIF_FINALIZATION_TIMEOUT_SECONDS,
-                                    },
-                                )
-                            ),
-                            relay,
-                            artifacts=[],
+                    failure = adapter_failure(
+                        AdapterRelayError(
+                            "codex_relay_atif_timeout",
+                            "NeMo Relay did not finalize an ATIF artifact before the deadline",
+                            metadata={
+                                "timeout_seconds": relay_artifacts.ATIF_FINALIZATION_TIMEOUT_SECONDS,
+                            },
                         )
+                    )
+                    failure["usage"] = output.get("usage")
+                    return _agent_run_result(
+                        _relay_output(failure, relay, artifacts=[]), self._usage_totals
                     )
         except AdapterRelayError as error:
             output = adapter_failure(error)
@@ -1430,7 +1490,7 @@ class CodexRuntime:
         self._unusable = not usable
         if self._relay is not None:
             output = _relay_output(output, self._relay)
-        return _agent_run_result(output)
+        return _agent_run_result(output, self._usage_totals)
 
     async def stop(self) -> None:
         client = self._client
@@ -1442,6 +1502,7 @@ class CodexRuntime:
         self._fabric_runtime_id = None
         self._mcp_authentication_checked = False
         self._unusable = True
+        self._usage_totals.clear()
 
         close_error: BaseException | None = None
         try:
@@ -1455,6 +1516,9 @@ class CodexRuntime:
             cleanup_error = _cleanup_relay(self._relay, self._gateway_process)
             self._relay = None
             self._gateway_process = None
+            if self._api_key_home is not None:
+                self._api_key_home.cleanup()
+                self._api_key_home = None
 
         if isinstance(close_error, asyncio.CancelledError):
             raise close_error
@@ -1482,6 +1546,9 @@ class CodexRuntime:
         cleanup_error = _cleanup_relay(self._relay, self._gateway_process)
         self._relay = None
         self._gateway_process = None
+        if self._api_key_home is not None:
+            self._api_key_home.cleanup()
+            self._api_key_home = None
         if cleanup_error is not None:
             LOGGER.error(
                 "Codex Relay cleanup after start failure also failed: %s",

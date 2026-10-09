@@ -2,8 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
+import { LifecycleError } from "nemo-fabric-adapters-common";
+
+import { prepareRelayAtifMatchers } from "../dist/relay-config.js";
 import { PiAdapterRuntime } from "../dist/runtime.js";
 
 function startInput() {
@@ -28,12 +34,28 @@ function startInput() {
 
 const context = startInput().runtimeContext;
 
+test("declares the cumulative Pi turn count in every run result", async () => {
+  const descriptor = JSON.parse(
+    await readFile(new URL("../pi.fabric-adapter.json", import.meta.url), "utf8"),
+  );
+
+  assert.deepEqual(descriptor.extension_schemas.run_result, {
+    type: "object",
+    properties: {
+      pi_turn_count: { type: "integer", minimum: 0 },
+      pi_turn_started: { type: "boolean" },
+    },
+    required: ["pi_turn_count", "pi_turn_started"],
+    additionalProperties: false,
+  });
+});
+
 test("enforces the runtime start and invoke lifecycle guards", async () => {
   const runtime = new PiAdapterRuntime({
     async create() {
       return {
         async prompt() {
-          return { accepted: true, text: "ok" };
+          return { accepted: true, turnStarted: true, turnCount: 1, text: "ok" };
         },
         async stop() {},
       };
@@ -51,13 +73,15 @@ test("enforces the runtime start and invoke lifecycle guards", async () => {
 
 test("normalizes successful plain-text prompts and reuses one session", async () => {
   const prompts = [];
+  let turnCount = 0;
   let stopped = false;
   const runtime = new PiAdapterRuntime({
     async create() {
       return {
         async prompt(text) {
           prompts.push(text);
-          return { accepted: true, text: `reply:${text}`, stopReason: "stop" };
+          turnCount += 1;
+          return { accepted: true, turnStarted: true, turnCount, text: `reply:${text}`, stopReason: "stop" };
         },
         async stop() {
           stopped = true;
@@ -72,9 +96,69 @@ test("normalizes successful plain-text prompts and reuses one session", async ()
   await runtime.stop();
 
   assert.deepEqual(prompts, ["one", "two"]);
-  assert.deepEqual(first, { status: "succeeded", output: { response: "reply:one" } });
-  assert.deepEqual(second, { status: "succeeded", output: { response: "reply:two" } });
+  assert.deepEqual(first, {
+    status: "succeeded",
+    output: { response: "reply:one" },
+    extensions: { pi_turn_count: 1, pi_turn_started: true },
+  });
+  assert.deepEqual(second, {
+    status: "succeeded",
+    output: { response: "reply:two" },
+    extensions: { pi_turn_count: 2, pi_turn_started: true },
+  });
   assert.equal(stopped, true);
+});
+
+test("preserves a multi-turn cumulative count across invocations", async () => {
+  const outcomes = [
+    { accepted: true, turnStarted: true, turnCount: 2, text: "first" },
+    { accepted: true, turnStarted: true, turnCount: 5, text: "second" },
+  ];
+  const runtime = new PiAdapterRuntime({
+    async create() {
+      return {
+        async prompt() {
+          return outcomes.shift();
+        },
+        async stop() {},
+      };
+    },
+  });
+
+  await runtime.start(startInput());
+  const first = await runtime.invoke({ input: "one" }, context);
+  const second = await runtime.invoke({ input: "two" }, context);
+  const unsupported = await runtime.invoke({ input: { task: "unsupported" } }, context);
+
+  assert.deepEqual(first.extensions, { pi_turn_count: 2, pi_turn_started: true });
+  assert.deepEqual(second.extensions, { pi_turn_count: 5, pi_turn_started: true });
+  assert.deepEqual(unsupported.extensions, { pi_turn_count: 5, pi_turn_started: false });
+  await runtime.stop();
+});
+
+test("rejects inconsistent cumulative turn counts", async () => {
+  const outcomes = [
+    { accepted: true, turnStarted: true, turnCount: 1, text: "first" },
+    { accepted: true, turnStarted: false, turnCount: 2, text: "invalid" },
+  ];
+  const runtime = new PiAdapterRuntime({
+    async create() {
+      return {
+        async prompt() {
+          return outcomes.shift();
+        },
+        async stop() {},
+      };
+    },
+  });
+
+  await runtime.start(startInput());
+  await runtime.invoke({ input: "one" }, context);
+  await assert.rejects(
+    runtime.invoke({ input: "two" }, context),
+    (error) => error.code === "pi_invalid_turn_count",
+  );
+  await runtime.stop();
 });
 
 test("does not invoke Pi again after an extension requests shutdown", async () => {
@@ -84,7 +168,13 @@ test("does not invoke Pi again after an extension requests shutdown", async () =
       return {
         async prompt() {
           promptCount += 1;
-          return { accepted: true, stopReason: "aborted", shutdownRequested: true };
+          return {
+            accepted: true,
+            turnStarted: false,
+            turnCount: 0,
+            stopReason: "aborted",
+            shutdownRequested: true,
+          };
         },
         async stop() {},
       };
@@ -95,6 +185,7 @@ test("does not invoke Pi again after an extension requests shutdown", async () =
   const first = await runtime.invoke({ input: "stop" }, context);
   assert.equal(first.status, "cancelled");
   assert.equal(first.error.code, "pi_extension_shutdown");
+  assert.deepEqual(first.extensions, { pi_turn_count: 0, pi_turn_started: false });
   await assert.rejects(
     runtime.invoke({ input: "again" }, context),
     (error) => error.code === "pi_runtime_unusable",
@@ -107,9 +198,10 @@ test("rejects non-text input without invoking Pi", async () => {
   const runtime = new PiAdapterRuntime({
     async create() {
       return {
+        turnCount: 2,
         async prompt() {
           prompted = true;
-          return { accepted: true, text: "unexpected" };
+          return { accepted: true, turnStarted: true, turnCount: 1, text: "unexpected" };
         },
         async stop() {},
       };
@@ -119,15 +211,22 @@ test("rejects non-text input without invoking Pi", async () => {
   const result = await runtime.invoke({ input: { task: "not yet supported" } }, context);
   assert.equal(result.status, "failed");
   assert.equal(result.error.code, "pi_unsupported_input");
+  assert.deepEqual(result.extensions, { pi_turn_count: 2, pi_turn_started: false });
   assert.equal(prompted, false);
 });
 
 test("normalizes rejected, failed, empty, and aborted Pi outcomes", async () => {
   const outcomes = [
-    { accepted: false },
-    { accepted: true, stopReason: "error", errorMessage: "provider rejected the request" },
-    { accepted: true, stopReason: "stop" },
-    { accepted: true, stopReason: "aborted" },
+    { accepted: false, turnStarted: false, turnCount: 0 },
+    {
+      accepted: true,
+      turnStarted: true,
+      turnCount: 1,
+      stopReason: "error",
+      errorMessage: "provider rejected the request",
+    },
+    { accepted: true, turnStarted: true, turnCount: 2, stopReason: "stop" },
+    { accepted: true, turnStarted: false, turnCount: 2, stopReason: "aborted" },
   ];
   const runtime = new PiAdapterRuntime({
     async create() {
@@ -153,6 +252,15 @@ test("normalizes rejected, failed, empty, and aborted Pi outcomes", async () => 
   assert.equal(empty.error.code, "pi_no_assistant_response");
   assert.equal(aborted.status, "cancelled");
   assert.equal(aborted.error.code, "pi_aborted");
+  assert.deepEqual(
+    [rejected, failed, empty, aborted].map((result) => result.extensions),
+    [
+      { pi_turn_count: 0, pi_turn_started: false },
+      { pi_turn_count: 1, pi_turn_started: true },
+      { pi_turn_count: 2, pi_turn_started: true },
+      { pi_turn_count: 2, pi_turn_started: false },
+    ],
+  );
 });
 
 test("stop is safe before start and idempotent after start", async () => {
@@ -161,7 +269,7 @@ test("stop is safe before start and idempotent after start", async () => {
     async create() {
       return {
         async prompt() {
-          return { accepted: true, text: "ok" };
+          return { accepted: true, turnStarted: true, turnCount: 1, text: "ok" };
         },
         async stop() {
           stopCount += 1;
@@ -174,4 +282,278 @@ test("stop is safe before start and idempotent after start", async () => {
   await runtime.stop();
   await runtime.stop();
   assert.equal(stopCount, 1);
+});
+
+test("adds Relay details to results and stops the Pi session before the gateway", async () => {
+  const order = [];
+  const relay = {
+    pluginConfig: { version: 1, components: [] },
+    async output() {
+      return {
+        relay_runtime: { enabled: true, gateway_url: "http://127.0.0.1:41000" },
+        relay_artifacts: [],
+      };
+    },
+    async stop() {
+      order.push("relay");
+    },
+  };
+  const runtime = new PiAdapterRuntime({
+    async create() {
+      return {
+        relay,
+        async prompt() {
+          return { accepted: true, turnStarted: true, turnCount: 1, text: "ok", stopReason: "stop" };
+        },
+        async stop() {
+          order.push("session");
+        },
+      };
+    },
+  });
+
+  await runtime.start(startInput());
+  const result = await runtime.invoke({ input: "trace me" }, context);
+  await runtime.stop();
+
+  assert.deepEqual(result, {
+    status: "succeeded",
+    extensions: { pi_turn_count: 1, pi_turn_started: true },
+    output: {
+      response: "ok",
+      relay_runtime: { enabled: true, gateway_url: "http://127.0.0.1:41000" },
+      relay_artifacts: [],
+    },
+  });
+  assert.deepEqual(order, ["session", "relay"]);
+});
+
+test("does not wait for local ATIF and preserves ATOF", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "fabric-pi-relay-artifacts-")));
+  const atifDir = join(root, "atif");
+  const atofDir = join(root, "atof");
+  try {
+    await mkdir(atifDir);
+    await mkdir(atofDir);
+    const atofPath = join(atofDir, "events.atof.jsonl");
+    await writeFile(atofPath, "{}\n", "utf8");
+    const pluginConfig = {
+      version: 1,
+      components: [
+        {
+          kind: "observability",
+          config: {
+            atof: {
+              enabled: true,
+              sinks: [{ type: "file", output_directory: atofDir, filename: "events.atof.jsonl" }],
+            },
+            atif: {
+              enabled: true,
+              output_directory: atifDir,
+              filename_template: "trajectory-{session_id}.atif.json",
+            },
+          },
+        },
+      ],
+    };
+    const atifMatchers = await prepareRelayAtifMatchers(pluginConfig);
+    let promptCount = 0;
+    const relay = {
+      pluginConfig,
+      atifMatchers,
+      async output(artifacts) {
+        return { relay_artifacts: artifacts ?? [{ kind: "atif", path: "unexpected" }] };
+      },
+      async stop() {},
+    };
+    const runtime = new PiAdapterRuntime({
+      async create() {
+        let turnCount = 0;
+        return {
+          relay,
+          async prompt() {
+            promptCount += 1;
+            turnCount += 1;
+            return { accepted: true, turnStarted: true, turnCount, text: "ok", stopReason: "stop" };
+          },
+          async stop() {},
+        };
+      },
+    });
+
+    await runtime.start(startInput());
+    const startedAt = performance.now();
+    const first = await runtime.invoke({ input: "first" }, context);
+    const second = await runtime.invoke({ input: "second" }, context);
+
+    assert.ok(performance.now() - startedAt < 1_000, "local ATIF must not delay invocations");
+    assert.equal(first.status, "succeeded");
+    assert.equal(second.status, "succeeded");
+    assert.equal(promptCount, 2);
+    assert.deepEqual(first.output.relay_artifacts, [{ kind: "atof", path: atofPath }]);
+    assert.deepEqual(second.output.relay_artifacts, [{ kind: "atof", path: atofPath }]);
+    await runtime.stop();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("still stops Relay when Pi session shutdown fails", async () => {
+  let sessionStopAttempts = 0;
+  let relayStopAttempts = 0;
+  const sessionFailure = new Error("session shutdown failed");
+  const runtime = new PiAdapterRuntime({
+    async create() {
+      return {
+        relay: {
+          pluginConfig: { version: 1, components: [] },
+          async output() {
+            return {};
+          },
+          async stop() {
+            relayStopAttempts += 1;
+          },
+        },
+        async prompt() {
+          return { accepted: true, turnStarted: true, turnCount: 1, text: "ok" };
+        },
+        async stop() {
+          sessionStopAttempts += 1;
+          if (sessionStopAttempts === 1) {
+            throw sessionFailure;
+          }
+        },
+      };
+    },
+  });
+  await runtime.start(startInput());
+
+  await assert.rejects(runtime.stop(), sessionFailure);
+  assert.equal(relayStopAttempts, 1);
+  await runtime.stop();
+  assert.equal(sessionStopAttempts, 2);
+  assert.equal(relayStopAttempts, 2);
+});
+
+test("preserves both Pi session and Relay shutdown failures", async () => {
+  const sessionFailure = new Error("session shutdown failed");
+  const relayFailure = new LifecycleError("pi_relay_stop_failed", "gateway shutdown failed", {
+    metadata: {
+      gateway_log_path: "/tmp/gateway.log",
+      relay_error: "gateway still running",
+    },
+  });
+  const runtime = new PiAdapterRuntime({
+    async create() {
+      return {
+        relay: {
+          pluginConfig: { version: 1, components: [] },
+          async output() {
+            return {};
+          },
+          async stop() {
+            throw relayFailure;
+          },
+        },
+        async prompt() {
+          return { accepted: true, turnStarted: true, turnCount: 1, text: "ok" };
+        },
+        async stop() {
+          throw sessionFailure;
+        },
+      };
+    },
+  });
+  await runtime.start(startInput());
+
+  await assert.rejects(
+    runtime.stop(),
+    (error) =>
+      error instanceof LifecycleError &&
+      error.code === "pi_relay_stop_failed" &&
+      error.message === "Pi session and NeMo Relay cleanup failed" &&
+      error.metadata.gateway_log_path === "/tmp/gateway.log" &&
+      error.metadata.relay_error === "gateway still running" &&
+      error.metadata.session_error === "session shutdown failed",
+  );
+});
+
+test("preserves non-lifecycle cleanup failures in an AggregateError", async () => {
+  const sessionFailure = new Error("session shutdown failed");
+  const relayFailure = new Error("gateway shutdown failed");
+  const runtime = new PiAdapterRuntime({
+    async create() {
+      return {
+        relay: {
+          pluginConfig: { version: 1, components: [] },
+          async output() {
+            return {};
+          },
+          async stop() {
+            throw relayFailure;
+          },
+        },
+        async prompt() {
+          return { accepted: true, turnStarted: true, turnCount: 1, text: "ok" };
+        },
+        async stop() {
+          throw sessionFailure;
+        },
+      };
+    },
+  });
+  await runtime.start(startInput());
+
+  await assert.rejects(
+    runtime.stop(),
+    (error) =>
+      error instanceof AggregateError &&
+      error.message === "Pi session and NeMo Relay cleanup failed" &&
+      error.errors[0] === sessionFailure &&
+      error.errors[1] === relayFailure,
+  );
+});
+
+test("retries Relay cleanup when gateway shutdown fails", async () => {
+  let promptCount = 0;
+  let sessionStopAttempts = 0;
+  let relayStopAttempts = 0;
+  const relayFailure = new Error("gateway shutdown failed");
+  const runtime = new PiAdapterRuntime({
+    async create() {
+      return {
+        relay: {
+          pluginConfig: { version: 1, components: [] },
+          async output() {
+            return {};
+          },
+          async stop() {
+            relayStopAttempts += 1;
+            if (relayStopAttempts === 1) {
+              throw relayFailure;
+            }
+          },
+        },
+        async prompt() {
+          promptCount += 1;
+          return { accepted: true, turnStarted: true, turnCount: 1, text: "ok" };
+        },
+        async stop() {
+          sessionStopAttempts += 1;
+        },
+      };
+    },
+  });
+  await runtime.start(startInput());
+
+  await assert.rejects(runtime.stop(), relayFailure);
+  await assert.rejects(
+    runtime.invoke({ input: "must not run" }, context),
+    (error) => error.code === "pi_runtime_unusable",
+  );
+  assert.equal(promptCount, 0);
+  await runtime.stop();
+  await runtime.stop();
+  assert.equal(sessionStopAttempts, 2);
+  assert.equal(relayStopAttempts, 2);
 });

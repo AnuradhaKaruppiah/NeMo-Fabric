@@ -178,6 +178,20 @@ def _max_turns(config: AgentConfig) -> int | None:
     return config.runtime.max_turns if config.runtime is not None else None
 
 
+def selected_model_name(model_config: AgentModelConfig) -> str:
+    """The model id sent to the endpoint.
+
+    Fabric model slugs are ``provider/model``; for the ``openai`` provider the
+    prefix is Fabric's, not part of OpenAI's id, so it is dropped (the same rule
+    the Codex adapter applies). Other providers' ids are sent as written, since
+    namespaces such as ``nvidia/`` belong to the id itself.
+    """
+
+    if model_config.provider == "openai":
+        return model_config.model.removeprefix("openai/")
+    return model_config.model
+
+
 def build_chat_model(model_config: AgentModelConfig) -> tuple[Any, str, str | None]:
     """Build a LangChain chat model from Fabric model config.
 
@@ -185,13 +199,15 @@ def build_chat_model(model_config: AgentModelConfig) -> tuple[Any, str, str | No
     delegated to ``langchain.chat_models.init_chat_model``.
     """
 
-    model_name = model_config.model
+    model_name = selected_model_name(model_config)
     api_key_env = resolve_api_key_env(model_config)
     api_key = os.environ[api_key_env]
 
     provider = model_config.provider
     base_url = model_config.base_url
     temperature = model_config.temperature
+    top_p = model_config.top_p
+    max_tokens = model_config.max_tokens
 
     if provider in OPENAI_COMPATIBLE_PROVIDERS - {"openai"} and not base_url:
         raise AdapterConfigError(
@@ -205,6 +221,10 @@ def build_chat_model(model_config: AgentModelConfig) -> tuple[Any, str, str | No
         kwargs = {"model": model_name, "model_provider": provider, "api_key": api_key}
         if temperature is not None:
             kwargs["temperature"] = temperature
+        if top_p is not None:
+            kwargs["top_p"] = top_p
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
         if base_url:
             kwargs["base_url"] = base_url
         return (
@@ -220,6 +240,10 @@ def build_chat_model(model_config: AgentModelConfig) -> tuple[Any, str, str | No
         kwargs["base_url"] = base_url
     if temperature is not None:
         kwargs["temperature"] = temperature
+    if top_p is not None:
+        kwargs["top_p"] = top_p
+    if max_tokens is not None:
+        kwargs["max_completion_tokens"] = max_tokens
     return ChatOpenAI(**_supported_kwargs(ChatOpenAI, kwargs)), model_name, base_url
 
 
@@ -711,6 +735,7 @@ class DeepAgentsRuntime:
                 user_message,
                 request_id,
                 runtime_context.invocation_id,
+                request.relay_session_root,
             )
 
         if outcome.error is None:
@@ -783,6 +808,7 @@ class DeepAgentsRuntime:
         user_message: str,
         request_id: str,
         invocation_id: str,
+        session_root: str | None,
     ) -> TurnOutcome:
         """Run one turn inside the Relay plugin/scope, isolating telemetry faults.
 
@@ -803,16 +829,16 @@ class DeepAgentsRuntime:
         try:
             common_utils.reject_ambient_relay_plugin_config()
             callback_handler = self._callback_handler_type()
-            async with self._relay_plugin.plugin(
+            async with self._relay_plugin.activate(
                 self._relay_plugin_config
-            ) as activation_report:
-                common_utils.reject_inherited_relay_plugin_config(activation_report)
+            ) as activation:
+                common_utils.reject_inherited_relay_plugin_config(activation.report)
                 # Caught here rather than left to propagate: an exception crossing the
                 # plugin's ``__aexit__`` is replaced by any fault the plugin raises in
                 # turn, which would lose one of the two.
                 try:
                     request_context, metadata = common_utils.relay_request_context(
-                        request_id
+                        request_id, session_root
                     )
                     metadata["nemo_fabric_invocation_id"] = invocation_id
                     with request_context:

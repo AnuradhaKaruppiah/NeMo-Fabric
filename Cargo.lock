@@ -429,7 +429,7 @@ dependencies = [
 
 [[package]]
 name = "fabric-python"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "nemo-fabric-core",
  "pyo3",
@@ -1261,7 +1261,7 @@ checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
 
 [[package]]
 name = "nemo-fabric-cli"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "clap",
  "nemo-fabric-core",
@@ -1270,7 +1270,7 @@ dependencies = [
 
 [[package]]
 name = "nemo-fabric-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "jsonschema",
  "schemars",
@@ -1281,7 +1281,7 @@ dependencies = [
 
 [[package]]
 name = "nemo-fabric-openshell-provider"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "openshell-policy",
@@ -1295,7 +1295,7 @@ dependencies = [
 
 [[package]]
 name = "nemo-fabric-runtime-control"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "serde",
  "serde_json",

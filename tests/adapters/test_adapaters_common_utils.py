@@ -17,6 +17,40 @@ from unittest.mock import MagicMock
 
 import nemo_fabric_adapters.common.utils as common_utils
 import pytest
+from nemo_fabric import DiscoveryConfig
+from nemo_fabric import Fabric
+from nemo_fabric import FabricConfig
+from nemo_fabric import HarnessConfig
+from nemo_fabric import MetadataConfig
+from nemo_fabric import ModelConfig
+from nemo_fabric import RelayAtifConfig
+from nemo_fabric import RelayObservabilityConfig
+
+
+ROOT = Path(__file__).resolve().parents[2]
+CODEX_DESCRIPTOR = ROOT / "adapters/python/codex/codex.fabric-adapter.json"
+
+
+def _stub_relay(monkeypatch: pytest.MonkeyPatch) -> tuple[MagicMock, list[Any]]:
+    relay = ModuleType("nemo_relay")
+    propagation_context = MagicMock(
+        side_effect=lambda parent_uuid, root_uuid=None: SimpleNamespace(
+            parent_uuid=parent_uuid,
+            root_uuid=root_uuid,
+        )
+    )
+    used_stacks: list[Any] = []
+
+    @contextmanager
+    def use_stack(stack):
+        used_stacks.append(stack)
+        yield stack
+
+    relay.PropagationContext = propagation_context
+    relay.create_scope_stack_from_propagation = MagicMock(side_effect=lambda ctx: ctx)
+    relay.use_scope_stack = use_stack
+    monkeypatch.setitem(sys.modules, "nemo_relay", relay)
+    return propagation_context, used_stacks
 
 
 @pytest.mark.parametrize(
@@ -30,6 +64,8 @@ import pytest
             ),
         ),
         ("request-1", None),
+        ("00000000-0000-0000-0000-000000000000", None),
+        ("018f47a4-3af7-7d94-0000-000000000000", None),
     ],
 )
 def test_relay_request_context(
@@ -37,25 +73,7 @@ def test_relay_request_context(
     expected_context: tuple[str, str] | None,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    relay = ModuleType("nemo_relay")
-    propagation_context = MagicMock(
-        side_effect=lambda parent_uuid, root_uuid=None: SimpleNamespace(
-            parent_uuid=parent_uuid,
-            root_uuid=root_uuid,
-        )
-    )
-    create_stack = MagicMock(side_effect=lambda context: context)
-    used_stacks = []
-
-    @contextmanager
-    def use_stack(stack):
-        used_stacks.append(stack)
-        yield stack
-
-    relay.PropagationContext = propagation_context
-    relay.create_scope_stack_from_propagation = create_stack
-    relay.use_scope_stack = use_stack
-    monkeypatch.setitem(sys.modules, "nemo_relay", relay)
+    propagation_context, used_stacks = _stub_relay(monkeypatch)
 
     request_context, metadata = common_utils.relay_request_context(request_id)
     with request_context:
@@ -64,17 +82,109 @@ def test_relay_request_context(
     assert metadata == {"nemo_fabric_request_id": request_id}
     if expected_context is None:
         propagation_context.assert_not_called()
-        create_stack.assert_not_called()
         assert used_stacks == []
     else:
         propagation_context.assert_called_once_with(
             expected_context[0], root_uuid=expected_context[1]
         )
-        create_stack.assert_called_once()
-        created_context = create_stack.call_args.args[0]
-        assert created_context.parent_uuid == expected_context[0]
-        assert created_context.root_uuid == expected_context[1]
-        assert used_stacks == [created_context]
+        assert [(stack.parent_uuid, stack.root_uuid) for stack in used_stacks] == [
+            expected_context
+        ]
+
+
+SESSION_UUID = "018f47a4-0000-7d94-8e61-9f0f89b5d312"
+REQUEST_UUID = "018f47a4-3af7-7d94-8e61-9f0f89b5d312"
+
+
+def test_relay_request_context_roots_at_the_session(monkeypatch: pytest.MonkeyPatch):
+    propagation_context, used_stacks = _stub_relay(monkeypatch)
+
+    request_context, metadata = common_utils.relay_request_context(
+        REQUEST_UUID, SESSION_UUID
+    )
+    with request_context:
+        pass
+
+    propagation_context.assert_called_once_with(REQUEST_UUID, root_uuid=SESSION_UUID)
+    assert metadata == {
+        "nemo_fabric_request_id": REQUEST_UUID,
+        "nemo_fabric_session_root": SESSION_UUID,
+    }
+    assert used_stacks[0].root_uuid == SESSION_UUID
+    assert used_stacks[0].parent_uuid == REQUEST_UUID
+
+
+def test_relay_request_context_sessions_a_non_uuid_request(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    propagation_context, used_stacks = _stub_relay(monkeypatch)
+
+    request_context, metadata = common_utils.relay_request_context(
+        "request-1", SESSION_UUID
+    )
+    with request_context:
+        pass
+
+    propagation_context.assert_called_once_with(SESSION_UUID, root_uuid=SESSION_UUID)
+    assert metadata["nemo_fabric_request_id"] == "request-1"
+    assert used_stacks[0].root_uuid == SESSION_UUID
+
+
+NIL_UUID = "00000000-0000-0000-0000-000000000000"
+ZERO_SPAN_UUID = "018f47a4-3af7-7d94-0000-000000000000"
+
+
+@pytest.mark.parametrize(
+    "session_root",
+    ["agent-session-TnDtpPhP", "", "not a uuid", NIL_UUID, ZERO_SPAN_UUID],
+)
+def test_relay_request_context_drops_a_non_uuid_session_root(
+    session_root: str, monkeypatch: pytest.MonkeyPatch
+):
+    propagation_context, used_stacks = _stub_relay(monkeypatch)
+
+    request_context, metadata = common_utils.relay_request_context(
+        REQUEST_UUID, session_root
+    )
+    with request_context:
+        pass
+
+    propagation_context.assert_called_once_with(REQUEST_UUID, root_uuid=REQUEST_UUID)
+    assert "nemo_fabric_session_root" not in metadata
+    assert used_stacks[0].root_uuid == REQUEST_UUID
+
+
+@pytest.mark.parametrize("session_root", [NIL_UUID, ZERO_SPAN_UUID])
+def test_relay_refuses_a_zero_span_root_so_fabric_falls_back(session_root: str):
+    nemo_relay = pytest.importorskip("nemo_relay")
+
+    with pytest.raises(ValueError, match="not a usable Relay identifier"):
+        nemo_relay.PropagationContext(REQUEST_UUID, root_uuid=session_root)
+
+    request_context, metadata = common_utils.relay_request_context(
+        REQUEST_UUID, session_root
+    )
+    with request_context:
+        captured = nemo_relay.capture_propagation_context()
+
+    assert captured.root_uuid == REQUEST_UUID
+    assert "nemo_fabric_session_root" not in metadata
+
+
+def test_two_requests_share_one_session_root(monkeypatch: pytest.MonkeyPatch):
+    _, used_stacks = _stub_relay(monkeypatch)
+    second_request = "018f47a4-9999-7d94-8e61-9f0f89b5d312"
+
+    for request_id in (REQUEST_UUID, second_request):
+        context, _ = common_utils.relay_request_context(request_id, SESSION_UUID)
+        with context:
+            pass
+
+    assert [stack.root_uuid for stack in used_stacks] == [SESSION_UUID, SESSION_UUID]
+    assert [stack.parent_uuid for stack in used_stacks] == [
+        REQUEST_UUID,
+        second_request,
+    ]
 
 
 @pytest.mark.parametrize(
@@ -453,20 +563,26 @@ def test_reject_ambient_relay_plugin_config_reports_paths(
         common_utils.reject_ambient_relay_plugin_config()
 
 
-def test_reject_inherited_relay_plugin_config_allows_system_policy():
-    common_utils.reject_inherited_relay_plugin_config(
-        {
+def _inherited_report(message: str) -> dict[str, Any]:
+    return {
+        "config": {
             "diagnostics": [
                 {
                     "level": "warning",
                     "code": "plugin.configuration_inherited",
-                    "message": (
-                        "inherited plugin configuration from discovered file: "
-                        "/etc/nemo-relay/plugins.toml"
-                    ),
+                    "message": message,
                 }
             ]
         }
+    }
+
+
+def test_reject_inherited_relay_plugin_config_allows_system_policy():
+    common_utils.reject_inherited_relay_plugin_config(
+        _inherited_report(
+            "inherited plugin configuration from discovered file: "
+            "/etc/nemo-relay/plugins.toml"
+        )
     )
 
 
@@ -486,17 +602,7 @@ def test_reject_inherited_relay_plugin_config_allows_system_policy():
 )
 def test_reject_inherited_relay_plugin_config_rejects_unmanaged_sources(message):
     with pytest.raises(RuntimeError, match="user or project files"):
-        common_utils.reject_inherited_relay_plugin_config(
-            {
-                "diagnostics": [
-                    {
-                        "level": "warning",
-                        "code": "plugin.configuration_inherited",
-                        "message": message,
-                    }
-                ]
-            }
-        )
+        common_utils.reject_inherited_relay_plugin_config(_inherited_report(message))
 
 
 def test_dump_yaml_falls_back_to_json_when_yaml_is_unavailable(
@@ -631,6 +737,40 @@ def test_load_relay_plugin_config_wraps_and_normalizes_bare_v3_observability_con
         {"kind": "atof", "path": str(atof_file)},
         {"kind": "atif", "path": str(atif_file)},
     ]
+
+
+def test_load_relay_plugin_config_preserves_core_authored_atif_model_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    config = FabricConfig(
+        metadata=MetadataConfig(name="core-authored-relay-test"),
+        harness=HarnessConfig(adapter_id="nvidia.fabric.codex"),
+        discovery=DiscoveryConfig(local_paths=[CODEX_DESCRIPTOR]),
+        models={"default": ModelConfig(provider="openai", model="gpt-5-codex")},
+    )
+    config.enable_relay(
+        observability=RelayObservabilityConfig(atif=RelayAtifConfig(enabled=True))
+    )
+    plan = Fabric().plan(config, base_dir=ROOT)
+    relay_config = plan.telemetry_plan["relay_config"]
+    config_path = tmp_path / "relay.json"
+    config_path.write_text(
+        json.dumps({"relay": {"config": relay_config}}), encoding="utf-8"
+    )
+    monkeypatch.setenv("FABRIC_RELAY_CONFIG_PATH", str(config_path))
+
+    plugin_config = common_utils.load_relay_plugin_config(
+        {
+            "agent_name": "core-authored-relay-test",
+            "base_dir": str(tmp_path),
+            "config": plan.agent_config,
+            "runtime_context": {"runtime_id": "runtime-current"},
+        }
+    )
+
+    assert (
+        plugin_config["components"][0]["config"]["atif"]["model_name"] == "gpt-5-codex"
+    )
 
 
 def test_load_relay_plugin_config_keeps_empty_config_component_free(tmp_path: Path):
@@ -928,7 +1068,7 @@ def test_collect_relay_artifacts_ignores_malformed_paths(tmp_path: Path):
     assert common_utils.collect_relay_artifacts(plugin_config) == []
 
 
-def test_relay_0_7_validates_v3_plugin_config():
+def test_relay_validates_v3_plugin_config():
     from nemo_relay import plugin
 
     os.environ["TOKEN"] = "test-token"
@@ -967,10 +1107,10 @@ def test_relay_0_7_validates_v3_plugin_config():
     }
 
     common_utils.validate_relay_observability_v3(plugin_config)
-    assert plugin.validate(plugin_config)["diagnostics"] == []
+    assert plugin.validate_exact(plugin_config)["config"]["diagnostics"] == []
 
 
-async def test_relay_0_7_initializes_v3_atof_atif_config(
+async def test_relay_initializes_v3_atof_atif_config(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -1014,12 +1154,12 @@ async def test_relay_0_7_initializes_v3_atof_atif_config(
         ],
     }
     common_utils.validate_relay_observability_v3(plugin_config)
-    assert plugin.validate(plugin_config)["diagnostics"] == []
-    async with plugin.plugin(plugin_config) as activation_report:
-        assert activation_report["diagnostics"] == []
+    assert plugin.validate_exact(plugin_config)["config"]["diagnostics"] == []
+    async with plugin.activate(plugin_config) as activation:
+        assert activation.report["config"]["diagnostics"] == []
 
 
-def test_relay_0_7_validates_all_v3_otlp_fields():
+def test_relay_validates_all_v3_otlp_fields():
     from nemo_relay import plugin
 
     os.environ["OTEL_TOKEN"] = "test-token"
@@ -1075,7 +1215,7 @@ def test_relay_0_7_validates_all_v3_otlp_fields():
     }
 
     common_utils.validate_relay_observability_v3(plugin_config)
-    assert plugin.validate(plugin_config)["diagnostics"] == []
+    assert plugin.validate_exact(plugin_config)["config"]["diagnostics"] == []
 
 
 def test_relay_validates_unknown_atof_sink_type():
@@ -1098,7 +1238,7 @@ def test_relay_validates_unknown_atof_sink_type():
         ],
     }
 
-    assert plugin.validate(plugin_config)["diagnostics"] == [
+    assert plugin.validate_exact(plugin_config)["config"]["diagnostics"] == [
         {
             "code": "observability.invalid_plugin_config",
             "component": "observability",
@@ -1188,7 +1328,7 @@ def test_validate_relay_observability_v3_matches_relay_implicit_version():
 
     common_utils.validate_relay_observability_v3(plugin_config)
 
-    assert plugin.validate(plugin_config)["diagnostics"] == []
+    assert plugin.validate_exact(plugin_config)["config"]["diagnostics"] == []
 
 
 @pytest.mark.parametrize(

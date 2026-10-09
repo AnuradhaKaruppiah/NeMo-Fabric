@@ -40,6 +40,18 @@ def test_rust_attribution_strips_trailing_license_whitespace():
     assert not any(line.endswith((" ", "\r")) for line in rendered[2].splitlines())
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("plain license text", "```"),
+        ("an embedded ``` block", "````"),
+        ("an embedded ````` block", "``````"),
+    ],
+)
+def test_markdown_code_fence_is_longer_than_embedded_fences(text, expected):
+    assert license_diff.attributions_lockfile_md._markdown_code_fence(text) == expected
+
+
 def test_compare_inventories_classifies_dependency_changes():
     unchanged = _entry("unchanged", "1.0.0", "MIT")
     base = {

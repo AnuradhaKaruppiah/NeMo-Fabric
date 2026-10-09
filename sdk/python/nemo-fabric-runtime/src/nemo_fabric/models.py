@@ -272,6 +272,13 @@ class ModelConfig(FabricBaseModel):
     model: str = Field(min_length=1)
     api_key_env: str | None = None
     temperature: float | None = None
+    top_p: float | None = Field(default=None, strict=True, ge=0, le=1)
+    max_tokens: int | None = Field(
+        default=None,
+        strict=True,
+        gt=0,
+        le=(1 << 64) - 1,
+    )
     base_url: str | None = Field(default=None, min_length=1)
     settings: dict[str, Any] = Field(default_factory=dict)
 
@@ -280,6 +287,13 @@ class ModelConfig(FabricBaseModel):
     def _validate_provider(cls, value: str) -> str:
         if not value.strip() or value != value.strip() or value != value.lower():
             raise ValueError("provider must be a non-empty lowercase identifier")
+        return value
+
+    @field_validator("max_tokens", mode="before")
+    @classmethod
+    def _normalize_integral_max_tokens(cls, value: Any) -> Any:
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
         return value
 
     @field_validator("model", "api_key_env")
@@ -660,7 +674,7 @@ class RelayAtifConfig(FabricBaseModel):
     enabled: bool = False
     agent_name: str = "NeMo Relay"
     agent_version: str | None = None
-    model_name: str = "unknown"
+    model_name: str | None = None
     tool_definitions: list[dict[str, Any]] | None = None
     extra: dict[str, Any] | None = None
     output_directory: str | Path | None = None
@@ -1227,6 +1241,10 @@ class RunRequest(FabricBaseModel):
     """One validated NeMo Fabric invocation request."""
 
     input: Any = ""
+    relay_session_root: str | None = Field(
+        default=None,
+        description="UUID propagation root shared across conversation turns; unusable values fall back to the request ID.",
+    )
     request_id: str = Field(
         default_factory=lambda: f"request-{uuid.uuid4().hex}",
         min_length=1,

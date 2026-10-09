@@ -25,10 +25,12 @@ from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 
 import pytest
+from langchain_openai import ChatOpenAI as InstalledChatOpenAI
 from langgraph.errors import GraphRecursionError
 from nemo_fabric_adapter_contract.codec import ContractValidationError
 from nemo_fabric_adapter_contract.models import AgentConfig
 from nemo_fabric_adapter_contract.models import AgentMcpServerConfig
+from nemo_fabric_adapter_contract.models import AgentModelConfig
 from nemo_fabric_adapter_contract.models import AgentRunRequest
 from nemo_fabric_adapter_contract.models import AgentRunResult
 from nemo_fabric_adapter_contract.models import AgentRunStatus
@@ -36,6 +38,13 @@ from nemo_fabric_adapter_contract.models import McpOAuth2Config
 from nemo_fabric_adapter_contract.models import McpServiceAccountConfig
 from nemo_fabric_adapter_contract.models import RuntimeContext
 from nemo_fabric_adapters.deepagents import adapter  # noqa: E402
+
+
+def _activation(*diagnostics: dict[str, object]) -> types.SimpleNamespace:
+    return types.SimpleNamespace(
+        report={"config": {"diagnostics": list(diagnostics), "runtime_diagnostics": []}}
+    )
+
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -67,6 +76,27 @@ def test_descriptor_declares_supported_normalized_config():
             "the adapter host without process isolation."
         ),
     }
+    assert descriptor["model_schema"]["properties"]["settings"] == {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": False,
+    }
+    assert {
+        name: descriptor["model_schema"]["properties"][name]
+        for name in ("top_p", "max_tokens")
+    } == {
+        "top_p": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+        },
+        "max_tokens": {
+            "type": "integer",
+            "minimum": 1,
+        },
+    }
+    assert "models.top_p" in descriptor["config"]["accepts"]
+    assert "models.max_tokens" in descriptor["config"]["accepts"]
 
 
 def lifecycle_start_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -128,17 +158,19 @@ def fake_sdks_fixture(monkeypatch):
     """Stub the deepagents/langchain/langgraph SDKs with mocks.
 
     Returns a recorder capturing the ``create_deep_agent`` kwargs, the streamed
-    ``config``, and the checkpointer close count. ``chat_openai``, ``fs_backend``,
-    and ``local_shell_backend`` expose the mocked classes so tests can assert their
-    construction kwargs.
+    ``config``, and the checkpointer close count. ``chat_openai``,
+    ``init_chat_model``, ``fs_backend``, and ``local_shell_backend`` expose the
+    mocked callables so tests can assert their construction kwargs.
     """
 
     recorder: dict[str, Any] = {"saver_exits": 0}
 
     mock_chat_openai = MagicMock()
+    mock_init_chat_model = MagicMock()
     mock_fs_backend = MagicMock()
     mock_local_shell_backend = MagicMock()
     recorder["chat_openai"] = mock_chat_openai
+    recorder["init_chat_model"] = mock_init_chat_model
     recorder["fs_backend"] = mock_fs_backend
     recorder["local_shell_backend"] = mock_local_shell_backend
 
@@ -152,7 +184,9 @@ def fake_sdks_fixture(monkeypatch):
                 raise recorder["stream_error"]
             recorder["astream_agent"] = agent_name
             recorder["astream_recursion_limit"] = recorder.get(
-                "bound_recursion_limit" if agent_name == "bound" else "original_recursion_limit"
+                "bound_recursion_limit"
+                if agent_name == "bound"
+                else "original_recursion_limit"
             )
             recorder["config"] = config
             recorder["subgraphs"] = subgraphs
@@ -229,6 +263,10 @@ def fake_sdks_fixture(monkeypatch):
     langchain_openai_mod = types.ModuleType("langchain_openai")
     langchain_openai_mod.ChatOpenAI = mock_chat_openai
     monkeypatch.setitem(sys.modules, "langchain_openai", langchain_openai_mod)
+
+    langchain_chat_models_mod = types.ModuleType("langchain.chat_models")
+    langchain_chat_models_mod.init_chat_model = mock_init_chat_model
+    monkeypatch.setitem(sys.modules, "langchain.chat_models", langchain_chat_models_mod)
 
     def open_saver(_conn):
         async def aexit(*_exc):
@@ -327,12 +365,12 @@ def fake_relay_fixture(monkeypatch):
         return merged
 
     @contextlib.asynccontextmanager
-    async def plugin_ctx(config: object) -> AsyncIterator[dict[str, object]]:
+    async def plugin_ctx(config: object) -> AsyncIterator[types.SimpleNamespace]:
         calls["plugin_open"] = True
         calls["plugin_enters"] = calls.get("plugin_enters", 0) + 1
         calls.setdefault("plugin_configs", []).append(config)
         try:
-            yield {"diagnostics": [], "runtime_diagnostics": []}
+            yield _activation()
         finally:
             calls["plugin_exits"] = calls.get("plugin_exits", 0) + 1
 
@@ -401,7 +439,7 @@ def fake_relay_fixture(monkeypatch):
     # check sees Relay as installed.
     relay_root.__spec__ = importlib.machinery.ModuleSpec("nemo_relay", loader=None)
     plugin_mod = types.ModuleType("nemo_relay.plugin")
-    plugin_mod.plugin = plugin_ctx
+    plugin_mod.activate = plugin_ctx
     scope_mod = types.ModuleType("nemo_relay.scope")
     scope_mod.scope = scope_ctx
     scope_mod.get_handle = get_handle
@@ -497,6 +535,47 @@ async def test_invocation_preserves_falsy_json_input(
     output = await invoke_once(payload)
 
     assert output["response"] == f"reply to {encoded}"
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "sent"),
+    [
+        ("openai", "openai/gpt-5.4", "gpt-5.4"),
+        ("openai", "gpt-5.4", "gpt-5.4"),
+        (
+            "nvidia",
+            "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+            "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+        ),
+        ("openai-compatible", "openai/local-model", "openai/local-model"),
+    ],
+)
+def test_openai_provider_drops_the_fabric_slug_prefix(provider, model, sent):
+    """Fabric slugs are ``provider/model``; only OpenAI's ids have no namespace of their own.
+
+    Without this the harness sent ``openai/gpt-5.4`` to OpenAI, which rejects it, while the
+    Codex adapter already stripped the prefix. NVIDIA ids keep their ``nvidia/`` namespace
+    because it is part of the id the endpoint expects.
+    """
+    config = AgentModelConfig(provider=provider, model=model, api_key_env="X")
+
+    assert adapter.selected_model_name(config) == sent
+
+
+async def test_openai_slug_prefix_is_dropped_before_chat_openai(
+    tmp_path, make_payload, fake_sdks
+):
+    os.environ["OPENAI_API_KEY"] = "sk-test"
+    payload = make_payload(tmp_path)
+    payload["config"]["models"]["default"] = {
+        "provider": "openai",
+        "model": "openai/gpt-5.4",
+    }
+
+    output = await invoke_once(payload)
+
+    assert output["failed"] is False, output["error"]
+    assert fake_sdks["chat_openai"].call_args.kwargs["model"] == "gpt-5.4"
 
 
 @pytest.mark.parametrize("api_key", [None, ""])
@@ -720,6 +799,43 @@ async def test_request_id_relay_correlation(
         assert fake_relay["used_propagation_stacks"] == fake_relay["propagation_stacks"]
 
 
+SESSION_ROOT = "018f47a4-0000-7d94-8e61-9f0f89b5d312"
+REQUEST_UUID = "018f47a4-3af7-7d94-8e61-9f0f89b5d312"
+
+
+@pytest.mark.parametrize(
+    ("request_id", "expected_parent"),
+    [(REQUEST_UUID, REQUEST_UUID), ("request-1", SESSION_ROOT)],
+)
+async def test_typed_session_root_roots_relay_propagation(
+    tmp_path,
+    make_payload,
+    monkeypatch,
+    fake_relay,
+    request_id,
+    expected_parent,
+):
+    monkeypatch.setattr(
+        adapter.common_utils,
+        "load_relay_plugin_config",
+        lambda _payload: {"version": 1, "components": []},
+    )
+    payload = make_payload(tmp_path)
+    payload["request"]["request_id"] = request_id
+    payload["request"]["relay_session_root"] = SESSION_ROOT
+    payload["request"]["context"] = {"relay_session_root": REQUEST_UUID}
+    payload["runtime_context"]["telemetry"] = {
+        "relay_enabled": True,
+        "metadata": {"telemetry_providers": ["relay"]},
+    }
+
+    await invoke_once(payload)
+
+    assert fake_relay["propagation_contexts"] == [(expected_parent, SESSION_ROOT)]
+    assert fake_relay["scope_metadata"][0]["nemo_fabric_session_root"] == SESSION_ROOT
+    assert fake_relay["used_propagation_stacks"] == fake_relay["propagation_stacks"]
+
+
 async def test_ambient_relay_config_fails_runtime_start_before_agent_creation(
     tmp_path, make_payload, monkeypatch, fake_sdks, fake_relay
 ):
@@ -747,21 +863,16 @@ async def test_inherited_relay_config_report_fails_before_agent_invocation(
     import contextlib
 
     @contextlib.asynccontextmanager
-    async def inherited_plugin(
-        _config: object,
-    ) -> AsyncIterator[dict[str, object]]:
-        yield {
-            "diagnostics": [
-                {
-                    "level": "warning",
-                    "code": "plugin.configuration_inherited",
-                    "message": "inherited plugin configuration from discovered file",
-                }
-            ],
-            "runtime_diagnostics": [],
-        }
+    async def inherited_plugin(_config: object) -> AsyncIterator[types.SimpleNamespace]:
+        yield _activation(
+            {
+                "level": "warning",
+                "code": "plugin.configuration_inherited",
+                "message": "inherited plugin configuration from discovered file",
+            }
+        )
 
-    monkeypatch.setattr(sys.modules["nemo_relay.plugin"], "plugin", inherited_plugin)
+    monkeypatch.setattr(sys.modules["nemo_relay.plugin"], "activate", inherited_plugin)
 
     output = await invoke_once(relay_payload(tmp_path))
 
@@ -840,10 +951,10 @@ async def test_relay_plugin_teardown_failure_keeps_the_invocation_completed(
 
     @contextlib.asynccontextmanager
     async def exploding_plugin(config: object):
-        yield {"diagnostics": [], "runtime_diagnostics": []}
+        yield _activation()
         raise RuntimeError("relay plugin flush failed")
 
-    monkeypatch.setattr(sys.modules["nemo_relay.plugin"], "plugin", exploding_plugin)
+    monkeypatch.setattr(sys.modules["nemo_relay.plugin"], "activate", exploding_plugin)
 
     output = await invoke_once(relay_payload(tmp_path))
 
@@ -1041,12 +1152,12 @@ async def test_a_fault_that_unwinds_cleanly_does_not_quarantine_later_turns(
 
     @contextlib.asynccontextmanager
     async def flaky_plugin(config: object):
-        yield {"diagnostics": [], "runtime_diagnostics": []}
+        yield _activation()
         flushes["count"] += 1
         if flushes["count"] == 1:
             raise RuntimeError("relay plugin flush failed")
 
-    monkeypatch.setattr(sys.modules["nemo_relay.plugin"], "plugin", flaky_plugin)
+    monkeypatch.setattr(sys.modules["nemo_relay.plugin"], "activate", flaky_plugin)
 
     first, second = await invoke_twice(relay_payload(tmp_path))
 
@@ -1072,11 +1183,11 @@ async def test_scope_and_plugin_teardown_faults_are_both_reported(
 
     @contextlib.asynccontextmanager
     async def exploding_plugin(config: object):
-        yield {"diagnostics": [], "runtime_diagnostics": []}
+        yield _activation()
         raise RuntimeError("relay plugin flush failed")
 
     monkeypatch.setattr(sys.modules["nemo_relay.scope"], "scope", exploding_scope)
-    monkeypatch.setattr(sys.modules["nemo_relay.plugin"], "plugin", exploding_plugin)
+    monkeypatch.setattr(sys.modules["nemo_relay.plugin"], "activate", exploding_plugin)
 
     output = await invoke_once(relay_payload(tmp_path))
 
@@ -1573,7 +1684,9 @@ async def test_local_shell_backend_requires_workspace(tmp_path, make_payload):
     }
     payload["config"]["tools"] = {"enabled": ["execute"]}
 
-    with pytest.raises(adapter.AdapterConfigError, match="requires environment.workspace"):
+    with pytest.raises(
+        adapter.AdapterConfigError, match="requires environment.workspace"
+    ):
         await adapter.DeepAgentsRuntime().start(lifecycle_start_payload(payload))
 
 
@@ -1618,11 +1731,7 @@ async def test_local_shell_backend_accepts_explicit_execute_policy(
     ("settings", "error_path"),
     [
         (
-            {
-                "interrupt_on": {
-                    "execute": {"allowed_decisions": ["approve", "reject"]}
-                }
-            },
+            {"interrupt_on": {"execute": {"allowed_decisions": ["approve", "reject"]}}},
             "interrupt_on.execute",
         ),
         (
@@ -1741,9 +1850,7 @@ async def test_omitted_max_turns_preserves_deepagents_default(
     assert fake_sdks["astream_recursion_limit"] is None
 
 
-async def test_recursion_limit_failure_is_normalized(
-    tmp_path, make_payload, fake_sdks
-):
+async def test_recursion_limit_failure_is_normalized(tmp_path, make_payload, fake_sdks):
     fake_sdks["stream_error"] = GraphRecursionError("internal limit details")
 
     result = await invoke_once(make_payload(tmp_path))
@@ -2412,6 +2519,81 @@ async def test_openai_provider_defaults_to_openai_key(
     assert output["failed"] is False, output["error"]
     assert output["base_url"] is None
     assert "base_url" not in fake_sdks["chat_openai"].call_args.kwargs
+
+
+async def test_openai_compatible_model_receives_normalized_sampling(
+    tmp_path, make_payload, fake_sdks
+):
+    payload = make_payload(tmp_path)
+    payload["config"]["models"]["default"].update(
+        {
+            "temperature": 0.2,
+            "top_p": 0.8,
+            "max_tokens": 256,
+        }
+    )
+
+    output = await invoke_once(payload)
+
+    assert output["failed"] is False, output["error"]
+    fake_sdks["chat_openai"].assert_called_once_with(
+        model="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+        api_key="test123",
+        base_url="https://integrate.api.nvidia.com/v1",
+        temperature=0.2,
+        top_p=0.8,
+        max_completion_tokens=256,
+    )
+
+
+def test_openai_max_tokens_keyword_matches_installed_chat_openai_signature():
+    kwargs = adapter._supported_kwargs(
+        InstalledChatOpenAI,
+        {"max_completion_tokens": 256, "max_tokens": 128},
+    )
+
+    assert kwargs["max_completion_tokens"] == 256
+    assert "max_tokens" not in kwargs
+
+
+async def test_generic_model_receives_normalized_sampling(
+    tmp_path, make_payload, fake_sdks
+):
+    os.environ["ANTHROPIC_API_KEY"] = "sk-test"
+    payload = make_payload(tmp_path)
+    payload["config"]["models"]["default"] = {
+        "provider": "anthropic",
+        "model": "claude-test",
+        "api_key_env": "ANTHROPIC_API_KEY",
+        "temperature": 0.3,
+        "top_p": 0.7,
+        "max_tokens": 512,
+    }
+
+    output = await invoke_once(payload)
+
+    assert output["failed"] is False, output["error"]
+    fake_sdks["init_chat_model"].assert_called_once_with(
+        model="claude-test",
+        model_provider="anthropic",
+        api_key="sk-test",
+        temperature=0.3,
+        top_p=0.7,
+        max_tokens=512,
+    )
+
+
+async def test_unset_sampling_preserves_chat_model_defaults(
+    tmp_path, make_payload, fake_sdks
+):
+    output = await invoke_once(make_payload(tmp_path))
+
+    assert output["failed"] is False, output["error"]
+    fake_sdks["chat_openai"].assert_called_once_with(
+        model="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+        api_key="test123",
+        base_url="https://integrate.api.nvidia.com/v1",
+    )
 
 
 async def test_openai_compatible_provider_requires_api_key_env(tmp_path, make_payload):

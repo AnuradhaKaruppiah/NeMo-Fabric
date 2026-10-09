@@ -79,6 +79,11 @@ jobs:
           cache: npm
           cache-dependency-path: adapters/typescript/package-lock.json
 
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+
       - name: Install just
         uses: taiki-e/install-action@c070f87102a1c75b3183910f391c1cb887fe13c8 # v2.77.6
         with:
@@ -86,3 +91,24 @@ jobs:
 
       - name: Test TypeScript adapter packages
         run: just test-typescript-adapters
+
+      - name: Set up uv for Relay smoke
+        if: matrix.node-version == '22.19.0'
+        uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57 # v8
+
+      - name: Install released Relay CLI
+        if: matrix.node-version == '22.19.0'
+        env:
+          UV_TOOL_BIN_DIR: ${{ runner.temp }}/nemo-relay-bin
+          UV_TOOL_DIR: ${{ runner.temp }}/nemo-relay-tools
+        # Keep this smoke test reproducible; package extras accept compatible 0.9 releases.
+        run: uv tool install --no-cache nemo-relay-cli-bin==0.9.3
+
+      - name: Test released Relay Pi smoke
+        if: matrix.node-version == '22.19.0'
+        env:
+          FABRIC_TEST_NEMO_RELAY_COMMAND: ${{ runner.temp }}/nemo-relay-bin/nemo-relay
+        run: >-
+          node --test
+          --test-name-pattern='runs the released Relay CLI and shipped Pi extension end to end'
+          adapters/typescript/pi/test/relay-smoke.test.mjs

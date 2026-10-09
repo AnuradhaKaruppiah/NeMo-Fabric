@@ -31,6 +31,9 @@ BASE_DIR = Path(__file__).resolve().parent
 WORKSPACE = "./repos/my-service"
 SKILL_PATH = "./skills/code-review"
 PI_DESCRIPTOR = "../../adapters/typescript/pi/pi.fabric-adapter.json"
+CLINE_DESCRIPTOR = "../../adapters/typescript/cline/cline.fabric-adapter.json"
+QWEN_DESCRIPTOR = "../../adapters/typescript/qwen/qwen.fabric-adapter.json"
+KILO_DESCRIPTOR = "../../adapters/typescript/kilo/kilo.fabric-adapter.json"
 CODE_REVIEW_INSTRUCTION = (
     "You are a concise code reviewer. Read the relevant workspace files before "
     "reporting correctness risks."
@@ -146,6 +149,96 @@ def pi_config() -> FabricConfig:
     return config
 
 
+def kilo_config() -> FabricConfig:
+    """Return the complete Kilo Code SDK adapter variant."""
+
+    config = base_config().model_copy(deep=True)
+    config.discovery = DiscoveryConfig(local_paths=[KILO_DESCRIPTOR])
+    config.harness = HarnessConfig(
+        adapter_id="nvidia.fabric.kilo",
+        resolution="preinstalled",
+        settings={},
+    )
+    config.models = {"default": _nvidia_code_review_model()}
+    config.instructions = InstructionsConfig(
+        system=InstructionConfig(content=CODE_REVIEW_INSTRUCTION)
+    )
+    config.tools = ToolsConfig(enabled=["read", "glob", "grep", "skill"])
+    config.runtime = RuntimeConfig(
+        input_schema="text",
+        output_schema="message",
+        artifacts="./artifacts/kilo",
+        max_turns=20,
+    )
+    config.environment = EnvironmentConfig(
+        provider="local",
+        workspace=WORKSPACE,
+        artifacts="./artifacts/kilo",
+    )
+    return config
+
+
+def cline_config() -> FabricConfig:
+    """Return the complete Cline SDK adapter variant."""
+
+    config = base_config().model_copy(deep=True)
+    config.discovery = DiscoveryConfig(local_paths=[CLINE_DESCRIPTOR])
+    config.harness = HarnessConfig(
+        adapter_id="nvidia.fabric.cline",
+        resolution="preinstalled",
+        settings={},
+    )
+    config.models = {"default": _nvidia_code_review_model()}
+    config.instructions = InstructionsConfig(
+        system=InstructionConfig(content=CODE_REVIEW_INSTRUCTION)
+    )
+    config.tools = ToolsConfig(enabled=["read_files", "search_codebase", "skills"])
+    config.runtime = RuntimeConfig(
+        input_schema="text",
+        output_schema="message",
+        artifacts="./artifacts/cline",
+    )
+    config.environment = EnvironmentConfig(
+        provider="local",
+        workspace=WORKSPACE,
+        artifacts="./artifacts/cline",
+    )
+    return config
+
+
+def qwen_config() -> FabricConfig:
+    """Return the direct Qwen Code SDK adapter variant."""
+
+    config = base_config().model_copy(deep=True)
+    config.discovery = DiscoveryConfig(local_paths=[QWEN_DESCRIPTOR])
+    config.harness = HarnessConfig(
+        adapter_id="nvidia.fabric.qwen",
+        resolution="preinstalled",
+        settings={"permission_mode": "default"},
+    )
+    config.models = {
+        "default": ModelConfig(
+            provider="openai",
+            model="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+            api_key_env="NVIDIA_API_KEY",
+            base_url="https://integrate.api.nvidia.com/v1",
+        )
+    }
+    config.instructions = InstructionsConfig(
+        system=InstructionConfig(content=CODE_REVIEW_INSTRUCTION, mode="append")
+    )
+    config.tools = ToolsConfig(
+        blocked=["exec", "run_shell_command", "edit", "write_file", "notebook_edit"]
+    )
+    config.runtime = RuntimeConfig(
+        input_schema="text", output_schema="message", artifacts="./artifacts/qwen"
+    )
+    config.environment = EnvironmentConfig(
+        provider="local", workspace=WORKSPACE, artifacts="./artifacts/qwen"
+    )
+    return config
+
+
 def codex_config() -> FabricConfig:
     """Return the complete Codex SDK variant without inherited capabilities."""
 
@@ -195,6 +288,34 @@ def deepagents_config() -> FabricConfig:
         provider="local",
         workspace=WORKSPACE,
         artifacts="./artifacts/deepagents",
+    )
+    return config
+
+
+def openhands_config() -> FabricConfig:
+    """Return the complete OpenHands SDK adapter variant."""
+
+    config = base_config().model_copy(deep=True)
+    config.harness = HarnessConfig(
+        adapter_id="nvidia.fabric.openhands",
+        resolution="preinstalled",
+        settings={},
+    )
+    config.models = {"default": _nvidia_code_review_model()}
+    config.instructions = InstructionsConfig(
+        system=InstructionConfig(content=CODE_REVIEW_INSTRUCTION, mode="append")
+    )
+    config.tools = ToolsConfig(enabled=["terminal", "file_editor"])
+    config.runtime = RuntimeConfig(
+        input_schema="text",
+        output_schema="message",
+        artifacts="./artifacts/openhands",
+        max_turns=20,
+    )
+    config.environment = EnvironmentConfig(
+        provider="local",
+        workspace=WORKSPACE,
+        artifacts="./artifacts/openhands",
     )
     return config
 
@@ -273,6 +394,33 @@ def nooa_config() -> FabricConfig:
         provider="local",
         workspace=WORKSPACE,
         artifacts="./artifacts/nooa",
+    )
+    return config
+
+
+def openclaw_config() -> FabricConfig:
+    """Return the complete OpenClaw adapter variant."""
+
+    config = base_config().model_copy(deep=True)
+    config.harness = HarnessConfig(
+        adapter_id="nvidia.fabric.openclaw",
+        resolution="preinstalled",
+        settings={},
+    )
+    config.models = {"default": _nvidia_code_review_model()}
+    config.instructions = InstructionsConfig(
+        system=InstructionConfig(content=CODE_REVIEW_INSTRUCTION)
+    )
+    config.tools = ToolsConfig(enabled=["read"])
+    config.runtime = RuntimeConfig(
+        input_schema="text",
+        output_schema="message",
+        artifacts="./artifacts/openclaw",
+    )
+    config.environment = EnvironmentConfig(
+        provider="local",
+        workspace=WORKSPACE,
+        artifacts="./artifacts/openclaw",
     )
     return config
 

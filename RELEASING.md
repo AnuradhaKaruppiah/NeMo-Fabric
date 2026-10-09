@@ -32,8 +32,8 @@ package-specific tag pushes:
 | Ecosystem | Published Surface |
 |---|---|
 | crates.io | `nemo-fabric-core`, `nemo-fabric-cli` |
-| npm | `nemo-fabric-adapter-contract`, `nemo-fabric-adapters-common`, `nemo-fabric-adapters-pi` |
-| GitHub Actions | `nemo-fabric`, `nemo-fabric-runtime`, `nemo-fabric-collector`, `nemo-fabric-adapters-common`, `nemo-fabric-adapters-claude`, `nemo-fabric-adapters-codex`, `nemo-fabric-adapters-deepagents`, `nemo-fabric-adapters-hermes`, and `nemo-fabric-adapters-nooa` wheel artifacts |
+| npm | `nemo-fabric-adapter-contract`, `nemo-fabric-adapters-common`, `nemo-fabric-adapters-pi`, `nemo-fabric-adapters-opencode`, `nemo-fabric-adapters-qwen` |
+| GitHub Actions | `nemo-fabric`, `nemo-fabric-runtime`, `nemo-fabric-collector`, `nemo-fabric-adapter-catalog`, `nemo-fabric-adapters-common`, `nemo-fabric-adapters-claude`, `nemo-fabric-adapters-codex`, `nemo-fabric-adapters-deepagents`, `nemo-fabric-adapters-hermes`, and `nemo-fabric-adapters-nooa` wheel artifacts |
 | Fern | The documentation site |
 
 ## Version Model
@@ -47,6 +47,7 @@ NeMo Fabric versions are anchored on the workspace SemVer in the repository root
   `nemo-fabric-core` must stay aligned with that same version.
 - `sdk/python/nemo-fabric/pyproject.toml`,
   `sdk/python/nemo-fabric-collector/pyproject.toml`,
+  `sdk/python/nemo-fabric-adapter-catalog/pyproject.toml`,
   `adapter-contract/python/pyproject.toml`, and every
   `adapters/python/*/pyproject.toml` carry the Python package versions and internal
   dependency pins and must stay aligned with the same release version. The
@@ -76,6 +77,31 @@ The tag text must match the version that the packaging jobs publish.
 Release tags for a frozen release line should be created from the matching
 `release/*` branch, not from `main`.
 
+
+## Patch Releases
+
+Cut a patch release from the existing release branch for that major and minor
+line. Do not create another release branch or run the code-freeze workflow.
+
+Set the exact patch version, previous stable tag, and existing release branch:
+
+```bash
+export RELEASE_VERSION=0.1.1
+export PREVIOUS_RELEASE_TAG=v0.1.0
+export RELEASE_BRANCH=release/0.1
+
+git fetch upstream "${RELEASE_BRANCH}" --tags
+git log --oneline "${PREVIOUS_RELEASE_TAG}..upstream/${RELEASE_BRANCH}"
+```
+
+Open the fix or release-preparation PR against `${RELEASE_BRANCH}`. The PR must
+contain the intended patch changes and run `just set-version <release-version>`
+so the release branch contains the final package version before tagging. Verify
+the commit range from `${PREVIOUS_RELEASE_TAG}` contains only changes intended
+for the patch release. Changes required on `main` should be handled separately;
+do not mix a forward merge into the patch release.
+
+
 ## Code Freeze
 
 When code freeze begins for a target release, create a release branch from the
@@ -104,28 +130,47 @@ following:
 New PRs that must go into the upcoming release must target the new `release/*`
 branch. Changes intended for later releases should continue to target `main`.
 
-## Patch Releases
 
-Cut a patch release from the existing release branch for that major and minor
-line. Do not create another release branch or run the code-freeze workflow.
+## Cut An RC Tag
 
-Set the exact patch version, previous stable tag, and existing release branch:
+RC Tags should be created when soon after code freeze to allow for QA testing of the upcoming release. The `create-rc-tag` skill automates this process.
 
 ```bash
-export RELEASE_VERSION=0.1.1
-export PREVIOUS_RELEASE_TAG=v0.1.0
+export RELEASE_VERSION=0.1.0-rc.1
 export RELEASE_BRANCH=release/0.1
+export RELEASE_TAG="v${RELEASE_VERSION}"
+echo "Cutting release tag ${RELEASE_TAG} for release branch ${RELEASE_BRANCH}"
 
 git fetch upstream "${RELEASE_BRANCH}" --tags
-git log --oneline "${PREVIOUS_RELEASE_TAG}..upstream/${RELEASE_BRANCH}"
+git switch "${RELEASE_BRANCH}"
+git pull --ff-only upstream "${RELEASE_BRANCH}"
+
+test -z "$(git status --porcelain)"
+RELEASE_SHA="$(git rev-parse HEAD)"
+REMOTE_RELEASE_SHA="$(git rev-parse "upstream/${RELEASE_BRANCH}^{commit}")"
+test "${RELEASE_SHA}" = "${REMOTE_RELEASE_SHA}"
+test "$(just normalize-release-tag "${RELEASE_TAG}")" = "${RELEASE_VERSION}"
+BASE_RELEASE_VERSION="${RELEASE_VERSION%%-*}"
+CURRENT_VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+test "${CURRENT_VERSION}" = "${BASE_RELEASE_VERSION}"
+
+if git ls-remote --exit-code --tags upstream "refs/tags/${RELEASE_TAG}" >/dev/null; then
+  echo "Error: remote tag ${RELEASE_TAG} already exists" >&2
+  exit 1
+fi
+
+git tag -s -a \
+  -m "NVIDIA NeMo Fabric ${RELEASE_VERSION}" \
+  "${RELEASE_TAG}" \
+  "${RELEASE_SHA}"
+
+git tag -v "${RELEASE_TAG}"
+git show "${RELEASE_TAG}"
+test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "${RELEASE_SHA}"
+
+git push upstream "refs/tags/${RELEASE_TAG}"
 ```
 
-Open the fix or release-preparation PR against `${RELEASE_BRANCH}`. The PR must
-contain the intended patch changes and run `just set-version <release-version>`
-so the release branch contains the final package version before tagging. Verify
-the commit range from `${PREVIOUS_RELEASE_TAG}` contains only changes intended
-for the patch release. Changes required on `main` should be handled separately;
-do not mix a forward merge into the patch release.
 
 ## Before You Cut A Release
 
@@ -153,12 +198,27 @@ stable base version. The tag workflows normalize the prerelease tag and stamp
 ecosystem-specific package metadata in their disposable checkouts. Do not
 commit RC-specific versions or internal dependency pins to the release branch.
 
+The adapter catalog is a separate, metadata-only wheel. `just set-version`
+regenerates its resource bundle after stamping both ecosystems. `just wheels`
+checks freshness and builds it with the other distributions. Run
+`just adapter-catalog` after descriptor edits; do not edit the generated bundle
+by hand. Catalog resources do not register execution runners.
+
+The catalog follows the existing nightly and release publication cadence:
+GitHub Actions builds it in `python-wheels-*`, GitLab collects its
+platform-independent wheel, and KitMaker publishes it to PyPI using the
+`nemo-fabric-adapter-catalog` project. That project must exist in KitMaker before
+the first publication. No separate package tag or manual upload is required.
+PR CI tests sdist-to-wheel builds, isolated installation without harness SDKs,
+and release dispatch with external writes mocked.
+
 The helper updates:
 
 1. The root [`Cargo.toml`](Cargo.toml) workspace version.
 2. The root [`Cargo.toml`](Cargo.toml) `workspace.dependencies` versions for
    `nemo-fabric-core`.
 3. [`sdk/python/nemo-fabric/pyproject.toml`](sdk/python/nemo-fabric/pyproject.toml),
+   [`sdk/python/nemo-fabric-adapter-catalog/pyproject.toml`](sdk/python/nemo-fabric-adapter-catalog/pyproject.toml),
    [`adapter-contract/python/pyproject.toml`](adapter-contract/python/pyproject.toml),
    every `adapters/python/*/pyproject.toml`, and their internal dependency pins to
    the same release version.
@@ -280,47 +340,6 @@ a maintainer can inspect and repair the registry state explicitly. Publication
 also fails rather than moving `latest` or `next` backward when cutting a patch
 from an older release line.
 
-## Cut An RC Tag
-
-After the release commit is merged and validated, create and push a signed,
-annotated tag. Set the complete release-candidate version; the release branch
-continues to carry its matching stable base version:
-
-```bash
-export RELEASE_VERSION=0.1.0-rc.1
-export RELEASE_BRANCH=release/0.1
-export RELEASE_TAG="v${RELEASE_VERSION}"
-echo "Cutting release tag ${RELEASE_TAG} for release branch ${RELEASE_BRANCH}"
-
-git fetch upstream "${RELEASE_BRANCH}" --tags
-git switch "${RELEASE_BRANCH}"
-git pull --ff-only upstream "${RELEASE_BRANCH}"
-
-test -z "$(git status --porcelain)"
-RELEASE_SHA="$(git rev-parse HEAD)"
-REMOTE_RELEASE_SHA="$(git rev-parse "upstream/${RELEASE_BRANCH}^{commit}")"
-test "${RELEASE_SHA}" = "${REMOTE_RELEASE_SHA}"
-test "$(just normalize-release-tag "${RELEASE_TAG}")" = "${RELEASE_VERSION}"
-BASE_RELEASE_VERSION="${RELEASE_VERSION%%-*}"
-CURRENT_VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
-test "${CURRENT_VERSION}" = "${BASE_RELEASE_VERSION}"
-
-if git ls-remote --exit-code --tags upstream "refs/tags/${RELEASE_TAG}" >/dev/null; then
-  echo "Error: remote tag ${RELEASE_TAG} already exists" >&2
-  exit 1
-fi
-
-git tag -s -a \
-  -m "NVIDIA NeMo Fabric ${RELEASE_VERSION}" \
-  "${RELEASE_TAG}" \
-  "${RELEASE_SHA}"
-
-git tag -v "${RELEASE_TAG}"
-git show "${RELEASE_TAG}"
-test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "${RELEASE_SHA}"
-
-git push upstream "refs/tags/${RELEASE_TAG}"
-```
 
 
 ## Prepare Release Notes
@@ -410,9 +429,9 @@ git push upstream "refs/tags/${RELEASE_TAG}"
 
 ## Publish the TypeScript Adapter Packages
 
-Pushing the canonical beta, RC, or stable tag publishes the contract, Common
-adapter, and Pi adapter packages in dependency order. The workflow submits all
-three packages before it starts deployment verification, then verifies them in
+Pushing the canonical beta, RC, or stable tag publishes the TypeScript contract,
+Common, Pi, OpenCode, and Qwen Code packages in dependency order. The workflow
+submits all five packages before it starts deployment verification, then verifies them in
 the same order. Do not create package-specific npm tags. The nightly workflow
 runs the TypeScript tests against alpha tags without publishing to npm.
 
@@ -426,7 +445,7 @@ Pushing a valid canonical tag triggers:
 | [`.github/workflows/ci_python.yml`](.github/workflows/ci_python.yml) | For all tags including alpha |
 | [`.github/workflows/publish_rust.yml`](.github/workflows/publish_rust.yml) | For RC, beta and release tags |
 | [`.github/workflows/ci_typescript.yml`](.github/workflows/ci_typescript.yml) | For nightly alpha tags and normal pull request/main validation |
-| [`.github/workflows/publish_typescript.yml`](.github/workflows/publish_typescript.yml) | Publishes and verifies the contract, Common, and Pi packages for beta, RC, and stable tags |
+| [`.github/workflows/publish_typescript.yml`](.github/workflows/publish_typescript.yml) | Publishes and verifies the TypeScript contract and bundled adapters for beta, RC, and stable tags |
 | [`.github/workflows/fern-docs.yml`](.github/workflows/fern-docs.yml) | For RC, beta and release tags |
 
 The release pipeline then:
@@ -439,7 +458,7 @@ The release pipeline then:
 3. Publishes `nemo-fabric-core` and `nemo-fabric-cli` to crates.io through
    trusted publishing for stable, beta, and RC tags. Alpha tags are not
    published to crates.io.
-4. Publishes the contract, Common, and Pi packages to npm from the canonical
+4. Publishes the contract, Common, Pi, OpenCode, and Qwen Code packages to npm from the canonical
    tag in dependency order, then verifies the deployment in that order. Stable
    releases use the `latest` dist-tag and beta and RC releases use `next`.
    Alpha tags validate the packages without publishing them.
@@ -455,7 +474,7 @@ The workflow boundary is split intentionally:
 - [`.github/workflows/publish_rust.yml`](.github/workflows/publish_rust.yml)
   owns crates.io publication decisions and credentials.
 - [`.github/workflows/publish_typescript.yml`](.github/workflows/publish_typescript.yml)
-  owns contract, Common, and Pi npm publication decisions. It requests a
+  owns TypeScript contract and adapter npm publication decisions. It requests a
   short-lived credential through GitHub OIDC and does not receive an npm write
   token.
 
@@ -499,7 +518,7 @@ After the release is live, verify:
    - [`nemo-fabric-adapters-deepagents`](https://pypi.nvidia.com/nemo-fabric-adapters-deepagents/)
    - [`nemo-fabric-adapters-hermes`](https://pypi.nvidia.com/nemo-fabric-adapters-hermes/)
    - [`nemo-fabric-adapters-nooa`](https://pypi.nvidia.com/nemo-fabric-adapters-nooa/)
-4. The TypeScript contract, Common, and Pi packages are visible on npm with the
+4. The TypeScript contract and bundled adapter packages are visible on npm with the
    expected version, dist-tag, and provenance:
 
    ```bash
@@ -509,7 +528,9 @@ After the release is live, verify:
      for package in \
        nemo-fabric-adapter-contract \
        nemo-fabric-adapters-common \
-       nemo-fabric-adapters-pi; do
+       nemo-fabric-adapters-pi \
+       nemo-fabric-adapters-opencode \
+       nemo-fabric-adapters-qwen; do
        npm view "${package}@<release-version>" version \
          --registry="$npmjs_registry"
        npm view "$package" dist-tags --registry="$npmjs_registry"
@@ -522,7 +543,9 @@ After the release is live, verify:
        --registry="$npmjs_registry" \
        "nemo-fabric-adapter-contract@<release-version>" \
        "nemo-fabric-adapters-common@<release-version>" \
-       "nemo-fabric-adapters-pi@<release-version>"
+       "nemo-fabric-adapters-pi@<release-version>" \
+       "nemo-fabric-adapters-opencode@<release-version>" \
+       "nemo-fabric-adapters-qwen@<release-version>"
      npm audit signatures --registry="$npmjs_registry"
    )
    ```

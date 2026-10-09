@@ -855,6 +855,12 @@ pub enum AdapterConfigField {
     /// Model temperature.
     #[serde(rename = "models.temperature")]
     ModelTemperature,
+    /// Model nucleus sampling probability.
+    #[serde(rename = "models.top_p")]
+    ModelTopP,
+    /// Maximum model response tokens.
+    #[serde(rename = "models.max_tokens")]
+    ModelMaxTokens,
     /// Portable system instructions.
     #[serde(rename = "instructions.system")]
     SystemInstructions,
@@ -965,6 +971,18 @@ pub struct ModelConfig {
     /// Optional temperature.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
+    /// Optional nucleus sampling probability.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 0.0, max = 1.0))]
+    pub top_p: Option<f64>,
+    /// Optional maximum number of response tokens.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_max_tokens",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(range(min = 1, max = u64::MAX))]
+    pub max_tokens: Option<u64>,
     /// Optional environment variable containing an API key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_key_env: Option<String>,
@@ -977,6 +995,46 @@ pub struct ModelConfig {
     /// Additive normalized model fields.
     #[serde(default, flatten)]
     pub extensions: BTreeMap<String, Value>,
+}
+
+fn deserialize_optional_max_tokens<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Some(value) = Option::<Value>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    let Value::Number(number) = value else {
+        return Err(D::Error::custom("max_tokens must be an integer"));
+    };
+
+    if let Some(value) = number.as_u64() {
+        return Ok(Some(value));
+    }
+    if number.as_i64().is_some_and(|value| value < 0) {
+        // Keep invalid negative values representable until validation so callers
+        // receive the canonical `models.<role>.max_tokens` field path.
+        return Ok(Some(0));
+    }
+    if let Some(value) = number.as_f64()
+        && value.is_finite()
+        && value.fract() == 0.0
+    {
+        if value < 0.0 {
+            return Ok(Some(0));
+        }
+        // u64::MAX rounds to 2^64 as f64, so the strict comparison also rejects
+        // floating-point values outside the u64 domain.
+        if value < u64::MAX as f64 {
+            return Ok(Some(value as u64));
+        }
+    }
+
+    Err(D::Error::custom(
+        "max_tokens must be an integer between 0 and 18446744073709551615",
+    ))
 }
 
 /// Invocation runtime contract.
@@ -1429,9 +1487,9 @@ pub struct RelayAtifConfig {
     /// Agent version written into ATIF.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_version: Option<String>,
-    /// Model name written into ATIF.
-    #[serde(default = "default_relay_atif_model_name")]
-    pub model_name: String,
+    /// Optional model name override written into ATIF.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_name: Option<String>,
     /// Tool definitions written into ATIF.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_definitions: Option<Vec<Value>>,
@@ -1458,7 +1516,7 @@ impl Default for RelayAtifConfig {
             enabled: false,
             agent_name: default_relay_atif_agent_name(),
             agent_version: None,
-            model_name: default_relay_atif_model_name(),
+            model_name: None,
             tool_definitions: None,
             extra: None,
             output_directory: None,
@@ -1757,10 +1815,6 @@ fn default_relay_atif_agent_name() -> String {
     "NeMo Relay".to_string()
 }
 
-fn default_relay_atif_model_name() -> String {
-    "unknown".to_string()
-}
-
 fn default_relay_atif_filename_template() -> String {
     "nemo-relay-atif-{session_id}.json".to_string()
 }
@@ -1878,6 +1932,20 @@ pub(crate) fn validate_config(config: &FabricConfig) -> Result<()> {
             return invalid_config(
                 format!("models.{role}.base_url"),
                 "must be a non-empty string",
+            );
+        }
+        if let Some(top_p) = model.top_p
+            && (!top_p.is_finite() || !(0.0..=1.0).contains(&top_p))
+        {
+            return invalid_config(
+                format!("models.{role}.top_p"),
+                "must be a finite number between zero and one",
+            );
+        }
+        if model.max_tokens == Some(0) {
+            return invalid_config(
+                format!("models.{role}.max_tokens"),
+                "must be greater than zero",
             );
         }
     }
@@ -2280,6 +2348,71 @@ pub fn resolve_run_plan_from_config_with_adapter_directories(
     )
 }
 
+/// Validated metadata for standalone host admission, never an execution plan.
+#[doc(hidden)]
+#[derive(Debug, Serialize)]
+pub struct AdapterInspection {
+    /// Core-normalized supplied descriptor.
+    pub descriptor: AdapterDescriptor,
+    /// Requested providers and their resolved configuration.
+    pub telemetry_plan: Option<TelemetryPlan>,
+}
+
+/// Inspect supplied host metadata without executable descriptor discovery.
+///
+/// The supplied file is an inspection-only metadata copy. Task-local discovery
+/// inputs, repository adapters, installed packages, and interpreters are not
+/// consulted. Only normalized metadata is returned; it cannot start a runtime.
+#[doc(hidden)]
+pub fn inspect_adapter_config(
+    mut config: FabricConfig,
+    descriptor_path: &Path,
+) -> Result<AdapterInspection> {
+    if config.workflow.is_some() {
+        return invalid_config(
+            "workflow",
+            "standalone inspection does not qualify workflow targets",
+        );
+    }
+    config.discovery = None;
+    validate_config(&config)?;
+    let path = descriptor_path
+        .canonicalize()
+        .map_err(|source| FabricError::Read {
+            path: descriptor_path.to_path_buf(),
+            source,
+        })?;
+    let descriptor = load_adapter_descriptor(&path)?;
+    if config
+        .harness
+        .as_ref()
+        .map(|harness| harness.adapter_id.as_str())
+        != Some(descriptor.adapter_id.as_str())
+    {
+        return invalid_config(
+            "harness.adapter_id",
+            "does not match supplied host metadata",
+        );
+    }
+    let base_dir = path
+        .parent()
+        .expect("canonical descriptor has a parent")
+        .to_path_buf();
+    let resolved = ResolvedAdapterDescriptor {
+        provenance: vec![DescriptorProvenance {
+            source: DescriptorSource::ExplicitLocal,
+            path,
+            root: base_dir.clone(),
+        }],
+        descriptor: descriptor.clone(),
+    };
+    let plan = resolve_selected_descriptors(config, base_dir, Some(resolved), None, true)?;
+    Ok(AdapterInspection {
+        descriptor,
+        telemetry_plan: plan.telemetry_plan,
+    })
+}
+
 /// Resolve a typed Fabric config while retaining adapter incompatibilities for diagnostics.
 #[doc(hidden)]
 pub fn resolve_diagnostic_plan_from_config(
@@ -2343,6 +2476,24 @@ fn resolve_run_plan(
 ) -> Result<RunPlan> {
     let registry = DescriptorRegistry::from_config(&config, &base_dir, installed_roots)?;
     let (adapter_descriptor, adapter_target_descriptor) = resolve_descriptors(&config, &registry)?;
+    resolve_selected_descriptors(
+        config,
+        base_dir,
+        adapter_descriptor,
+        adapter_target_descriptor,
+        enforce_compatibility,
+    )
+}
+
+// Share validation between execution planning and metadata-only inspection,
+// without allowing inspection to discover an execution origin.
+fn resolve_selected_descriptors(
+    config: FabricConfig,
+    base_dir: PathBuf,
+    adapter_descriptor: Option<ResolvedAdapterDescriptor>,
+    adapter_target_descriptor: Option<ResolvedAdapterTargetDescriptor>,
+    enforce_compatibility: bool,
+) -> Result<RunPlan> {
     validate_harness_settings(&config, adapter_descriptor.as_ref())?;
     validate_workflow(&config, adapter_target_descriptor.as_ref())?;
     let descriptor = adapter_descriptor
@@ -2431,6 +2582,65 @@ pub(crate) struct AdapterCompatibilityIssue {
     pub(crate) reason: String,
 }
 
+/// Return normalized sampling fields that a legacy adapter still accepts through
+/// its model extension schema.
+pub(crate) fn legacy_model_sampling_extensions(
+    model: &ModelConfig,
+    descriptor: &AdapterDescriptor,
+) -> BTreeMap<String, Value> {
+    let Some(schema) = descriptor
+        .extension_schemas
+        .get(&AdapterExtensionPoint::Model)
+    else {
+        return BTreeMap::new();
+    };
+    let mut candidates = BTreeMap::new();
+    if model.top_p.is_some()
+        && !descriptor
+            .config
+            .accepts
+            .contains(&AdapterConfigField::ModelTopP)
+    {
+        candidates.insert("top_p".to_string(), serde_json::json!(model.top_p));
+    }
+    if model.max_tokens.is_some()
+        && !descriptor
+            .config
+            .accepts
+            .contains(&AdapterConfigField::ModelMaxTokens)
+    {
+        candidates.insert(
+            "max_tokens".to_string(),
+            serde_json::json!(model.max_tokens),
+        );
+    }
+    if candidates.is_empty() {
+        return candidates;
+    }
+
+    let validator = jsonschema::validator_for(&Value::Object(schema.clone()))
+        .expect("adapter extension schema was validated during descriptor resolution");
+    let accepts = |legacy: &BTreeMap<String, Value>| {
+        let mut extensions = model.extensions.clone();
+        extensions.extend(legacy.clone());
+        validator.is_valid(
+            &serde_json::to_value(extensions)
+                .expect("typed model extensions are always JSON serializable"),
+        )
+    };
+
+    if accepts(&candidates) {
+        return candidates;
+    }
+    for (name, value) in &candidates {
+        let candidate = BTreeMap::from([(name.clone(), value.clone())]);
+        if accepts(&candidate) {
+            return candidate;
+        }
+    }
+    BTreeMap::new()
+}
+
 pub(crate) fn adapter_config_compatibility_issues(
     config: &FabricConfig,
     descriptor: Option<&AdapterDescriptor>,
@@ -2516,10 +2726,14 @@ pub(crate) fn adapter_config_compatibility_issues(
         let validator = jsonschema::validator_for(&schema)
             .expect("adapter model schema was validated during descriptor resolution");
         for (role, model) in &config.models {
+            let legacy_extensions = legacy_model_sampling_extensions(model, descriptor);
             let mut value = serde_json::to_value(model)
                 .expect("typed model configuration is always JSON serializable");
             if let Some(object) = value.as_object_mut() {
                 for extension in model.extensions.keys() {
+                    object.remove(extension);
+                }
+                for extension in legacy_extensions.keys() {
                     object.remove(extension);
                 }
             }
@@ -2533,6 +2747,7 @@ pub(crate) fn adapter_config_compatibility_issues(
     }
 
     for (role, model) in &config.models {
+        let legacy_extensions = legacy_model_sampling_extensions(model, descriptor);
         if model.base_url.is_some() && !accepts(AdapterConfigField::ModelBaseUrl) {
             issues.push(incompatible(
                 format!("models.{role}.base_url"),
@@ -2542,6 +2757,24 @@ pub(crate) fn adapter_config_compatibility_issues(
         if model.temperature.is_some() && !accepts(AdapterConfigField::ModelTemperature) {
             issues.push(incompatible(
                 format!("models.{role}.temperature"),
+                "the adapter does not declare an equivalent native mapping".to_string(),
+            ));
+        }
+        if model.top_p.is_some()
+            && !accepts(AdapterConfigField::ModelTopP)
+            && !legacy_extensions.contains_key("top_p")
+        {
+            issues.push(incompatible(
+                format!("models.{role}.top_p"),
+                "the adapter does not declare an equivalent native mapping".to_string(),
+            ));
+        }
+        if model.max_tokens.is_some()
+            && !accepts(AdapterConfigField::ModelMaxTokens)
+            && !legacy_extensions.contains_key("max_tokens")
+        {
+            issues.push(incompatible(
+                format!("models.{role}.max_tokens"),
                 "the adapter does not declare an equivalent native mapping".to_string(),
             ));
         }
@@ -2971,11 +3204,16 @@ pub(crate) fn validate_agent_config_extensions(
         )?;
     }
     for (name, model) in &config.models {
+        let mut extensions = model.extensions.clone();
+        extensions.extend(legacy_model_sampling_extensions(
+            model,
+            &resolved.descriptor,
+        ));
         validate_extension_block(
             resolved,
             AdapterExtensionPoint::Model,
             &format!("models.{name}"),
-            &model.extensions,
+            &extensions,
             &mut validators,
         )?;
     }
@@ -3614,18 +3852,39 @@ fn resolve_telemetry_plan(
             .then(|| relay.and_then(|relay| relay.output_dir.clone()))
             .flatten(),
         relay_config: relay_enabled
-            .then(|| resolve_relay_plugin_config(relay))
+            .then(|| resolve_relay_plugin_config(relay, selected_model_name(config)))
             .flatten(),
         native_config: native_provider.and_then(|provider| provider.config.clone()),
         adapter_outputs,
     }))
 }
 
-fn resolve_relay_plugin_config(relay: Option<&RelayConfig>) -> Option<Value> {
+fn selected_model_name(config: &FabricConfig) -> Option<&str> {
+    config
+        .models
+        .get("default")
+        .or_else(|| {
+            (config.models.len() == 1)
+                .then(|| config.models.values().next())
+                .flatten()
+        })
+        .map(|model| model.model.as_str())
+}
+
+fn resolve_relay_plugin_config(
+    relay: Option<&RelayConfig>,
+    selected_model_name: Option<&str>,
+) -> Option<Value> {
     let relay = relay?;
     let mut components = Vec::new();
 
     if let Some(observability) = relay.observability.as_ref() {
+        let mut observability = observability.clone();
+        if let Some(atif) = observability.atif.as_mut()
+            && atif.model_name.is_none()
+        {
+            atif.model_name = Some(selected_model_name.unwrap_or("unknown").to_string());
+        }
         components.push(serde_json::json!({
             "kind": "observability",
             "enabled": true,
@@ -3960,6 +4219,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn host_inspection_uses_only_supplied_metadata_and_returns_no_execution_plan() {
+        let path = repository_adapter_dir().join("python/hermes/hermes.fabric-adapter.json");
+        let mut config = typed_config("nvidia.fabric.hermes");
+        config.discovery = Some(DiscoveryConfig {
+            local_paths: vec![PathBuf::from("/task-only/nonexistent-descriptor")],
+            ..Default::default()
+        });
+        let inspection = inspect_adapter_config(config.clone(), &path).expect("host inspection");
+        assert_eq!(
+            inspection.descriptor,
+            load_adapter_descriptor(&path).expect("descriptor")
+        );
+        let value = serde_json::to_value(inspection).expect("inspection JSON");
+        assert!(value.get("adapter_descriptor").is_none());
+        assert!(value.get("adapter").is_none());
+        assert!(value.get("config").is_none());
+        config
+            .harness
+            .as_mut()
+            .expect("harness")
+            .settings
+            .insert("not_a_supported_setting".to_string(), Value::Bool(true));
+        assert!(inspect_adapter_config(config, &path).is_err());
+        let mismatch = typed_config("nvidia.fabric.codex");
+        assert!(inspect_adapter_config(mismatch, &path).is_err());
+    }
+
     fn typed_config(adapter_id: &str) -> FabricConfig {
         serde_json::from_value(serde_json::json!({
             "schema_version": "fabric.agent/v1alpha1",
@@ -3986,6 +4273,8 @@ mod tests {
                 provider: provider.to_string(),
                 model: "test-model".to_string(),
                 temperature: None,
+                top_p: None,
+                max_tokens: None,
                 api_key_env: None,
                 base_url: None,
                 settings: serde_json::Map::new(),
@@ -4128,6 +4417,86 @@ mod tests {
         assert_eq!(
             value["opentelemetry"]["endpoints"][0]["service_name"],
             "unknown_service"
+        );
+    }
+
+    #[test]
+    fn relay_atif_model_name_uses_selected_model_unless_overridden() {
+        for (role, configured_model, model_name, expected) in [
+            ("default", "test-model", None, "test-model"),
+            ("review", "test-model", None, "test-model"),
+            ("default", "openai/gpt-5-codex", None, "openai/gpt-5-codex"),
+            (
+                "default",
+                "test-model",
+                Some("trajectory-model"),
+                "trajectory-model",
+            ),
+        ] {
+            let mut config = config_with_model("nvidia.fabric.hermes", "nvidia");
+            config
+                .models
+                .get_mut("default")
+                .expect("default model")
+                .model = configured_model.to_string();
+            if role != "default" {
+                let model = config.models.remove("default").expect("default model");
+                config.models.insert(role.to_string(), model);
+            }
+            config.telemetry = Some(
+                serde_json::from_value(serde_json::json!({
+                    "providers": {"relay": {}}
+                }))
+                .expect("Relay telemetry config"),
+            );
+            let mut atif = serde_json::json!({"enabled": true});
+            if let Some(model_name) = model_name {
+                atif["model_name"] = serde_json::json!(model_name);
+            }
+            config.relay = Some(
+                serde_json::from_value(serde_json::json!({
+                    "observability": {"atif": atif}
+                }))
+                .expect("Relay ATIF config"),
+            );
+
+            let telemetry = resolve_telemetry_plan(&config, None)
+                .expect("resolved telemetry")
+                .expect("telemetry plan");
+            let relay_config = telemetry.relay_config.expect("Relay plugin config");
+
+            assert_eq!(
+                relay_config["components"][0]["config"]["atif"]["model_name"],
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn relay_atif_model_name_is_unknown_when_no_model_is_configured() {
+        let mut config = config_with_model("nvidia.fabric.hermes", "nvidia");
+        config.models.clear();
+        config.telemetry = Some(
+            serde_json::from_value(serde_json::json!({
+                "providers": {"relay": {}}
+            }))
+            .expect("Relay telemetry config"),
+        );
+        config.relay = Some(
+            serde_json::from_value(serde_json::json!({
+                "observability": {"atif": {"enabled": true}}
+            }))
+            .expect("Relay ATIF config"),
+        );
+
+        let telemetry = resolve_telemetry_plan(&config, None)
+            .expect("resolved telemetry")
+            .expect("telemetry plan");
+        let relay_config = telemetry.relay_config.expect("Relay plugin config");
+
+        assert_eq!(
+            relay_config["components"][0]["config"]["atif"]["model_name"],
+            "unknown"
         );
     }
 
@@ -4700,57 +5069,93 @@ mod tests {
     }
 
     #[test]
-    fn hermes_model_extensions_are_validated_and_projected() {
+    fn hermes_normalized_model_sampling_is_validated_and_projected() {
         let mut config = config_with_model("nvidia.fabric.hermes", "nvidia");
         let model = config.models.get_mut("default").expect("default model");
-        model
-            .extensions
-            .insert("top_p".to_string(), serde_json::json!(0.85));
-        model
-            .extensions
-            .insert("max_tokens".to_string(), serde_json::json!(768));
+        model.top_p = Some(0.85);
+        model.max_tokens = Some(768);
 
         let plan = resolve_run_plan_from_config(config, ResolveContext::new(repository_root()))
-            .expect("Hermes model extensions");
+            .expect("Hermes normalized model sampling");
         let model = plan
             .agent_config
             .models
             .get("default")
             .expect("projected default model");
 
-        assert_eq!(
-            model.extensions.get("top_p"),
-            Some(&serde_json::json!(0.85))
-        );
-        assert_eq!(
-            model.extensions.get("max_tokens"),
-            Some(&serde_json::json!(768))
-        );
+        assert_eq!(model.top_p, Some(0.85));
+        assert_eq!(model.max_tokens, Some(768));
     }
 
     #[test]
-    fn hermes_model_extensions_reject_invalid_sampling_values() {
+    fn normalized_model_sampling_rejects_invalid_values() {
         let mut config = config_with_model("nvidia.fabric.hermes", "nvidia");
         config
             .models
             .get_mut("default")
             .expect("default model")
-            .extensions
-            .insert("top_p".to_string(), serde_json::json!(1.1));
+            .top_p = Some(1.1);
 
         let error = resolve_run_plan_from_config(config, ResolveContext::new(repository_root()))
             .expect_err("top_p above one");
 
-        assert!(
-            matches!(
-                error,
-                FabricError::InvalidAdapterExtension {
-                    ref extension_path,
-                    ..
-                } if extension_path == "models.default.top_p"
-            ),
-            "{error:?}"
-        );
+        assert!(matches!(
+            error,
+            FabricError::InvalidConfig { field, .. } if field == "models.default.top_p"
+        ));
+
+        let mut config = config_with_model("nvidia.fabric.hermes", "nvidia");
+        config
+            .models
+            .get_mut("default")
+            .expect("default model")
+            .max_tokens = Some(0);
+
+        let error = resolve_run_plan_from_config(config, ResolveContext::new(repository_root()))
+            .expect_err("zero max_tokens");
+
+        assert!(matches!(
+            error,
+            FabricError::InvalidConfig { field, .. } if field == "models.default.max_tokens"
+        ));
+    }
+
+    #[test]
+    fn flattened_sampling_extensions_keep_their_wire_shape_when_normalized() {
+        let model: ModelConfig = serde_json::from_value(serde_json::json!({
+            "provider": "nvidia",
+            "model": "test-model",
+            "top_p": 0.8,
+            "max_tokens": 512.0
+        }))
+        .expect("existing flattened sampling config");
+
+        assert_eq!(model.top_p, Some(0.8));
+        assert_eq!(model.max_tokens, Some(512));
+        assert!(!model.extensions.contains_key("top_p"));
+        assert!(!model.extensions.contains_key("max_tokens"));
+
+        let encoded = serde_json::to_value(model).expect("normalized model JSON");
+        assert_eq!(encoded["top_p"], serde_json::json!(0.8));
+        assert_eq!(encoded["max_tokens"], serde_json::json!(512));
+        assert!(encoded.get("extensions").is_none());
+    }
+
+    #[test]
+    fn negative_wire_max_tokens_reports_the_canonical_field() {
+        let mut value = serde_json::to_value(config_with_model("nvidia.fabric.hermes", "nvidia"))
+            .expect("serialize config");
+        value["models"]["default"]["max_tokens"] = serde_json::json!(-5);
+
+        let config: FabricConfig =
+            serde_json::from_value(value).expect("preserve invalid value for validation");
+        let error = resolve_run_plan_from_config(config, ResolveContext::new(repository_root()))
+            .expect_err("negative max_tokens");
+
+        assert!(matches!(
+            error,
+            FabricError::InvalidConfig { field, .. } if field == "models.default.max_tokens"
+        ));
     }
 
     #[test]
@@ -5029,6 +5434,8 @@ mod tests {
                 provider: "nvidia".to_string(),
                 model: "nvidia/test".to_string(),
                 temperature: Some(0.2),
+                top_p: Some(0.8),
+                max_tokens: Some(512),
                 api_key_env: Some("NVIDIA_API_KEY".to_string()),
                 base_url: Some("https://models.example/v1".to_string()),
                 settings: serde_json::Map::new(),
@@ -5244,6 +5651,8 @@ mod tests {
                     provider: provider.to_string(),
                     model: "default-model".to_string(),
                     temperature: None,
+                    top_p: None,
+                    max_tokens: None,
                     api_key_env: None,
                     base_url: None,
                     settings: serde_json::Map::new(),
@@ -5256,6 +5665,8 @@ mod tests {
                     provider: provider.to_string(),
                     model: "test-model".to_string(),
                     temperature: Some(0.2),
+                    top_p: None,
+                    max_tokens: None,
                     api_key_env: None,
                     base_url: None,
                     settings: serde_json::Map::new(),
@@ -5289,6 +5700,8 @@ mod tests {
                 provider: "anthropic".to_string(),
                 model: "default-model".to_string(),
                 temperature: None,
+                top_p: None,
+                max_tokens: None,
                 api_key_env: None,
                 base_url: None,
                 settings: serde_json::Map::new(),
@@ -5301,6 +5714,8 @@ mod tests {
                 provider: "anthropic".to_string(),
                 model: "review-model".to_string(),
                 temperature: None,
+                top_p: None,
+                max_tokens: None,
                 api_key_env: None,
                 base_url: Some("https://example.test/v1".to_string()),
                 settings: serde_json::Map::new(),
@@ -5364,6 +5779,8 @@ mod tests {
                     provider: "acme".to_string(),
                     model: "review-model".to_string(),
                     temperature: None,
+                    top_p: None,
+                    max_tokens: None,
                     api_key_env: None,
                     base_url: None,
                     settings: serde_json::Map::new(),
@@ -5413,6 +5830,178 @@ mod tests {
     }
 
     #[test]
+    fn supporting_adapters_project_normalized_model_sampling() {
+        for adapter_id in [
+            "nvidia.fabric.langchain.deepagents",
+            "nvidia.fabric.hermes",
+            "nvidia.fabric.mini-swe-agent",
+            "nvidia.fabric.remote-agent",
+        ] {
+            let mut config = config_with_model(adapter_id, "nvidia");
+            config.skills = None;
+            let model = config.models.get_mut("default").expect("default model");
+            model.top_p = Some(0.8);
+            model.max_tokens = Some(256);
+
+            if adapter_id == "nvidia.fabric.remote-agent" {
+                config.harness.as_mut().expect("harness").settings.insert(
+                    "base_url".to_string(),
+                    serde_json::json!("https://agent.example/v1"),
+                );
+            }
+
+            let plan = resolve_run_plan_from_config(
+                config,
+                ResolveContext::new("/tmp/fabric-model-sampling"),
+            )
+            .unwrap_or_else(|error| panic!("valid {adapter_id} model sampling: {error}"));
+            let model = plan
+                .agent_config
+                .models
+                .get("default")
+                .expect("projected default model");
+
+            assert_eq!(model.top_p, Some(0.8), "{adapter_id}");
+            assert_eq!(model.max_tokens, Some(256), "{adapter_id}");
+            assert!(!model.extensions.contains_key("top_p"), "{adapter_id}");
+            assert!(!model.extensions.contains_key("max_tokens"), "{adapter_id}");
+        }
+    }
+
+    #[test]
+    fn legacy_model_sampling_extensions_are_validated_and_projected() {
+        let path = repository_root().join("adapters/python/claude/claude.fabric-adapter.json");
+        let mut descriptor = load_adapter_descriptor(&path).expect("Claude descriptor");
+        descriptor.extension_schemas.insert(
+            AdapterExtensionPoint::Model,
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "top_p": {"type": "number", "minimum": 0, "maximum": 1},
+                    "max_tokens": {"type": "integer", "minimum": 1}
+                },
+                "required": ["top_p", "max_tokens"],
+                "additionalProperties": false
+            })
+            .as_object()
+            .expect("model extension schema")
+            .clone(),
+        );
+        let resolved = resolved_adapter(path, descriptor);
+        let mut config = config_with_model("nvidia.fabric.claude", "anthropic");
+        let model = config.models.get_mut("default").expect("default model");
+        model.top_p = Some(0.8);
+        model.max_tokens = Some(256);
+
+        assert!(
+            adapter_config_compatibility_issues(&config, Some(&resolved.descriptor)).is_empty()
+        );
+        validate_agent_config_extensions(&config, Some(&resolved), None)
+            .expect("legacy sampling extensions");
+        let capability_plan = resolve_capability_plan(
+            &config,
+            Path::new("/tmp/fabric-legacy-sampling"),
+            Some(&resolved),
+        );
+        let agent_config =
+            project_agent_config(&config, &capability_plan, Some(&resolved.descriptor), None);
+        let model = agent_config
+            .models
+            .get("default")
+            .expect("projected default model");
+
+        assert_eq!(model.top_p, None);
+        assert_eq!(model.max_tokens, None);
+        assert_eq!(model.extensions["top_p"], serde_json::json!(0.8));
+        assert_eq!(model.extensions["max_tokens"], serde_json::json!(256));
+    }
+
+    #[test]
+    fn unrelated_model_extension_schema_does_not_accept_normalized_sampling() {
+        let path = repository_root().join("adapters/python/claude/claude.fabric-adapter.json");
+        let mut descriptor = load_adapter_descriptor(&path).expect("Claude descriptor");
+        descriptor.extension_schemas.insert(
+            AdapterExtensionPoint::Model,
+            serde_json::json!({
+                "type": "object",
+                "properties": {"profile": {"type": "string"}},
+                "additionalProperties": false
+            })
+            .as_object()
+            .expect("model extension schema")
+            .clone(),
+        );
+        let mut config = config_with_model("nvidia.fabric.claude", "anthropic");
+        config
+            .models
+            .get_mut("default")
+            .expect("default model")
+            .top_p = Some(0.8);
+
+        let issues = adapter_config_compatibility_issues(&config, Some(&descriptor));
+
+        assert!(
+            !issues.is_empty()
+                && issues
+                    .iter()
+                    .all(|issue| issue.field == "models.default.top_p")
+        );
+    }
+
+    #[test]
+    fn adapters_without_normalized_model_sampling_reject_it() {
+        let mut config = config_with_model("nvidia.fabric.claude", "anthropic");
+        let model = config.models.get_mut("default").expect("default model");
+        model.top_p = Some(0.8);
+        model.max_tokens = Some(256);
+
+        let issues = adapter_config_compatibility_issues(
+            &config,
+            Some(
+                &load_adapter_descriptor(
+                    repository_root().join("adapters/python/claude/claude.fabric-adapter.json"),
+                )
+                .expect("Claude descriptor"),
+            ),
+        )
+        .into_iter()
+        .map(|issue| issue.field)
+        .collect::<BTreeSet<_>>();
+
+        assert!(issues.contains("models.default.top_p"));
+        assert!(issues.contains("models.default.max_tokens"));
+    }
+
+    #[test]
+    fn deepagents_model_schema_accepts_omitted_options_and_rejects_settings() {
+        resolve_run_plan_from_config(
+            config_with_model("nvidia.fabric.langchain.deepagents", "nvidia"),
+            ResolveContext::new("/tmp/fabric-deepagents-omitted-model-options"),
+        )
+        .expect("omitted Deep Agents model options");
+
+        let mut config = config_with_model("nvidia.fabric.langchain.deepagents", "nvidia");
+        config
+            .models
+            .get_mut("default")
+            .expect("default model")
+            .settings
+            .insert("top_p".to_string(), serde_json::json!(0.8));
+
+        let error = resolve_run_plan_from_config(
+            config,
+            ResolveContext::new("/tmp/fabric-deepagents-model-settings"),
+        )
+        .expect_err("undeclared Deep Agents model setting");
+
+        assert!(matches!(
+            error,
+            FabricError::AdapterCompatibility { field, .. }
+                if field == "models.default.settings.top_p"
+        ));
+    }
+
+    #[test]
     fn unsupported_enabled_tools_report_canonical_field() {
         let adapter_id = "nvidia.fabric.codex";
         let mut config = typed_config(adapter_id);
@@ -5446,6 +6035,8 @@ mod tests {
                 provider: "anthropic".to_string(),
                 model: "claude-test".to_string(),
                 temperature: None,
+                top_p: None,
+                max_tokens: None,
                 api_key_env: None,
                 base_url: None,
                 settings: serde_json::Map::new(),
@@ -5467,6 +6058,8 @@ mod tests {
                     provider: "anthropic".to_string(),
                     model: format!("claude-{role}"),
                     temperature: None,
+                    top_p: None,
+                    max_tokens: None,
                     api_key_env: None,
                     base_url: None,
                     settings: serde_json::Map::new(),
@@ -6130,6 +6723,7 @@ mod tests {
         let mut descriptor = load_adapter_descriptor(&path).expect("Claude descriptor");
         let request = AgentRunRequest {
             input: serde_json::json!("review"),
+            relay_session_root: None,
             context: BTreeMap::new(),
             extensions: BTreeMap::from([("profile".to_string(), serde_json::json!("strict"))]),
         };

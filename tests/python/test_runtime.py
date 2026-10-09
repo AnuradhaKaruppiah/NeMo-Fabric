@@ -103,7 +103,9 @@ async def _wait_for(event: threading.Event, timeout: float = 2.0) -> bool:
 def mock_native_fixture() -> MagicMock:
     mock_native = MagicMock()
     mock_native.requests = []
-    mock_native.plan_config.side_effect = lambda config_json, base_dir: json.dumps(_plan())
+    mock_native.plan_config.side_effect = lambda config_json, base_dir: json.dumps(
+        _plan()
+    )
     mock_native.prepare_environment.return_value = json.dumps(_environment())
     mock_native.attach_environment.return_value = json.dumps(_environment())
     mock_native.start_runtime.return_value = json.dumps(_runtime())
@@ -163,6 +165,75 @@ def _runtime_wrapper(
         runtime=_runtime(runtime_id),
         overrides=overrides,
     )
+
+
+@pytest.mark.parametrize("stage", ["start", "invoke", "stop"])
+@pytest.mark.parametrize(
+    ("error_type", "expected_code"),
+    [(TimeoutError, "timeout"), (RuntimeError, None)],
+)
+async def test_deadline_identity_survives_stateful_sdk_boundaries(
+    native_client, mock_native, stage, error_type, expected_code
+):
+    if stage == "start":
+        mock_native.start_runtime.side_effect = error_type("deadline-looking text")
+        operation = native_client.start_runtime(_config())
+    else:
+        runtime = await native_client.start_runtime(_config())
+        if stage == "invoke":
+            mock_native.invoke_runtime.side_effect = error_type("deadline-looking text")
+            operation = runtime.invoke(input="test")
+        else:
+            mock_native.stop_runtime.side_effect = error_type("deadline-looking text")
+            operation = runtime.stop()
+    with pytest.raises(FabricRuntimeError) as caught:
+        await operation
+    assert caught.value.stage == stage
+    assert caught.value.code == expected_code
+    assert isinstance(caught.value.__cause__, error_type)
+    if stage == "invoke":
+        await runtime.stop()
+
+
+@pytest.mark.parametrize("stage", ["start", "invoke"])
+async def test_one_shot_deadline_preserves_stage_and_cleanup(
+    native_client, mock_native, stage
+):
+    getattr(mock_native, f"{stage}_runtime").side_effect = TimeoutError("deadline")
+    with pytest.raises(FabricRuntimeError) as caught:
+        await native_client.run(_config(), input="test")
+    assert caught.value.code == "timeout"
+    assert caught.value.stage == stage
+    if stage == "invoke":
+        mock_native.stop_runtime.assert_called_once()
+    else:
+        mock_native.stop_runtime.assert_not_called()
+
+
+@pytest.mark.parametrize("structured", [False, True])
+async def test_one_shot_stop_deadline_has_canonical_result_error(
+    native_client, mock_native, structured
+):
+    mock_native.stop_runtime.side_effect = (
+        FabricRuntimeError("deadline", stage="stop", code="timeout")
+        if structured
+        else TimeoutError("deadline")
+    )
+    result = await native_client.run(_config(), input="test")
+    assert result.status == "failed"
+    assert result.error.stage == "stop"
+    assert result.error.code == "timeout"
+
+
+@pytest.mark.parametrize("stage", ["start", "invoke"])
+async def test_one_shot_preserves_existing_structured_error(
+    native_client, mock_native, stage
+):
+    error = FabricRuntimeError("existing", stage=stage, code="adapter_failed")
+    getattr(mock_native, f"{stage}_runtime").side_effect = error
+    with pytest.raises(FabricRuntimeError) as caught:
+        await native_client.run(_config(), input="test")
+    assert caught.value is error
 
 
 async def test_start_runtime_supports_typed_source_and_base_dir(
@@ -440,6 +511,7 @@ async def test_cancelled_registration_is_deregistered_during_shutdown(
     runtime = _runtime_wrapper(mock_native)
     runtime._collector_client = mock_collector
 
+    runtime._reserve_request_registration("request-1")
     registration = asyncio.create_task(runtime._register_request("request-1"))
     await registration_committed.wait()
     registration.cancel()
@@ -459,6 +531,249 @@ async def test_cancelled_registration_is_deregistered_during_shutdown(
     )
 
 
+async def test_cancelled_invocation_waits_for_registration_before_cleanup(
+    mock_native: MagicMock,
+):
+    registration_started = asyncio.Event()
+    finish_registration = asyncio.Event()
+    events: list[str] = []
+
+    async def register(request_id: str) -> None:
+        events.append(f"register-start:{request_id}")
+        registration_started.set()
+        await finish_registration.wait()
+        events.append(f"register-commit:{request_id}")
+
+    async def deregister(request_id: str, *, remove_queue: bool) -> None:
+        assert remove_queue is True
+        events.append(f"deregister:{request_id}")
+
+    mock_collector = MagicMock()
+    mock_collector.register = AsyncMock(side_effect=register)
+    mock_collector.deregister = AsyncMock(side_effect=deregister)
+    runtime = _runtime_wrapper(mock_native)
+    runtime._collector_client = mock_collector
+    invocation = asyncio.create_task(
+        runtime._invoke_registered_payload(
+            {"input": "hello", "request_id": "request-1"},
+            None,
+            capture_records=False,
+        )
+    )
+    await registration_started.wait()
+
+    invocation.cancel()
+    await asyncio.sleep(0)
+    invocation.cancel()
+    await asyncio.sleep(0)
+
+    assert not invocation.done()
+    mock_collector.deregister.assert_not_awaited()
+
+    finish_registration.set()
+    with pytest.raises(asyncio.CancelledError):
+        await invocation
+
+    assert events == [
+        "register-start:request-1",
+        "register-commit:request-1",
+        "deregister:request-1",
+    ]
+    assert runtime._registered_requests == set()
+    mock_native.invoke_runtime.assert_not_called()
+
+
+async def test_failed_stream_cleanup_retires_phase_and_preserves_obligation():
+    plan = _plan()
+    plan["config"]["harness"]["adapter_id"] = "nvidia.fabric.pi"
+    plan["adapter_descriptor"]["descriptor"].update(
+        {
+            "adapter_id": "nvidia.fabric.pi",
+            "harness": "pi",
+            "adapter_kind": "typescript",
+        }
+    )
+    mock_collector = MagicMock()
+    mock_collector.deregister = AsyncMock()
+    runtime = Runtime(
+        client=MagicMock(),
+        plan=plan,
+        runtime=_runtime(),
+        collector_client=mock_collector,
+    )
+    runtime._reserve_request_registration("request-1")
+    registration_token = runtime._registration_tokens["request-1"]
+
+    await runtime._finish_registered_request(
+        "request-1",
+        remove_queue=True,
+        pi_boundary="preserve",
+        stream_phase="finalizer",
+    )
+
+    mock_collector.deregister.side_effect = RuntimeError("collector unavailable")
+
+    with pytest.raises(RuntimeError, match="collector unavailable") as caught:
+        await runtime._finish_registered_request(
+            "request-1",
+            remove_queue=False,
+            pi_boundary="wait",
+            stream_phase="outcome",
+        )
+
+    assert mock_collector.deregister.await_count == 3
+    assert any(
+        "compensating deregistration failed" in note for note in caught.value.__notes__
+    )
+    assert runtime._registered_requests == {"request-1"}
+    assert runtime._registration_tokens == {"request-1": registration_token}
+    assert runtime._stream_outcomes_finished == set()
+    assert runtime._stream_finalizers_finished == set()
+    assert runtime._stream_cleanup_failed == {"request-1"}
+
+    mock_collector.deregister.side_effect = None
+    await runtime._deregister_requests()
+
+    assert mock_collector.deregister.await_count == 4
+    assert mock_collector.deregister.await_args_list[-1].kwargs == {
+        "remove_queue": True,
+        "pi_boundary": "release",
+        "registration_token": registration_token,
+    }
+    assert runtime._registered_requests == set()
+    assert runtime._registration_tokens == {}
+    assert runtime._stream_cleanup_failed == set()
+
+
+async def test_cancelled_compensating_cleanup_finishes_before_reraising():
+    plan = _plan()
+    plan["config"]["harness"]["adapter_id"] = "nvidia.fabric.pi"
+    plan["adapter_descriptor"]["descriptor"].update(
+        {
+            "adapter_id": "nvidia.fabric.pi",
+            "harness": "pi",
+            "adapter_kind": "typescript",
+        }
+    )
+    compensation_started = asyncio.Event()
+    finish_compensation = asyncio.Event()
+    deregistration_count = 0
+
+    async def deregister(
+        request_id: str,
+        *,
+        remove_queue: bool,
+        pi_boundary: str,
+        registration_token: str,
+    ) -> None:
+        nonlocal deregistration_count
+        assert request_id == "request-1"
+        assert registration_token
+        deregistration_count += 1
+        if deregistration_count == 1:
+            assert remove_queue is True
+            assert pi_boundary == "preserve"
+            return
+        if deregistration_count == 2:
+            assert remove_queue is False
+            assert pi_boundary == "wait"
+            raise RuntimeError("outcome cleanup failed")
+        assert deregistration_count == 3
+        assert remove_queue is True
+        assert pi_boundary == "quarantine"
+        compensation_started.set()
+        await finish_compensation.wait()
+
+    mock_collector = MagicMock()
+    mock_collector.deregister = AsyncMock(side_effect=deregister)
+    runtime = Runtime(
+        client=MagicMock(),
+        plan=plan,
+        runtime=_runtime(),
+        collector_client=mock_collector,
+    )
+    runtime._reserve_request_registration("request-1")
+    await runtime._finish_registered_request(
+        "request-1",
+        remove_queue=True,
+        pi_boundary="preserve",
+        stream_phase="finalizer",
+    )
+
+    cleanup = asyncio.create_task(
+        runtime._finish_registered_request(
+            "request-1",
+            remove_queue=False,
+            pi_boundary="wait",
+            stream_phase="outcome",
+        )
+    )
+    await compensation_started.wait()
+    cleanup.cancel()
+    await asyncio.sleep(0)
+    assert not cleanup.done()
+
+    finish_compensation.set()
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await cleanup
+
+    assert any("outcome cleanup failed" in note for note in caught.value.__notes__)
+    assert runtime._registered_requests == set()
+    assert runtime._registration_tokens == {}
+    assert runtime._stream_cleanup_failed == set()
+
+
+async def test_cancelled_outcome_cleanup_finishes_before_reraising(
+    mock_native: MagicMock,
+):
+    deregistration_started = asyncio.Event()
+    finish_deregistration = asyncio.Event()
+
+    async def deregister(request_id: str, *, remove_queue: bool) -> None:
+        assert request_id == "request-1"
+        assert remove_queue is False
+        deregistration_started.set()
+        await finish_deregistration.wait()
+
+    mock_collector = MagicMock()
+    mock_collector.deregister = AsyncMock(side_effect=deregister)
+    runtime = _runtime_wrapper(mock_native)
+    runtime._collector_client = mock_collector
+    runtime._registered_requests.add("request-1")
+    cleanup = asyncio.create_task(
+        runtime._finish_registered_request(
+            "request-1",
+            remove_queue=False,
+            pi_boundary=None,
+            stream_phase="outcome",
+        )
+    )
+    await deregistration_started.wait()
+
+    cleanup.cancel()
+    await asyncio.sleep(0)
+    cleanup.cancel()
+    await asyncio.sleep(0)
+
+    assert not cleanup.done()
+    finish_deregistration.set()
+    with pytest.raises(asyncio.CancelledError):
+        await cleanup
+
+    assert runtime._registered_requests == {"request-1"}
+    assert runtime._stream_outcomes_finished == {"request-1"}
+    assert runtime._stream_finalizers_finished == set()
+
+    mock_collector.deregister.side_effect = None
+    await runtime._finish_registered_request(
+        "request-1",
+        remove_queue=True,
+        pi_boundary="preserve",
+        stream_phase="finalizer",
+    )
+    assert runtime._registered_requests == set()
+
+
 async def test_failed_registration_remains_tracked_until_cleanup_succeeds(
     mock_native: MagicMock,
 ):
@@ -471,11 +786,20 @@ async def test_failed_registration_remains_tracked_until_cleanup_succeeds(
     runtime = _runtime_wrapper(mock_native)
     runtime._collector_client = mock_collector
 
+    runtime._reserve_request_registration("request-1")
     with pytest.raises(FabricRuntimeError) as caught:
         await runtime._register_request("request-1")
 
     assert caught.value is registration_error
     assert runtime._registered_requests == {"request-1"}
+    with pytest.raises(FabricStateError, match="collector cleanup is still pending"):
+        await runtime._invoke_registered_payload(
+            {"input": "hello", "request_id": "request-1"},
+            None,
+            capture_records=False,
+        )
+    assert mock_collector.register.await_count == 1
+    mock_collector.deregister.assert_not_awaited()
 
     with pytest.raises(ExceptionGroup, match="deregistration failed"):
         await runtime._deregister_requests()
@@ -486,6 +810,125 @@ async def test_failed_registration_remains_tracked_until_cleanup_succeeds(
     await runtime._deregister_requests()
 
     assert runtime._registered_requests == set()
+
+
+def test_stream_rejects_request_id_with_pending_collector_cleanup(
+    mock_native: MagicMock,
+):
+    mock_collector = MagicMock()
+    mock_collector.deregister = AsyncMock()
+    runtime = _runtime_wrapper(mock_native)
+    runtime._collector_client = mock_collector
+    runtime._registered_requests.add("request-1")
+
+    with pytest.raises(FabricStateError, match="collector cleanup is still pending"):
+        runtime.invoke_stream(request=RunRequest(input="hello", request_id="request-1"))
+
+    mock_collector.register.assert_not_called()
+    mock_collector.deregister.assert_not_called()
+    assert runtime._registered_requests == {"request-1"}
+
+
+@pytest.mark.parametrize(
+    ("error_code", "metadata", "expected"),
+    [
+        ("pi_aborted", {"adapter": {"pi_turn_started": False}}, False),
+        ("pi_aborted", {"adapter": {"pi_turn_started": True}}, True),
+        ("pi_extension_shutdown", {"adapter": {"pi_turn_started": False}}, False),
+        ("pi_extension_shutdown", {"adapter": {"pi_turn_started": True}}, True),
+        ("pi_extension_shutdown", {}, None),
+        (
+            "pi_extension_shutdown",
+            {"adapter": {"pi_turn_started": "false"}},
+            None,
+        ),
+    ],
+)
+def test_pi_boundary_uses_explicit_turn_start_signal(
+    mock_native: MagicMock,
+    error_code: str,
+    metadata: dict[str, Any],
+    expected: bool | None,
+):
+    plan = _plan()
+    plan["config"]["harness"]["adapter_id"] = "nvidia.fabric.pi"
+    plan["adapter_descriptor"]["descriptor"].update(
+        {
+            "adapter_id": "nvidia.fabric.pi",
+            "harness": "pi",
+            "adapter_kind": "typescript",
+        }
+    )
+    runtime = Runtime(
+        client=MagicMock(),
+        plan=plan,
+        runtime=_runtime(),
+        collector_client=MagicMock(),
+    )
+    result = json.loads(
+        mock_native.invoke_runtime.side_effect(
+            "",
+            json.dumps(_runtime()),
+            json.dumps({"input": "hello", "request_id": "request-1"}),
+        )
+    )
+    result["metadata"] = metadata
+    result.update(
+        {
+            "status": "cancelled",
+            "output": None,
+            "error": {
+                "code": error_code,
+                "message": "Pi invocation was cancelled",
+                "retryable": False,
+            },
+        }
+    )
+
+    assert runtime._pi_result_started_turn(RunResult.from_mapping(result)) is expected
+
+
+@pytest.mark.parametrize(
+    ("metadata", "expected"),
+    [
+        ({"adapter": {"pi_turn_count": 3}}, 3),
+        ({"adapter": {"pi_turn_count": 0}}, 0),
+        ({"adapter": {"pi_turn_count": -1}}, None),
+        ({"adapter": {"pi_turn_count": True}}, None),
+        ({"adapter": {"pi_turn_count": "3"}}, None),
+        ({}, None),
+    ],
+)
+def test_pi_boundary_validates_turn_count(
+    mock_native: MagicMock,
+    metadata: dict[str, Any],
+    expected: int | None,
+):
+    plan = _plan()
+    plan["config"]["harness"]["adapter_id"] = "nvidia.fabric.pi"
+    plan["adapter_descriptor"]["descriptor"].update(
+        {
+            "adapter_id": "nvidia.fabric.pi",
+            "harness": "pi",
+            "adapter_kind": "typescript",
+        }
+    )
+    runtime = Runtime(
+        client=MagicMock(),
+        plan=plan,
+        runtime=_runtime(),
+        collector_client=MagicMock(),
+    )
+    result = json.loads(
+        mock_native.invoke_runtime.side_effect(
+            "",
+            json.dumps(_runtime()),
+            json.dumps({"input": "hello", "request_id": "request-1"}),
+        )
+    )
+    result["metadata"] = metadata
+
+    assert runtime._pi_result_turn_count(RunResult.from_mapping(result)) == expected
 
 
 async def test_runtime_preserves_non_mapping_message_values(mock_native: MagicMock):

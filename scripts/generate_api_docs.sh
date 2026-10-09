@@ -23,7 +23,9 @@ PYTHONPATH="sdk/python/nemo-fabric-runtime/src" lazydocs \
   --output-path "$out" \
   --overview-file "index.md" \
   "nemo_fabric.client" \
+  "nemo_fabric.capabilities" \
   "nemo_fabric.runtime" \
+  "nemo_fabric.service" \
   "nemo_fabric.streaming" \
   "nemo_fabric.openai_streaming" \
   "nemo_fabric.models" \
@@ -82,10 +84,20 @@ add_frontmatter \
   "Resolve, plan, diagnose, and run agents with NVIDIA NeMo Fabric." \
   "/reference/api/python-library-reference/client"
 add_frontmatter \
+  "$out/nemo_fabric.capabilities.md" \
+  "Adapter Capability Inspection" \
+  "Inspect standalone adapter metadata and verify host/task descriptor correspondence." \
+  "/reference/api/python-library-reference/capabilities"
+add_frontmatter \
   "$out/nemo_fabric.runtime.md" \
   "Runtime" \
   "Drive stateful multi-turn execution through the Runtime API." \
   "/reference/api/python-library-reference/runtime"
+add_frontmatter \
+  "$out/nemo_fabric.service.md" \
+  "Service" \
+  "Prepare, attach, share, and release long-lived adapter services." \
+  "/reference/api/python-library-reference/service"
 add_frontmatter \
   "$out/nemo_fabric.streaming.md" \
   "Relay Streaming" \

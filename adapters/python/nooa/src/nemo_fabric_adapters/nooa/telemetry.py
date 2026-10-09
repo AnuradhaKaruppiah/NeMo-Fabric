@@ -25,8 +25,8 @@ import nemo_fabric_adapters.common.utils as common_utils
 
 LOGGER = logging.getLogger(__name__)
 
-_RELAY_MINIMUM = (0, 7, 2)
-_RELAY_MAXIMUM = (0, 8, 0)
+_RELAY_MINIMUM = (0, 9, 0)
+_RELAY_MAXIMUM = (0, 10, 0)
 _RELAY_VERSION = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:\+[^\s]+)?$")
 _QUARANTINE_NOTE = (
     "telemetry is disabled for later turns because an earlier Relay scope "
@@ -76,7 +76,7 @@ def _relay_version() -> tuple[int, int, int]:
         raise RuntimeError("the installed nemo-relay version is not a stable release")
     version = tuple(int(part) for part in match.groups())
     if not (_RELAY_MINIMUM <= version < _RELAY_MAXIMUM):
-        raise RuntimeError("nemo-relay must satisfy >=0.7.2,<0.8")
+        raise RuntimeError("nemo-relay must satisfy >=0.9,<0.10")
     return version
 
 
@@ -233,7 +233,7 @@ class RelayTelemetry:
             from nemo_relay import ScopeType
             from nemo_relay import plugin
             from nemo_relay import scope
-            from nooa.nemo_relay_middleware import install_nemo_relay
+            from nemo_fabric_adapters.nooa.relay_compat import install_nemo_relay_compat
         except Exception as error:
             LOGGER.error(
                 "OO Agents Relay setup failed (error_type=%s)",
@@ -255,9 +255,9 @@ class RelayTelemetry:
         plugin_fault: str | None = None
         uninstall_fault: str | None = None
         try:
-            async with plugin.plugin(plugin_config) as activation_report:
-                common_utils.reject_inherited_relay_plugin_config(activation_report)
-                uninstall = install_nemo_relay(agent.event_manager)
+            async with plugin.activate(plugin_config) as activation:
+                common_utils.reject_inherited_relay_plugin_config(activation.report)
+                uninstall = install_nemo_relay_compat(agent.event_manager)
                 try:
                     metadata = {
                         "nemo_fabric_request_id": runtime_context.request_id,

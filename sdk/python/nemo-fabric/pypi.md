@@ -49,7 +49,7 @@ pip install "nemo-fabric[streaming]"
 NeMo Fabric supports Python 3.11 through 3.14. However, some harnesses and
 integrations have more restrictive requirements. Hermes Agent requires
 Python 3.11 through 3.13, NOOA requires Python 3.12 or 3.13, and the Harbor
-integration requires Python 3.12 or later.
+integration and OpenHands require Python 3.12 or later.
 
 
 ### Supported Harnesses
@@ -64,6 +64,8 @@ The following table shows the install target for each supported agent harness:
 | [LangChain Deep Agents](https://pypi.org/project/nemo-fabric-adapters-deepagents/) | `nemo-fabric[deepagents]` | `nemo-fabric-adapters-deepagents[harness]` | `nemo-fabric-adapters-deepagents` |
 | [mini-SWE-agent](https://pypi.org/project/nemo-fabric-adapters-mini-swe-agent/) | `nemo-fabric[mini-swe-agent]` | `nemo-fabric-adapters-mini-swe-agent[harness]` | `nemo-fabric-adapters-mini-swe-agent` |
 | [NOOA](https://pypi.org/project/nemo-fabric-adapters-nooa/) (Python 3.12–3.13) | `nemo-fabric[nooa]` | `nemo-fabric-adapters-nooa[harness]` | `nemo-fabric-adapters-nooa` |
+| [OpenClaw](https://pypi.org/project/nemo-fabric-adapters-openclaw/) | Install OpenClaw separately, then install `nemo-fabric[openclaw]` | Install OpenClaw separately, then install `nemo-fabric-adapters-openclaw` | `nemo-fabric-adapters-openclaw` |
+| [OpenHands](https://pypi.org/project/nemo-fabric-adapters-openhands/) (Python 3.12+) | Install OpenHands separately, then install `nemo-fabric[openhands]` | Install OpenHands separately, then install `nemo-fabric-adapters-openhands` | `nemo-fabric-adapters-openhands` |
 
 
 To install the NeMo Fabric runtime, adapter, and supported harness in one
@@ -75,6 +77,8 @@ pip install "nemo-fabric[codex]"
 pip install "nemo-fabric[deepagents]"
 pip install "nemo-fabric[mini-swe-agent]"
 pip install "nemo-fabric[nooa]"
+pip install "nemo-fabric[openclaw]"
+pip install "nemo-fabric[openhands]"
 ```
 
 Hermes Agent 0.20 and later is not installable from PyPI. For this reason the Hermes Agent adapter does not provide a `harness` extra. Follow the
@@ -93,8 +97,13 @@ pip install "nemo-fabric-adapters-mini-swe-agent[harness]"
 pip install "nemo-fabric-adapters-nooa[harness]"
 ```
 
-Every adapter package also provides an adapter-scoped `full` extra, which does
-not install the NeMo Fabric runtime. For Claude, Codex, and mini-SWE-agent, `full` installs the same dependencies as `harness`. For LangChain Deep Agents and NOOA, `full` also installs the NeMo Relay Python package. The Hermes adapter's `full` extra installs NeMo Relay but does not install Hermes Agent.
+Most adapter packages also provide an adapter-scoped `full` extra, which does
+not install the NeMo Fabric runtime. For Claude, Codex, and mini-SWE-agent,
+`full` installs the same dependencies as `harness`. For LangChain Deep Agents
+and NOOA, `full` also installs the NeMo Relay Python package. The Hermes
+adapter's `full` extra installs NeMo Relay but does not install Hermes Agent.
+The OpenClaw and OpenHands adapters provide neither `harness` nor `full`
+because their harnesses must be installed separately.
 
 If the environment already manages a compatible harness, choose one of the
 following bare adapter packages:
@@ -106,13 +115,18 @@ pip install nemo-fabric-adapters-deepagents
 pip install nemo-fabric-adapters-hermes
 pip install nemo-fabric-adapters-mini-swe-agent
 pip install nemo-fabric-adapters-nooa
+pip install nemo-fabric-adapters-openclaw
+pip install nemo-fabric-adapters-openhands
 ```
 
-The adapter distribution contains only adapter-owned runtime dependencies. It
-does not install the NeMo Fabric runtime. For package-installable harnesses,
-select `harness` or `full` to install the harness. The Hermes adapter never
-installs Hermes Agent. If the runtime shares an environment with an existing
-compatible harness, install `nemo-fabric` and the bare adapter package together.
+The OpenClaw adapter package does not install OpenClaw; install its npm package
+separately. The OpenHands adapter likewise requires a separate installation of
+compatible `openhands-sdk` and `openhands-tools` packages. An adapter
+distribution contains only adapter-owned runtime dependencies and does not
+install the NeMo Fabric runtime. For package-installable harnesses, select
+`harness` or `full` to install the harness. The Hermes adapter never installs
+Hermes Agent. If the runtime shares an environment with an existing compatible
+harness, install `nemo-fabric` and the bare adapter package together.
 
 
 ### Integrations

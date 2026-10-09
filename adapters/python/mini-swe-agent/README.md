@@ -28,8 +28,10 @@ The `harness` and `full` extras install the latest compatible mini-SWE-agent
 ## Configuration
 
 The adapter supports `models`, `models.base_url`, `models.temperature`,
-replacement `instructions.system`, `runtime.max_turns`, and
-`environment.workspace`. It rejects `append` system instructions.
+`models.top_p`, `models.max_tokens`, replacement `instructions.system`,
+`runtime.max_turns`, and `environment.workspace`. It passes the normalized
+sampling fields through mini-SWE-agent's LiteLLM model arguments and rejects
+`append` system instructions.
 `runtime.timeout_seconds` sets the NVIDIA NeMo Fabric invocation deadline. Use
 `harness.settings.timeout` to set the maximum duration of one command; the
 default is `30` seconds.
@@ -151,12 +153,14 @@ hierarchy without requiring upstream changes.
 ### Correlation IDs
 
 The top-level `mini-swe-agent.request` Agent scope stores the NeMo Fabric
-request and invocation IDs as Relay metadata:
+request and invocation IDs, and a caller-supplied session root, as Relay
+metadata:
 
 | NeMo Fabric ID | Relay metadata key | Meaning |
 | --- | --- | --- |
 | `request_id` | `nemo_fabric_request_id` | Correlates the caller's logical request. A caller can provide the same value when it wants to correlate retries or related processing. |
 | `invocation_id` | `nemo_fabric_invocation_id` | Identifies one concrete invocation attempt. NeMo Fabric assigns a new value to each invocation. |
+| `RunRequest.relay_session_root` | `nemo_fabric_session_root` | Groups invocations into one Relay session. A UUID string Relay accepts becomes the propagated Relay root; a UUID `request_id` stays the parent, otherwise the session root is also the parent. Absent when the value is missing or unusable; the invocation proceeds without an error. |
 
 Nested step, LLM, and `bash` tool events are correlated through the Relay scope
 hierarchy; they do not repeat these metadata fields. The `runtime_id`
