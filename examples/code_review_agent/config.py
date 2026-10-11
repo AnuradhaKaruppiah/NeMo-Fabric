@@ -425,6 +425,41 @@ def openclaw_config() -> FabricConfig:
     return config
 
 
+def with_openshell(base: FabricConfig, *, gateway: str, image: str) -> FabricConfig:
+    """Compose the caller-owned OpenClaw image without carrying host paths."""
+
+    if base.harness.adapter_id != "nvidia.fabric.openclaw":
+        raise ValueError("the OpenShell code-review image supports only OpenClaw")
+    config = base.model_copy(deep=True)
+    config.harness.resolution = "image_provided"
+    # Remote Python adapters use task PATH (python3), never host ADAPTER_PYTHON.
+    # The image packages the default skill at this absolute task-side path.
+    # Custom skills must likewise refer to paths already provisioned in the image.
+    if config.skills:
+        config.skills.paths = [
+            Path("/opt/nemo-fabric/skills/code-review")
+            if Path(path) == Path(SKILL_PATH)
+            else path
+            for path in config.skills.paths
+        ]
+        if any(not Path(path).is_absolute() for path in config.skills.paths):
+            raise ValueError("OpenShell custom skill paths must be absolute task paths")
+    config.environment = EnvironmentConfig(
+        provider="openshell",
+        control_location="in_env_control",
+        ownership="caller_owned",
+        workspace="/sandbox/repos/my-service",
+        artifacts="/sandbox/artifacts",
+        connection={"gateway": gateway},
+        settings={
+            "image": image,
+            "command": ["fabric-runtime-server", "serve"],
+            "exec_timeout_seconds": 650,
+        },
+    )
+    return config
+
+
 def with_opensandbox(base: FabricConfig) -> FabricConfig:
     """Return a copy configured for an externally controlled OpenSandbox."""
 

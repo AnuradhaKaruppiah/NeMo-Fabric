@@ -12,12 +12,29 @@ OPENSHELL_RELEASE_URL="https://github.com/NVIDIA/OpenShell/releases/download/${O
 GATEWAY_PORT="${OPENSHELL_EXAMPLE_PORT:-18080}"
 GATEWAY_START_TIMEOUT="${OPENSHELL_EXAMPLE_GATEWAY_START_TIMEOUT:-120}"
 EXAMPLE_MODE="${OPENSHELL_EXAMPLE_MODE:-both}"
+EXAMPLE_WORKLOAD="${OPENSHELL_EXAMPLE_WORKLOAD:-courier}"
+WORKLOAD_ROOT="${EXAMPLE_ROOT}"
+IMAGE_TAG="fabric-portable-courier:example"
+MODEL_ENV_ARGS=()
+if [[ "${EXAMPLE_WORKLOAD}" == "code-review" ]]; then
+  WORKLOAD_ROOT="${FABRIC_ROOT}/examples/code_review_agent/openshell"
+  IMAGE_TAG="fabric-openclaw-code-review:example"
+  MODEL_ENV_ARGS=(--env FABRIC_LOCAL_INFERENCE_KEY=local-no-auth)
+  if [[ "${EXAMPLE_MODE}" != "deployment" ]]; then
+    echo "ERROR: code-review supports deployment mode only" >&2
+    exit 2
+  fi
+elif [[ "${EXAMPLE_WORKLOAD}" != "courier" ]]; then
+  echo "ERROR: unknown OpenShell workload: ${EXAMPLE_WORKLOAD}" >&2
+  exit 2
+fi
 export UV_CACHE_DIR="${FABRIC_ROOT}/.tmp/uv-cache"
 DEMO_PYTHON_ENV="${FABRIC_ROOT}/.tmp/langgraph-openshell-venv"
 GATEWAY_PID=""
 SANDBOX_NAME="fab-courier-$$"
 FABRIC_SANDBOX_NAME="fab-dev-$$"
 SANDBOX_CREATED=""
+EVIDENCE_PID=""
 
 for dependency in cargo curl docker python3 tar uv; do
   if ! command -v "${dependency}" >/dev/null 2>&1; then
@@ -131,9 +148,30 @@ install_openshell_release() {
 }
 
 cleanup() {
+  local status=$?
+  if [[ "${EXAMPLE_WORKLOAD}" == "code-review" && -n "${SANDBOX_CREATED}" ]]; then
+    mkdir -p "${FABRIC_ROOT}/.tmp/openclaw-code-review"
+    "${OPENSHELL_CLI}" --gateway-endpoint "http://127.0.0.1:${GATEWAY_PORT}" \
+      sandbox exec --name "${SANDBOX_NAME}" --no-tty -- python3 -c 'import glob,json; [print(json.loads(line).get("1", "")) for path in glob.glob("/tmp/openclaw/*.log") for line in open(path) if "model-fetch" in line or "ERROR" in line or "WARN" in line]' \
+      >"${FABRIC_ROOT}/.tmp/openclaw-code-review/gateway-diagnostics.log" 2>&1 || true
+    cp "${GATEWAY_STATE_DIR}/gateway.log" "${FABRIC_ROOT}/.tmp/openclaw-code-review/openshell-gateway.log"
+    if (( status != 0 )); then
+      tail -n 30 "${FABRIC_ROOT}/.tmp/openclaw-code-review/gateway-diagnostics.log" >&2
+    fi
+  fi
   if [[ -n "${SANDBOX_CREATED}" ]] && [[ -x "${OPENSHELL_CLI}" ]]; then
     "${OPENSHELL_CLI}" --gateway-endpoint "http://127.0.0.1:${GATEWAY_PORT}" \
-      sandbox delete "${SANDBOX_NAME}" >/dev/null 2>&1 || true
+      sandbox delete "${SANDBOX_NAME}" >/dev/null 2>&1 || {
+        echo "ERROR: failed to delete caller-owned sandbox ${SANDBOX_NAME}" >&2
+        status=1
+      }
+    if (( status == 0 )); then
+      echo "Deleted caller-owned sandbox ${SANDBOX_NAME}."
+    fi
+  fi
+  if [[ -n "${EVIDENCE_PID}" ]]; then
+    kill "${EVIDENCE_PID}" 2>/dev/null || true
+    wait "${EVIDENCE_PID}" 2>/dev/null || true
   fi
   if [[ -n "${GATEWAY_PID}" ]]; then
     kill "${GATEWAY_PID}" 2>/dev/null || true
@@ -141,6 +179,8 @@ cleanup() {
   fi
   rm -rf -- "${STAGE_DIR}"
   rm -rf -- "${GATEWAY_STATE_DIR}"
+  trap - EXIT
+  exit "${status}"
 }
 trap cleanup EXIT
 
@@ -165,9 +205,20 @@ cp -R adapters/python/common "${STAGE_DIR}/adapters-common"
 mkdir -p "${STAGE_DIR}/examples"
 cp examples/__init__.py "${STAGE_DIR}/examples/"
 cp -R "${EXAMPLE_ROOT}" "${STAGE_DIR}/examples/langgraph_openshell"
+if [[ "${EXAMPLE_WORKLOAD}" == "code-review" ]]; then
+  cp -R adapters/python/openclaw "${STAGE_DIR}/adapters-openclaw"
+  mkdir -p "${STAGE_DIR}/examples/code_review_agent"
+  cp -R examples/code_review_agent/repos examples/code_review_agent/skills \
+    examples/code_review_agent/openshell "${STAGE_DIR}/examples/code_review_agent/"
+fi
 cp "${EXAMPLE_ROOT}/runtime-image.dockerignore" "${STAGE_DIR}/.dockerignore"
-docker build -f "${EXAMPLE_ROOT}/runtime-image.Dockerfile" -t fabric-portable-courier:example "${STAGE_DIR}"
-RUNTIME_IMAGE="$(docker image inspect fabric-portable-courier:example --format '{{.Id}}')"
+docker build -f "${WORKLOAD_ROOT}/runtime-image.Dockerfile" -t "${IMAGE_TAG}" "${STAGE_DIR}"
+RUNTIME_IMAGE="$(docker image inspect "${IMAGE_TAG}" --format '{{.Id}}')"
+if [[ "${EXAMPLE_WORKLOAD}" == "code-review" ]]; then
+  mkdir -p "${FABRIC_ROOT}/.tmp/openclaw-code-review"
+  printf '%s\n' "${RUNTIME_IMAGE}" >"${FABRIC_ROOT}/.tmp/openclaw-code-review/image-id.txt"
+  docker run --rm "${RUNTIME_IMAGE}" python3 -c 'import pathlib,subprocess; import nemo_fabric_adapters.openclaw.adapter; assert pathlib.Path("/sandbox/repos/my-service/calculator.py").is_file(); assert pathlib.Path("/opt/nemo-fabric/skills/code-review/SKILL.md").is_file(); pathlib.Path("/sandbox/artifacts/image-smoke").touch(); print(subprocess.check_output(["node", "--version"], text=True).strip()); print(subprocess.check_output(["openclaw", "--version"], text=True).strip())'
+fi
 
 install_openshell_release
 "${OPENSHELL_GATEWAY}" generate-certs \
@@ -223,6 +274,45 @@ done
 
 run_consumer() {
   cd "${FABRIC_ROOT}"
+  if [[ "${EXAMPLE_WORKLOAD}" == "code-review" ]]; then
+    mkdir -p "${FABRIC_ROOT}/.tmp/openclaw-code-review"
+    "${OPENSHELL_CLI}" --gateway-endpoint "http://127.0.0.1:${GATEWAY_PORT}" \
+      sandbox exec --name "${SANDBOX_NAME}" --no-tty --timeout 660 \
+      -- python3 /opt/nemo-fabric/capture_evidence.py \
+      >"${FABRIC_ROOT}/.tmp/openclaw-code-review/task-evidence.json" &
+    EVIDENCE_PID=$!
+    local label="review-$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
+    NEMO_FABRIC_OPEN_SHELL_PROVIDER="${FABRIC_ROOT}/target/debug/fabric-environment-openshell" \
+    PYTHONPATH="${FABRIC_ROOT}" UV_PROJECT_ENVIRONMENT="${DEMO_PYTHON_ENV}" \
+    uv run --no-sync python -m examples.code_review_agent \
+      --variant openclaw --environment openshell \
+      --gateway "http://127.0.0.1:${GATEWAY_PORT}" --image "${RUNTIME_IMAGE}" \
+      --model "${CODE_REVIEW_MODEL:-nvidia/nemotron-3-ultra-550b-a55b}" \
+      --base-url "${CODE_REVIEW_BASE_URL:-http://10.86.19.10:8000/v1}" \
+      --api-key-env FABRIC_LOCAL_INFERENCE_KEY \
+      --input "Read calculator.py and the code-review skill. Review correctness and missing tests without inventing a required return value. Remember the review label ${label} in this conversation; do not write it to a file." \
+      --follow-up-input "What was the review label from my previous message? Then give one focused test recommendation for calculator.py." \
+      --results-file "${FABRIC_ROOT}/.tmp/openclaw-code-review/results.json" "$@"
+    wait "${EVIDENCE_PID}"
+    EVIDENCE_PID=""
+    python3 - "${FABRIC_ROOT}/.tmp/openclaw-code-review/results.json" "${label}" <<'PYCODE'
+import json
+from pathlib import Path
+import sys
+results = json.loads(Path(sys.argv[1]).read_text())["results"]
+assert len(results) == 2 and all(r["status"] == "succeeded" for r in results), results
+assert results[0]["runtime_id"] == results[1]["runtime_id"]
+assert "calculator.py" in results[0]["output"]["response"]
+assert sys.argv[2] in results[1]["output"]["response"], "conversation continuity failed"
+evidence = json.loads(Path(sys.argv[1]).with_name("task-evidence.json").read_text())
+roles = [p["role"] for p in evidence["processes"].values()]
+assert roles.count("adapter") == 1 and roles.count("openclaw_gateway") == 1, evidence
+assert any(count == 2 for count in evidence["user_turns_by_session"].values()), evidence
+assert any(r["path"].endswith("calculator.py") for r in evidence["read_calls"]), evidence
+print("Verified two successful turns, conversation continuity, persistent task processes, and a real file-read call.")
+PYCODE
+    return
+  fi
   NEMO_FABRIC_OPEN_SHELL_PROVIDER="${FABRIC_ROOT}/target/debug/fabric-environment-openshell" \
   PYTHONPATH="${FABRIC_ROOT}" \
   UV_PROJECT_ENVIRONMENT="${DEMO_PYTHON_ENV}" \
@@ -239,8 +329,9 @@ if [[ "${EXAMPLE_MODE}" == "deployment" || "${EXAMPLE_MODE}" == "both" ]]; then
     sandbox create \
     --name "${SANDBOX_NAME}" \
     --from "${RUNTIME_IMAGE}" \
-    --policy "${EXAMPLE_ROOT}/policy.yaml" \
+    --policy "${WORKLOAD_ROOT}/policy.yaml" \
     --env PYTHONPATH=/opt/nemo-fabric \
+    "${MODEL_ENV_ARGS[@]}" \
     --detach \
     --no-tty \
     -- fabric-runtime-server serve
