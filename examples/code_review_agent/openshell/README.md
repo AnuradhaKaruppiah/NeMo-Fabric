@@ -5,6 +5,8 @@ SPDX-License-Identifier: Apache-2.0
 
 # OpenClaw code review inside OpenShell
 
+See the [launcher function flow](FLOW.md) for the shell functions, Python lifecycle, task execution path, and ownership boundaries.
+
 This NVIDIA NeMo Fabric POC runs the existing code-review configuration and OpenClaw adapter with the agent loop, tools, and session inside an OpenShell sandbox (Model A). The host runs the consumer, SDK coordinator, and OpenShell provider. The model server remains external at `http://10.86.19.10:8000/v1`, serving `nvidia/nemotron-3-ultra-550b-a55b`.
 
 The consumer attaches to a caller-owned sandbox, starts one managed runtime, invokes a review and a follow-up, stops the runtime, and releases its attachment. The deployment script then deletes the sandbox and stops its temporary OpenShell gateway. OpenClaw's loopback Gateway runs inside the sandbox and is separate from the OpenShell gateway. This experiment does not use `prepare_service()` or introduce a FabricService. One runtime is the experiment's scope; it is not a restriction on Model A.
