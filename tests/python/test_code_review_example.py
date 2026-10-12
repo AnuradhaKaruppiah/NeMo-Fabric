@@ -365,7 +365,7 @@ def test_kilo_model_endpoint_overrides_project_into_plan():
             "--model",
             "nvidia/nemotron-3-ultra-550b-a55b",
             "--base-url",
-            "http://10.86.19.10:8000/v1",
+            "http://models.example:8000/v1",
             "--api-key-env",
             "LOCAL_MODEL_KEY",
             "--allow-insecure-http-model-endpoint",
@@ -382,7 +382,7 @@ def test_kilo_model_endpoint_overrides_project_into_plan():
         "provider": "nvidia",
         "model": "nvidia/nemotron-3-ultra-550b-a55b",
         "api_key_env": "LOCAL_MODEL_KEY",
-        "base_url": "http://10.86.19.10:8000/v1",
+        "base_url": "http://models.example:8000/v1",
     }
     assert agent_config["harness"]["settings"] == {
         "allow_insecure_http_model_endpoint": True

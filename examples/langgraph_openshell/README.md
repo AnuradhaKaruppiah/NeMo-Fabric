@@ -43,11 +43,12 @@ collects it through a traversal-safe, size-bounded operation.
 
 ## Run the Example
 
-The primary deployment demonstration uses a caller-owned sandbox:
+This directory contains the Courier workload. Its entry point runs both the
+caller-owned deployment and Fabric-managed development modes by default. To
+run only the caller-owned deployment mode:
 
 ```bash
-OPENSHELL_EXAMPLE_MODE=deployment \
-  bash examples/langgraph_openshell/run-demo.sh
+OPENSHELL_EXAMPLE_MODE=deployment bash examples/langgraph_openshell/run-demo.sh
 ```
 
 The script performs the following actions:
@@ -63,18 +64,16 @@ The script performs the following actions:
 
 The script deletes the caller-owned sandbox during its own final cleanup.
 
-To run both deployment and optional Fabric-managed development modes, use the
-default command:
+To run both deployment and Fabric-managed development modes:
 
 ```bash
-bash examples/langgraph_openshell/run-demo.sh
+OPENSHELL_EXAMPLE_MODE=both bash examples/langgraph_openshell/run-demo.sh
 ```
 
 To run only the development mode, use the following command:
 
 ```bash
-OPENSHELL_EXAMPLE_MODE=development \
-  bash examples/langgraph_openshell/run-demo.sh
+OPENSHELL_EXAMPLE_MODE=development bash examples/langgraph_openshell/run-demo.sh
 ```
 
 Development mode uses `prepare_environment` to create the sandbox. It verifies

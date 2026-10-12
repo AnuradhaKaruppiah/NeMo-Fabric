@@ -3,6 +3,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Workload hooks sourced by the shared OpenShell provisioning launcher.
+if [[ -z "${CODE_REVIEW_BASE_URL:-}" ]]; then
+  echo "ERROR: set CODE_REVIEW_BASE_URL to a model endpoint reachable from the sandbox" >&2
+  exit 2
+fi
+
 CODE_REVIEW_HARNESS="${CODE_REVIEW_HARNESS:-openclaw}"
 case "${CODE_REVIEW_HARNESS}" in
   openclaw)

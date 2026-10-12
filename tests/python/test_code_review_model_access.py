@@ -17,6 +17,7 @@ import yaml
 from examples.code_review_agent.config import BASE_DIR
 from examples.code_review_agent.openshell.model_access import (
     inference_policy,
+    main,
     validate_access,
 )
 from examples.code_review_agent.openshell.preflight import probe
@@ -26,7 +27,7 @@ from examples.code_review_agent.openshell.preflight import probe
 def access_fixture():
     return {
         "model": "review-model",
-        "base_url": "http://10.86.19.10:8000/v1",
+        "base_url": "http://models.example:8000/v1",
         "api_key_env": "TASK_KEY",
     }
 
@@ -116,6 +117,23 @@ def test_generated_deployment_and_consumer_share_one_model_declaration(
     plan = json.loads(completed.stdout)
     model = plan["agent_config"]["models"]["default"]
     assert {key: model[key] for key in declaration} == declaration
+
+
+def test_model_access_requires_a_base_url(tmp_path, monkeypatch):
+    monkeypatch.delenv("CODE_REVIEW_BASE_URL", raising=False)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "model_access.py",
+            "--harness",
+            "openclaw",
+            "--output-dir",
+            str(tmp_path),
+        ],
+    )
+    with pytest.raises(SystemExit, match="CODE_REVIEW_BASE_URL"):
+        main()
 
 
 def test_preflight_uses_task_credential_without_printing_it(access, monkeypatch):

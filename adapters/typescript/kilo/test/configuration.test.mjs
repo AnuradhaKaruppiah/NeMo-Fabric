@@ -24,7 +24,7 @@ test("rejects ambiguous, unsafe, and unsupported model configuration", () => {
   assert.throws(() => selectModel({models: {a: {provider: "x", model: "a", api_key_env: "KEY"}, b: {provider: "x", model: "b", api_key_env: "KEY"}}}), (error) => error.code === "kilo_model_ambiguous");
   assert.throws(() => selectModel({models: {default: {provider: "x", model: "a", api_key_env: "BAD-KEY"}}}), (error) => error.code === "kilo_invalid_model");
   assert.throws(() => selectModel({models: {default: {provider: "x", model: "a", api_key_env: "KEY", base_url: "http://example.com/v1"}}}), (error) => error.code === "kilo_invalid_model");
-  assert.equal(selectModel({harness: {settings: {allow_insecure_http_model_endpoint: true}}, models: {default: {provider: "x", model: "a", api_key_env: "KEY", base_url: "http://10.86.19.10:8000/v1"}}}).baseUrl, "http://10.86.19.10:8000/v1");
+  assert.equal(selectModel({harness: {settings: {allow_insecure_http_model_endpoint: true}}, models: {default: {provider: "x", model: "a", api_key_env: "KEY", base_url: "http://192.168.1.10:8000/v1"}}}).baseUrl, "http://192.168.1.10:8000/v1");
   for (const url of ["http://example.com/v1", "http://8.8.8.8/v1", "http://169.254.169.254/v1"]) {
     assert.throws(() => selectModel({harness: {settings: {allow_insecure_http_model_endpoint: true}}, models: {default: {provider: "x", model: "a", api_key_env: "KEY", base_url: url}}}), (error) => error.code === "kilo_invalid_model");
   }

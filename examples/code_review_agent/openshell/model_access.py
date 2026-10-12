@@ -65,13 +65,14 @@ def main():
     parser.add_argument("--harness", choices=["openclaw", "hermes"], required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
+    base_url = os.environ.get("CODE_REVIEW_BASE_URL")
+    if not base_url:
+        raise SystemExit("CODE_REVIEW_BASE_URL must name a reachable model endpoint")
     access = {
         "model": os.environ.get(
             "CODE_REVIEW_MODEL", "nvidia/nemotron-3-ultra-550b-a55b"
         ),
-        "base_url": os.environ.get(
-            "CODE_REVIEW_BASE_URL", "http://10.86.19.10:8000/v1"
-        ),
+        "base_url": base_url,
         "api_key_env": os.environ.get(
             "CODE_REVIEW_API_KEY_ENV", "FABRIC_LOCAL_INFERENCE_KEY"
         ),
