@@ -15,7 +15,7 @@ configuration does not affect another.
 
 ## Run the Default Demo
 
-For the OpenClaw or Hermes agent loop inside an OpenShell task environment (Model A), see the [OpenShell POC runbook](openshell/README.md). It runs a review and follow-up through one persistent runtime against the local inference endpoint, verifies task-side file reads and conversation continuity, and cleans up the sandbox.
+For the OpenClaw or Hermes agent loop inside an OpenShell task environment, see the [OpenShell POC runbook](openshell/README.md). It runs a review and follow-up through one persistent runtime against the local inference endpoint, verifies task-side file reads and conversation continuity, and cleans up the sandbox.
 
 Run commands from the repository root. Build NeMo Fabric and its maintained
 language packages, and then install the pinned Hermes Agent source:

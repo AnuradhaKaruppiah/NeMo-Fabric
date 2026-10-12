@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Run a code-review agent inside OpenShell
 
-This NVIDIA NeMo Fabric example runs the existing OpenClaw or Hermes agent inside an OpenShell sandbox (Model A). Its agent loop, tools, and conversation state stay in the sandbox. The host uses Fabric to start the agent, send a review and follow-up, and stop it. Inference runs on your external model server.
+This NVIDIA NeMo Fabric example runs the existing OpenClaw or Hermes agent inside an OpenShell sandbox. Its agent loop, tools, and conversation state stay in the sandbox. The host uses Fabric to start the agent, send a review and follow-up, and stop it. Inference runs on your external model server.
 
 ## Run it
 

@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # NVIDIA NeMo Fabric OpenClaw Adapter
 
-For managed execution with the agent loop and tools inside an OpenShell sandbox, see the [code-review Model A POC](../../../examples/code_review_agent/openshell/README.md).
+For managed execution with the agent loop and tools inside an OpenShell sandbox, see the [code-review OpenShell POC](../../../examples/code_review_agent/openshell/README.md).
 
 This adapter supports two lifecycle shapes:
 
