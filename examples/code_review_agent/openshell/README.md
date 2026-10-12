@@ -19,13 +19,6 @@ The default model is `nvidia/nemotron-3-ultra-550b-a55b` at `http://10.86.19.10:
 
 ## How it works
 
-```mermaid
-%%{init: {"flowchart": {"htmlLabels": false, "rankSpacing": 22}}}%%
-flowchart TD
-    A["Prepare sandbox"] --> B["Run two turns"]
-    B --> C["Stop and clean up"]
-```
-
 1. **Prepare:** [The wrapper](run-demo.sh) selects code review and calls the [shared launcher](../../langgraph_openshell/run-demo.sh). It builds the task image, starts OpenShell, and creates a sandbox with the [policy](policy.yaml). The sandbox starts `fabric-runtime-server`; the agent starts in the next step.
 2. **Run:** `run_consumer()` launches the [existing Python consumer](../__main__.py). Fabric attaches to the sandbox, starts the OpenClaw adapter, and invokes the same runtime twice. OpenClaw reads `calculator.py` and the review skill. The follow-up asks for a label from the first turn, demonstrating conversation continuity without host replay. A separate observer captures task-side process and read-call evidence.
 3. **Clean up:** The Python consumer stops the agent and releases its attachment in `finally`. The launcher checks the saved results/evidence, verifies that the caller-owned sandbox still exists, then deletes the sandbox and stops its temporary gateway on exit. Cached images, packages, and result files remain.
