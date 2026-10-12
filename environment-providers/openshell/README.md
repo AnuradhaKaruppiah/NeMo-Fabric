@@ -28,51 +28,9 @@ SDK contains the Python API and its in-process Rust runtime coordinator. The
 coordinator starts the OpenShell provider as a separate child process. The
 runtime-control processes, adapter, and agent run inside the sandbox.
 
-```mermaid
-flowchart TB
-    subgraph HOST["Consumer side"]
-        direction LR
-        subgraph APP["Consumer application process"]
-            direction LR
-            C["Consumer application"]
-            F["NVIDIA NeMo Fabric SDK<br/>Python API + in-process Rust core"]
-            C --> F
-        end
+![Fabric host, gateway, and sandbox architecture](architecture.svg)
 
-        subgraph CHILD["Child process<br/>lazy and reused"]
-            direction TB
-            P["OpenShell environment provider"]
-            OSSDK["OpenShell Rust SDK<br/>(linked library)"]
-            P --> OSSDK
-        end
-
-        F -->|"Fabric provider IPC<br/>JSON over stdio"| P
-    end
-
-    GATEWAY["OpenShell gateway<br/>unmodified"]
-
-    subgraph SANDBOX["OpenShell sandbox — isolation and policy boundary"]
-        direction LR
-        CTL["fabric-runtime-ctl<br/>short-lived process"]
-        SOCKET["Unix domain socket"]
-        SERVER["fabric-runtime-server<br/>persistent process"]
-        ADAPTER["Fabric adapter<br/>persistent process"]
-        AGENT["Custom agent or harness"]
-        DATA["Sandbox filesystem<br/>workspace + declared artifact files"]
-
-        CTL --> SOCKET
-        SOCKET --> SERVER
-        SERVER --> ADAPTER
-        ADAPTER --> AGENT
-        AGENT --> DATA
-    end
-
-    OSSDK -->|"OpenShell API<br/>health, lifecycle, inspection, exec"| GATEWAY
-    GATEWAY -->|"Generic exec request<br/>run fabric-runtime-ctl"| CTL
-
-    classDef fabricComponent fill:#dff3df,stroke:#3f4a54,color:#111827
-    class F,P,CTL,SERVER,ADAPTER fabricComponent
-```
+[Download editable Excalidraw source](architecture.excalidraw). Open [Excalidraw](https://excalidraw.com) and drag the downloaded file onto the canvas to edit text, boxes, and connections. Save the `.excalidraw` file and export an SVG to update both repository files.
 
 **Legend:** Green boxes are Fabric components.
 
@@ -138,37 +96,9 @@ environment and runtime pairs when it needs concurrency.
 
 One user input follows this sequence:
 
-```mermaid
-sequenceDiagram
-    box Consumer side
-        participant C as Consumer application
-        participant F as Fabric SDK
-        participant P as OpenShell provider
-    end
+![One invocation through the provider, gateway, and task runtime](invocation.svg)
 
-    participant G as OpenShell gateway
-
-    box OpenShell sandbox
-        participant CTL as Runtime ctl (short-lived)
-        participant S as Runtime server (persistent)
-        participant A as Fabric adapter and agent
-    end
-
-    C->>F: invoke(input)
-    F->>P: Runtime-control request over stdio
-    P->>G: SDK exec(run fabric-runtime-ctl)
-    G->>CTL: Start generic command
-    CTL->>S: Request over Unix socket
-    S->>A: Fabric adapter invoke
-    A-->>S: Fabric adapter result
-    S-->>CTL: Runtime-control response
-    CTL-->>G: Command output and exit
-    G-->>P: OpenShell exec result
-    P-->>F: Runtime-control response
-    F-->>C: Normalized run result
-
-    Note over S,A: Session stays alive for the next invoke
-```
+[Download editable invocation diagram](invocation.excalidraw).
 
 Every input creates a new OpenShell exec operation. It does not create a new
 Fabric runtime or agent process.
