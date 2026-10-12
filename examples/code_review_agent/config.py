@@ -96,7 +96,7 @@ def hermes_config() -> FabricConfig:
         adapter_id="nvidia.fabric.hermes",
         resolution="preinstalled",
         settings={
-            "max_tokens": 512,
+            "max_tokens": 1024,
             "reasoning_config": {"effort": "none"},
         },
     )
@@ -104,14 +104,14 @@ def hermes_config() -> FabricConfig:
     assert isinstance(model, ModelConfig)
     model.base_url = "https://integrate.api.nvidia.com/v1"
     config.instructions = InstructionsConfig(
-        system=InstructionConfig(content="You are a concise smoke test assistant.")
+        system=InstructionConfig(content=CODE_REVIEW_INSTRUCTION)
     )
-    config.tools = ToolsConfig(enabled=[])
+    config.tools = ToolsConfig(enabled=["file"])
     config.runtime = RuntimeConfig(
         input_schema="chat",
         output_schema="message",
         artifacts="./artifacts/hermes",
-        max_turns=1,
+        max_turns=10,
     )
     config.environment = EnvironmentConfig(
         provider="local",
@@ -426,10 +426,13 @@ def openclaw_config() -> FabricConfig:
 
 
 def with_openshell(base: FabricConfig, *, gateway: str, image: str) -> FabricConfig:
-    """Compose the caller-owned OpenClaw image without carrying host paths."""
+    """Compose a caller-owned review image without carrying host paths."""
 
-    if base.harness.adapter_id != "nvidia.fabric.openclaw":
-        raise ValueError("the OpenShell code-review image supports only OpenClaw")
+    if base.harness.adapter_id not in {
+        "nvidia.fabric.openclaw",
+        "nvidia.fabric.hermes",
+    }:
+        raise ValueError("the OpenShell code-review images support OpenClaw and Hermes")
     config = base.model_copy(deep=True)
     config.harness.resolution = "image_provided"
     # Remote Python adapters use task PATH (python3), never host ADAPTER_PYTHON.
@@ -450,6 +453,14 @@ def with_openshell(base: FabricConfig, *, gateway: str, image: str) -> FabricCon
         ownership="caller_owned",
         workspace="/sandbox/repos/my-service",
         artifacts="/sandbox/artifacts",
+        env=(
+            {
+                "PATH": "/opt/hermes-venv/bin:/usr/local/bin:/usr/bin:/bin",
+                "VIRTUAL_ENV": "/opt/hermes-venv",
+            }
+            if config.harness.adapter_id == "nvidia.fabric.hermes"
+            else {}
+        ),
         connection={"gateway": gateway},
         settings={
             "image": image,

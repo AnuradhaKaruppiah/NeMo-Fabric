@@ -4,16 +4,19 @@
 """Observe this pinned demo's processes and read calls before temporary state is removed.
 
 This is test instrumentation, not a Fabric API or a portable OpenClaw contract.
-Only process identities, session IDs, turn counts, and read paths are exported.
+OpenClaw exports process identities, session IDs, turn counts, and read paths.
+For Hermes this observer captures only process identity; tool evidence comes from
+the adapter result, without reading its session database.
 """
 
+import argparse
 import json
 import sqlite3
 import time
 from pathlib import Path
 
 
-def snapshot():
+def snapshot(harness="openclaw"):
     processes = {}
     for entry in Path("/proc").iterdir():
         if not entry.name.isdigit():
@@ -22,7 +25,7 @@ def snapshot():
             args = (entry / "cmdline").read_bytes().split(b"\0")
         except OSError:
             continue
-        if b"nemo_fabric_adapters.openclaw.adapter" in args:
+        if f"nemo_fabric_adapters.{harness}.adapter".encode() in args:
             processes[entry.name] = "adapter"
         elif args and (
             args[0].startswith(b"openclaw-gateway")
@@ -33,6 +36,9 @@ def snapshot():
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--harness", choices=["openclaw", "hermes"], default="openclaw")
+    args = parser.parse_args()
     started = time.monotonic()
     identities = {}
     turns = {}
@@ -40,17 +46,23 @@ def main():
     saw_gateway = False
     last_live = started
     while time.monotonic() - started < 650:
-        live = snapshot()
+        live = snapshot(args.harness)
         now = time.monotonic() - started
         for pid, role in live.items():
             identities.setdefault(
                 pid, {"role": role, "first_seen_seconds": round(now, 2)}
             )
             identities[pid]["last_seen_seconds"] = round(now, 2)
-        saw_gateway |= "openclaw_gateway" in live.values()
+        saw_gateway |= (
+            "openclaw_gateway" if args.harness == "openclaw" else "adapter"
+        ) in live.values()
         if live:
             last_live = time.monotonic()
-        for path in Path("/tmp").glob("nemo-fabric-openclaw-*/state/**/*.sqlite*"):
+        for path in (
+            Path("/tmp").glob("nemo-fabric-openclaw-*/state/**/*.sqlite*")
+            if args.harness == "openclaw"
+            else []
+        ):
             if path.name.endswith(("-shm", "-wal")):
                 continue
             try:

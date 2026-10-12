@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # NVIDIA NeMo Fabric Hermes Agent Adapter
 
-This adapter runs Hermes Agent through its Python SDK.
+This adapter runs Hermes Agent through its Python SDK. The [code-review OpenShell POC](../../../examples/code_review_agent/openshell/README.md) packages this same adapter and agent loop inside a sandbox.
 
 ## Install
 

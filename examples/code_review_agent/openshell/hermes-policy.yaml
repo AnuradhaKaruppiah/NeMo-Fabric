@@ -1,0 +1,37 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+version: 1
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr
+    - /opt/nemo-fabric
+    - /opt/hermes-agent
+    - /opt/hermes-venv
+    - /lib
+    - /lib64
+    - /etc
+    - /proc
+    - /dev/urandom
+  read_write:
+    - /sandbox
+    - /home/sandbox
+    - /tmp
+    - /dev/null
+landlock:
+  compatibility: best_effort
+network_policies:
+  local_inference:
+    name: Local review inference
+    endpoints:
+      - host: 10.86.19.10
+        port: 8000
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow:
+              method: POST
+              path: /v1/chat/completions
+    binaries:
+      - path: /usr/local/bin/python*
+      - path: /opt/hermes-venv/bin/python*

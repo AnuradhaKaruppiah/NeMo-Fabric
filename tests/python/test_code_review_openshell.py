@@ -12,12 +12,20 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from nemo_fabric import Fabric
-from examples.code_review_agent import BASE_DIR, openclaw_config, with_openshell
+from examples.code_review_agent import (
+    BASE_DIR,
+    hermes_config,
+    openclaw_config,
+    with_openshell,
+)
 from examples.code_review_agent.__main__ import _review_turns
+from examples.code_review_agent.openshell.verify_run import hermes_read_calls
+from examples.code_review_agent.openshell.verify_run import verify_results
 
 
-def test_remote_projection_uses_task_paths_without_changing_local_config():
-    local = openclaw_config()
+@pytest.mark.parametrize("builder", [openclaw_config, hermes_config])
+def test_remote_projection_uses_task_paths_without_changing_local_config(builder):
+    local = builder()
     remote = with_openshell(
         local, gateway="http://localhost:18080", image="sha256:test"
     )
@@ -33,6 +41,12 @@ def test_remote_projection_uses_task_paths_without_changing_local_config():
     assert [str(path) for path in local.skills.paths] == ["./skills/code-review"]
     assert remote.models == local.models
     assert remote.tools == local.tools
+    if builder == hermes_config:
+        assert local.tools.enabled == ["file"]
+        assert local.runtime.max_turns == 10
+        assert remote.environment.env["VIRTUAL_ENV"] == "/opt/hermes-venv"
+        assert remote.environment.env["PATH"].startswith("/opt/hermes-venv/bin:")
+        assert local.environment.env == {}
 
 
 @pytest.mark.parametrize("failure", [None, "start", "invoke", "stop", "result"])
@@ -120,9 +134,112 @@ def test_custom_remote_skills_require_explicit_task_paths():
 
 
 @pytest.mark.parametrize(
+    "result, expected",
+    [
+        ({"content": "return 41", "not_found": False}, ["calculator.py"]),
+        ({"error": "missing file"}, []),
+        ({"content": "", "not_found": True}, []),
+        ({"content": "denied", "success": False}, []),
+    ],
+)
+def test_hermes_read_evidence_requires_a_completed_tool_call(result, expected):
+    messages = [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "read-1",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": '{"path":"calculator.py"}',
+                    },
+                },
+                {
+                    "id": "unfinished",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": '{"path":"other.py"}',
+                    },
+                },
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "read-1",
+            "content": json.dumps(result),
+        },
+    ]
+    assert hermes_read_calls(messages) == expected
+
+
+@pytest.mark.parametrize(
+    "failure", [None, "runtime", "label", "read", "process", "state"]
+)
+def test_hermes_live_acceptance_rejects_missing_evidence(failure):
+    messages = [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "read-1",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": '{"path":"calculator.py"}',
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "read-1",
+            "content": '{"content":"return 41"}',
+        },
+    ]
+    results = [
+        {
+            "status": "succeeded",
+            "runtime_id": "runtime-1",
+            "output": {
+                "response": "calculator.py returns 41",
+                "messages": messages,
+                "hermes_home": "/sandbox/artifacts/runtimes/runtime-1",
+            },
+        },
+        {
+            "status": "succeeded",
+            "runtime_id": "runtime-1",
+            "output": {
+                "response": "The label was review-123",
+                "messages": messages,
+                "hermes_home": "/sandbox/artifacts/runtimes/runtime-1",
+            },
+        },
+    ]
+    evidence = {"processes": {"57": {"role": "adapter"}}}
+    if failure == "runtime":
+        results[1]["runtime_id"] = "runtime-2"
+    elif failure == "label":
+        results[1]["output"]["response"] = "I do not recall"
+    elif failure == "read":
+        results[0]["output"]["messages"] = []
+    elif failure == "process":
+        evidence["processes"]["58"] = {"role": "adapter"}
+    elif failure == "state":
+        results[1]["output"]["hermes_home"] = "/sandbox/different-state"
+    if failure is not None:
+        with pytest.raises(ValueError):
+            verify_results(results, evidence, harness="hermes", label="review-123")
+    else:
+        summary = verify_results(
+            results, evidence, harness="hermes", label="review-123"
+        )
+        assert summary["file_reads"] == ["calculator.py"]
+
+
+@pytest.mark.parametrize(
     "options",
     [
-        ["--environment", "openshell", "--image", "sha256:test"],
+        ["--variant", "pi", "--environment", "openshell", "--image", "sha256:test"],
         ["--variant", "openclaw", "--environment", "openshell"],
         ["--image", "sha256:test"],
         [

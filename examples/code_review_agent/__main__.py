@@ -261,9 +261,14 @@ async def main() -> None:
         parser.error("Pi Relay runs require --pi-relay-extension-path")
 
     if args.environment == "openshell":
-        if args.variant != "openclaw" or args.service or args.stream or args.relay:
+        if (
+            args.variant not in {"openclaw", "hermes"}
+            or args.service
+            or args.stream
+            or args.relay
+        ):
             parser.error(
-                "OpenShell requires --variant openclaw without service, stream, or Relay"
+                "OpenShell requires --variant openclaw or hermes without service, stream, or Relay"
             )
         if not args.image or (
             not args.plan and (not args.sandbox_name or not args.sandbox_id)

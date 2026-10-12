@@ -72,7 +72,7 @@ NeMo Fabric separates consumers from execution targets through a stable, version
 
 - **Expand the harness ecosystem:** Add high-priority first- and third-party harnesses through the normalized lifecycle and capability contracts.
 - **Sandbox-native execution:** Run NeMo Fabric in secure environments through providers such as [NVIDIA OpenShell](https://docs.nvidia.com/openshell/about/overview).
-  Try the [OpenClaw code-review POC](examples/code_review_agent/openshell/README.md) for a two-turn agent loop executing inside an OpenShell sandbox.
+  Try the [OpenClaw and Hermes code-review POC](examples/code_review_agent/openshell/README.md) for a two-turn agent loop executing inside an OpenShell sandbox.
 - **Deepen NVIDIA ecosystem integrations:** Make NeMo Fabric a standard execution boundary for agent configuration, evaluation, rollouts, artifacts, and telemetry.
 - **Enhance session lifecycle management:** Add explicit cold-start, resume, and fork operations with stable session identifiers and capability-aware errors.
 - **Compose subagents:** Configure supported subagents through validated, portable NeMo Fabric configuration.
