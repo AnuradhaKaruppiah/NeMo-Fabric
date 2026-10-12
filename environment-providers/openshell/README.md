@@ -28,9 +28,9 @@ SDK contains the Python API and its in-process Rust runtime coordinator. The
 coordinator starts the OpenShell provider as a separate child process. The
 runtime-control processes, adapter, and agent run inside the sandbox.
 
-![Fabric host, gateway, and sandbox architecture](architecture.svg)
+![Fabric host, gateway, and sandbox architecture](../../assets/openshell_architecture.png)
 
-[Download editable Excalidraw source](architecture.excalidraw). Open [Excalidraw](https://excalidraw.com) and drag the downloaded file onto the canvas to edit text, boxes, and connections. Save the `.excalidraw` file and export an SVG to update both repository files.
+[Download editable Excalidraw source](../../assets/openshell_architecture.excalidraw). Open [Excalidraw](https://excalidraw.com) and drag the downloaded file onto the canvas to edit it. Save the source and export a PNG back to `assets/` to update the preview.
 
 **Legend:** Green boxes are Fabric components.
 
@@ -96,9 +96,9 @@ environment and runtime pairs when it needs concurrency.
 
 One user input follows this sequence:
 
-![One invocation through the provider, gateway, and task runtime](invocation.svg)
+![One invocation through the provider, gateway, and task runtime](../../assets/openshell_invocation.png)
 
-[Download editable invocation diagram](invocation.excalidraw).
+[Download editable invocation diagram](../../assets/openshell_invocation.excalidraw).
 
 Every input creates a new OpenShell exec operation. It does not create a new
 Fabric runtime or agent process.
