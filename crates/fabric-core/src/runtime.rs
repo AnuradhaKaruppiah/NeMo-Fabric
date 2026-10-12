@@ -2193,6 +2193,16 @@ fn runtime_run_result(
     })?;
     validate_agent_run_result_extensions(&agent_result, plan.adapter_descriptor.as_ref())?;
     let artifacts = collect_runtime_artifacts(plan, runtime, &agent_result.artifacts)?;
+    let mut telemetry = telemetry_ref(plan, None);
+    if let Some(telemetry) = &mut telemetry {
+        telemetry.metadata.remove("relay_output_dir");
+        if telemetry.relay_enabled {
+            telemetry.metadata.insert(
+                "artifact_transport".to_string(),
+                Value::String("environment_provider".to_string()),
+            );
+        }
+    }
     let (status, error) = agent_result_status(&agent_result);
     let mut metadata = BTreeMap::from([
         (
@@ -2235,7 +2245,7 @@ fn runtime_run_result(
         error,
         usage: agent_result.usage.as_ref().map(run_usage),
         artifacts,
-        telemetry: None,
+        telemetry,
         events,
         metadata,
     })
@@ -3598,6 +3608,25 @@ fn runtime_telemetry_context(
             "relay_output_dir".to_string(),
             Value::String(output_dir.to_string_lossy().into_owned()),
         );
+    }
+    // Remote adapters materialize this declaration inside their artifact root.
+    // A local runtime instead receives its existing host-side config file.
+    if telemetry.relay_enabled
+        && relay_config.is_none()
+        && plan
+            .config
+            .environment
+            .as_ref()
+            .is_some_and(|environment| environment.provider == "openshell")
+    {
+        metadata.insert(
+            "relay_config".to_string(),
+            telemetry
+                .relay_config
+                .clone()
+                .unwrap_or_else(|| serde_json::json!({})),
+        );
+        metadata.remove("relay_output_dir");
     }
     if let Some(native_config) = &telemetry.native_config {
         metadata.insert("native_config".to_string(), native_config.clone());
@@ -5598,6 +5627,29 @@ for line in sys.stdin:
         assert_eq!(first.output["invocation_count"], 1);
         assert_eq!(second.output["invocation_count"], 2);
 
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn remote_relay_context_forwards_configuration_without_host_paths() {
+        let (root, mut plan) = local_host_plan_with_relay("success", true);
+        let local = runtime_telemetry_context(&plan, None).expect("local telemetry");
+        assert!(!local.metadata.contains_key("relay_config"));
+        configure_openshell_environment(&mut plan);
+        let remote = runtime_telemetry_context(&plan, None).expect("remote telemetry");
+        assert!(remote.relay_enabled);
+        assert_eq!(
+            remote.metadata["relay_config"],
+            plan.telemetry_plan
+                .as_ref()
+                .unwrap()
+                .relay_config
+                .clone()
+                .unwrap_or_else(|| serde_json::json!({}))
+        );
+        assert!(!remote.metadata.contains_key("relay_output_dir"));
+        assert!(remote.config_path.is_none());
+        assert!(remote.env.is_empty());
         let _ = fs::remove_dir_all(root);
     }
 

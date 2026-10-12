@@ -20,6 +20,8 @@ Use the maintained
 for adapter and configuration guidance. Source code is available in the
 [NVIDIA NeMo Fabric repository](https://github.com/NVIDIA/NeMo-Fabric/).
 
+For OpenShell Relay execution, `load_relay_plugin_config(payload)` materializes the runtime's inline configuration inside the task artifact root and maps file outputs to a runtime directory there. The Hermes adapter declares gzip snapshots in `AgentRunResult.artifacts`; the environment provider collects these into host paths. Local Relay execution continues to use `FABRIC_RELAY_CONFIG_PATH`.
+
 ## Persistent Local Hosts
 
 Every local Process or Python adapter implements the ordered persistent-host

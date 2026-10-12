@@ -536,6 +536,21 @@ def validate_relay_observability_v3(plugin_config: dict[str, Any]) -> None:
 
 
 def load_relay_plugin_config(payload: dict[str, Any]) -> dict[str, Any]:
+    context = runtime_context(payload)
+    metadata = (context.get("telemetry") or {}).get("metadata") or {}
+    if "relay_config" in metadata:
+        # The host cannot stage files on the task filesystem. Materialize the
+        # inline remote declaration without carrying host output paths across.
+        root = Path(context["artifacts"]["root"]).resolve()
+        config_path = (
+            root / ".fabric" / str(context["runtime_id"]) / "relay-config.json"
+        )
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(
+            json.dumps({"relay": {"config": metadata["relay_config"]}}),
+            encoding="utf-8",
+        )
+        os.environ["FABRIC_RELAY_CONFIG_PATH"] = str(config_path)
     config_path = os.environ.get("FABRIC_RELAY_CONFIG_PATH")
     if not config_path:
         raise RuntimeError("FABRIC_RELAY_CONFIG_PATH is required when Relay is enabled")
@@ -571,6 +586,9 @@ def normalize_relay_output_dirs(
 
     base = Path(base_dir(payload)).resolve()
     runtime_id = runtime_context(payload)["runtime_id"]
+    context = runtime_context(payload)
+    remote = "relay_config" in ((context.get("telemetry") or {}).get("metadata") or {})
+    remote_root = Path(context["artifacts"]["root"]) / "relay" if remote else None
     for component in plugin_config.get("components", []):
         if not isinstance(component, dict) or component.get("kind") != "observability":
             continue
@@ -588,7 +606,7 @@ def normalize_relay_output_dirs(
                         path = base / path
                 else:
                     path = base / "artifacts" / "relay"
-                sink["output_directory"] = str(path / str(runtime_id))
+                sink["output_directory"] = str((remote_root or path) / str(runtime_id))
                 Path(sink["output_directory"]).mkdir(parents=True, exist_ok=True)
                 sink.setdefault("filename", "events.atof.jsonl")
                 sink.setdefault("mode", "overwrite")
@@ -604,7 +622,7 @@ def normalize_relay_output_dirs(
         else:
             path = base / "artifacts" / "relay"
 
-        atif["output_directory"] = str(path / str(runtime_id))
+        atif["output_directory"] = str((remote_root or path) / str(runtime_id))
         Path(atif["output_directory"]).mkdir(parents=True, exist_ok=True)
         atif.setdefault("filename_template", "trajectory-{session_id}.atif.json")
         atif.setdefault("agent_name", agent_name(payload))

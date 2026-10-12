@@ -43,6 +43,7 @@ def main():
     identities = {}
     turns = {}
     reads = set()
+    gateways_by_turn = {}
     saw_gateway = False
     last_live = started
     while time.monotonic() - started < 650:
@@ -90,6 +91,12 @@ def main():
                             reads.add((session, name))
             for session, count in counts.items():
                 turns[session] = max(turns.get(session, 0), count)
+                if count in {1, 2}:
+                    gateways_by_turn.setdefault(session, {}).setdefault(
+                        str(count), set()
+                    ).update(
+                        pid for pid, role in live.items() if role == "openclaw_gateway"
+                    )
         if saw_gateway and time.monotonic() - last_live > 1:
             break
         if not saw_gateway and time.monotonic() - started > 60:
@@ -100,6 +107,10 @@ def main():
             {
                 "processes": identities,
                 "user_turns_by_session": turns,
+                "gateway_pids_by_user_turn": {
+                    session: {count: sorted(pids) for count, pids in counts.items()}
+                    for session, counts in gateways_by_turn.items()
+                },
                 "read_calls": [
                     {"session_id": session, "path": path}
                     for session, path in sorted(reads)

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import gzip
 import importlib.util
 import inspect
 import json
@@ -117,6 +118,56 @@ def test_validate_hermes_telemetry_provider_rejects_mixed_native_and_relay():
 
 def test_validate_hermes_relay_compatibility_accepts_supported_checkout():
     telemetry.validate_hermes_relay_compatibility()
+
+
+def test_remote_relay_snapshots_are_immutable_and_runtime_scoped(tmp_path, monkeypatch):
+    root = tmp_path / "artifacts"
+    source = root / "relay" / "events.atof.jsonl"
+    source.parent.mkdir(parents=True)
+    source.write_text("first\n")
+    context = _runtime_context(artifact_root=str(root), providers=["relay"])
+    context.telemetry.metadata["relay_config"] = {}
+    monkeypatch.setattr(
+        common_utils,
+        "collect_relay_artifacts",
+        MagicMock(return_value=[{"kind": "atof", "path": str(source)}]),
+    )
+    versions = {}
+    first = telemetry.snapshot_remote_relay_artifacts({}, context, versions)
+    context.invocation_id = "invocation-2"
+    source.write_text("second\n")
+    second = telemetry.snapshot_remote_relay_artifacts({}, context, versions)
+    assert gzip.decompress((root / first[0].path).read_bytes()) == b"first\n"
+    assert gzip.decompress((root / second[0].path).read_bytes()) == b"second\n"
+    assert first[0].path != second[0].path
+    assert "runtime-1" in str(first[0].path)
+    source = tmp_path / "outside.jsonl"
+    source.write_text("outside")
+    common_utils.collect_relay_artifacts.return_value = [
+        {"kind": "atof", "path": str(source)}
+    ]
+    with pytest.raises(ValueError, match="task artifact root"):
+        telemetry.snapshot_remote_relay_artifacts({}, context, versions)
+
+
+def test_remote_relay_does_not_recollect_unchanged_trajectories(tmp_path, monkeypatch):
+    source = tmp_path / "trajectory.atif.json"
+    source.write_text('{"steps":["first"]}')
+    context = _runtime_context(artifact_root=str(tmp_path), providers=["relay"])
+    context.telemetry.metadata["relay_config"] = {}
+    monkeypatch.setattr(
+        common_utils,
+        "collect_relay_artifacts",
+        MagicMock(return_value=[{"kind": "atif", "path": str(source)}]),
+    )
+    versions = {}
+    first = telemetry.snapshot_remote_relay_artifacts({}, context, versions)
+    context.invocation_id = "invocation-2"
+    assert telemetry.snapshot_remote_relay_artifacts({}, context, versions) == []
+    source.write_text('{"steps":["first","second"]}')
+    second = telemetry.snapshot_remote_relay_artifacts({}, context, versions)
+    assert first[0].path != second[0].path
+    assert b'"second"' in gzip.decompress((tmp_path / second[0].path).read_bytes())
 
 
 def test_validate_hermes_relay_compatibility_rejects_relay_08(monkeypatch):

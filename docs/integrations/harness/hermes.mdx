@@ -10,7 +10,7 @@ its Python SDK. The adapter maps normalized NeMo Fabric configuration into
 Hermes Agent models, tools, skills, Model Context Protocol (MCP) servers,
 sessions, and Relay telemetry.
 
-The [code-review OpenShell POC](https://github.com/NVIDIA/NeMo-Fabric/tree/main/examples/code_review_agent/openshell) runs the same Hermes adapter and agent loop inside a task sandbox with two-turn continuity and cleanup. Remote Relay telemetry remains a follow-up.
+The code-review OpenShell POC in `examples/code_review_agent/openshell/` runs the same Hermes adapter and agent loop inside a task sandbox with two-turn continuity and cleanup. Set `CODE_REVIEW_RELAY=1` to collect task-side gzip ATIF/ATOF snapshots after each invocation. Streaming is available locally; the OpenShell POC uses buffered invocations.
 
 ## Install the Adapter
 

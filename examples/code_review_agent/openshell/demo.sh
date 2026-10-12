@@ -16,10 +16,21 @@ case "${CODE_REVIEW_HARNESS}" in
   *) echo "ERROR: CODE_REVIEW_HARNESS must be openclaw or hermes" >&2; exit 2 ;;
 esac
 IMAGE_TAG="fabric-${CODE_REVIEW_HARNESS}-code-review:example"
-MODEL_ENV_ARGS=(--env FABRIC_LOCAL_INFERENCE_KEY=local-no-auth)
+MODEL_ENV_ARGS=()
+if [[ "${CODE_REVIEW_API_KEY_ENV:-FABRIC_LOCAL_INFERENCE_KEY}" == "FABRIC_LOCAL_INFERENCE_KEY" ]]; then
+  MODEL_ENV_ARGS=(--env FABRIC_LOCAL_INFERENCE_KEY=local-no-auth)
+fi
+CODE_REVIEW_RELAY="${CODE_REVIEW_RELAY:-0}"
+if [[ "${CODE_REVIEW_RELAY}" != "0" && ( "${CODE_REVIEW_RELAY}" != "1" || "${CODE_REVIEW_HARNESS}" != "hermes" ) ]]; then
+  echo "ERROR: CODE_REVIEW_RELAY=1 requires Hermes" >&2; exit 2
+fi
 RESULT_DIR="${FABRIC_ROOT}/.tmp/${CODE_REVIEW_HARNESS}-code-review"
 
 stage_code_review_image() {
+  python3 "${WORKLOAD_ROOT}/model_access.py" \
+    --harness "${CODE_REVIEW_HARNESS}" --output-dir "${RESULT_DIR}"
+  POLICY_FILE="${RESULT_DIR}/policy.yaml"
+  rm -f "${RESULT_DIR}/results.json" "${RESULT_DIR}/verification.json" "${RESULT_DIR}/preflight.json"
   cp -R "${FABRIC_ROOT}/adapters/python/${CODE_REVIEW_HARNESS}" \
     "${STAGE_DIR}/adapters-${CODE_REVIEW_HARNESS}"
   mkdir -p "${STAGE_DIR}/examples/code_review_agent"
@@ -52,6 +63,16 @@ smoke_code_review_image() {
 
 run_code_review_consumer() {
   mkdir -p "${RESULT_DIR}"
+  local probe_command=(/usr/local/bin/node /opt/nemo-fabric/preflight.mjs)
+  if [[ "${CODE_REVIEW_HARNESS}" == "hermes" ]]; then
+    probe_command=(/opt/hermes-venv/bin/python /opt/nemo-fabric/preflight.py)
+  fi
+  "${OPENSHELL_CLI}" --gateway-endpoint "http://127.0.0.1:${GATEWAY_PORT}" \
+    sandbox exec --name "${SANDBOX_NAME}" --no-tty --timeout 40 \
+    -- "${probe_command[@]}" "$(cat "${RESULT_DIR}/model-access.json")" \
+    >"${RESULT_DIR}/preflight.json"
+  local relay_args=()
+  if [[ "${CODE_REVIEW_RELAY}" == "1" ]]; then relay_args=(--relay); fi
   "${OPENSHELL_CLI}" --gateway-endpoint "http://127.0.0.1:${GATEWAY_PORT}" \
     sandbox exec --name "${SANDBOX_NAME}" --no-tty --timeout 660 \
     -- python3 /opt/nemo-fabric/capture_evidence.py --harness "${CODE_REVIEW_HARNESS}" \
@@ -63,9 +84,7 @@ run_code_review_consumer() {
   uv run --no-sync python -m examples.code_review_agent \
     --variant "${CODE_REVIEW_HARNESS}" --environment openshell \
     --gateway "http://127.0.0.1:${GATEWAY_PORT}" --image "${RUNTIME_IMAGE}" \
-    --model "${CODE_REVIEW_MODEL:-nvidia/nemotron-3-ultra-550b-a55b}" \
-    --base-url "${CODE_REVIEW_BASE_URL:-http://10.86.19.10:8000/v1}" \
-    --api-key-env FABRIC_LOCAL_INFERENCE_KEY \
+    --model-access-file "${RESULT_DIR}/model-access.json" "${relay_args[@]}" \
     --input "Read calculator.py and /opt/nemo-fabric/skills/code-review/SKILL.md. Review correctness and missing tests without inventing a required return value. Remember the review label ${label} in this conversation; do not write it to a file." \
     --follow-up-input "What was the review label from my previous message? Then give one focused test recommendation for calculator.py." \
     --results-file "${RESULT_DIR}/results.json" "$@"
@@ -73,11 +92,14 @@ run_code_review_consumer() {
   EVIDENCE_PID=""
   PYTHONPATH="${FABRIC_ROOT}" UV_PROJECT_ENVIRONMENT="${DEMO_PYTHON_ENV}" \
     uv run --no-sync python -m examples.code_review_agent.openshell.verify_run \
-    --harness "${CODE_REVIEW_HARNESS}" --results-file "${RESULT_DIR}/results.json" --label "${label}"
+    --harness "${CODE_REVIEW_HARNESS}" --results-file "${RESULT_DIR}/results.json" --label "${label}" "${relay_args[@]}"
 }
 
 collect_code_review_diagnostics() {
   mkdir -p "${RESULT_DIR}"
+  "${OPENSHELL_CLI}" --gateway-endpoint "http://127.0.0.1:${GATEWAY_PORT}" \
+    sandbox exec --name "${SANDBOX_NAME}" --no-tty --timeout 15 -- python3 -c 'import json,pathlib;root=pathlib.Path("/sandbox/artifacts");print(json.dumps([{ "path":str(p.relative_to(root)),"bytes":p.stat().st_size} for p in root.rglob("*") if p.is_file() and (p.name.endswith(".jsonl") or p.name.endswith(".atif.json") or p.name.endswith(".gz"))]))' \
+    >"${RESULT_DIR}/relay-diagnostics.json" 2>&1 || true
   if [[ "${CODE_REVIEW_HARNESS}" == "openclaw" ]]; then
     "${OPENSHELL_CLI}" --gateway-endpoint "http://127.0.0.1:${GATEWAY_PORT}" \
       sandbox exec --name "${SANDBOX_NAME}" --no-tty --timeout 15 -- python3 -c 'import glob,json; [print(json.loads(line).get("1", "")) for path in glob.glob("/tmp/openclaw/*.log") for line in open(path) if "model-fetch" in line or "ERROR" in line or "WARN" in line]' \

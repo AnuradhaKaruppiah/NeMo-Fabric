@@ -31,6 +31,42 @@ ROOT = Path(__file__).resolve().parents[2]
 CODEX_DESCRIPTOR = ROOT / "adapters/python/codex/codex.fabric-adapter.json"
 
 
+def test_remote_relay_config_uses_task_paths_and_replaces_ambient_host_path(tmp_path):
+    from copy import deepcopy
+
+    config = {
+        "version": 3,
+        "atif": {"enabled": True, "output_directory": "/host/relay"},
+        "atof": {
+            "enabled": True,
+            "sinks": [{"type": "file", "output_directory": "/other/host/relay"}],
+        },
+    }
+    original = deepcopy(config)
+    payload = {
+        "base_dir": str(tmp_path / "workspace"),
+        "config": {
+            "metadata": {"name": "review"},
+            "models": {"default": {"model": "review-model"}},
+        },
+        "runtime_context": {
+            "runtime_id": "runtime-remote",
+            "artifacts": {"root": str(tmp_path / "task-artifacts")},
+            "telemetry": {"relay_enabled": True, "metadata": {"relay_config": config}},
+        },
+    }
+    os.environ["FABRIC_RELAY_CONFIG_PATH"] = "/missing/host/config.json"
+    plugin = common_utils.load_relay_plugin_config(payload)
+    observability = plugin["components"][0]["config"]
+    expected = str(tmp_path / "task-artifacts" / "relay" / "runtime-remote")
+    assert observability["atif"]["output_directory"] == expected
+    assert observability["atof"]["sinks"][0]["output_directory"] == expected
+    staged = Path(os.environ["FABRIC_RELAY_CONFIG_PATH"])
+    assert staged.is_relative_to(tmp_path / "task-artifacts")
+    assert json.loads(staged.read_text())["relay"]["config"] == original
+    assert config == original
+
+
 def _stub_relay(monkeypatch: pytest.MonkeyPatch) -> tuple[MagicMock, list[Any]]:
     relay = ModuleType("nemo_relay")
     propagation_context = MagicMock(

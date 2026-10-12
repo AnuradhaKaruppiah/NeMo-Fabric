@@ -30,6 +30,7 @@ COPY --chmod=0755 fabric-runtime-server fabric-runtime-ctl /usr/local/bin/
 COPY examples/code_review_agent/repos/my-service /sandbox/repos/my-service
 COPY examples/code_review_agent/skills/code-review /opt/nemo-fabric/skills/code-review
 COPY examples/code_review_agent/openshell/capture_evidence.py /opt/nemo-fabric/capture_evidence.py
+COPY examples/code_review_agent/openshell/preflight.py examples/code_review_agent/openshell/preflight.mjs /opt/nemo-fabric/
 ENV HOME=/home/sandbox
 ENV SQLITE_TMPDIR=/tmp TMPDIR=/tmp
 WORKDIR /sandbox

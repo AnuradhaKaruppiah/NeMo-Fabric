@@ -147,7 +147,7 @@ The initial integration supports:
 - one lazily started provider process reused across lifecycle operations;
 - buffered `start`, `invoke`, and `stop` operations;
 - process and Python adapters; and
-- bounded collection of adapter-declared artifacts.
+- bounded collection of adapter-declared artifacts, including Hermes Relay gzip ATIF/ATOF snapshots.
 
 Streaming, cancellation, and reconnection are not part of this initial
 capability.

@@ -65,6 +65,7 @@ class HermesRuntime:
         self._agent: Any = None
         self._relay_plugin_config: dict[str, Any] | None = None
         self._relay_plugin_config_path: Path | None = None
+        self._relay_artifact_versions: dict[str, tuple[int, int]] = {}
         self._active_invoke_task: asyncio.Task[tuple[dict[str, Any], str]] | None = None
 
     async def start(self, payload: dict[str, Any]) -> None:
@@ -372,6 +373,13 @@ class HermesRuntime:
             status=AgentRunStatus.FAILED if failed else AgentRunStatus.SUCCEEDED,
             output=output,
             error=error,
+            artifacts=telemetry.snapshot_remote_relay_artifacts(
+                self._relay_plugin_config,
+                runtime_context,
+                self._relay_artifact_versions,
+            )
+            if self._relay_plugin_config is not None
+            else [],
         )
 
     async def _authenticate_mcp_servers(self) -> None:
@@ -505,6 +513,7 @@ class HermesRuntime:
         self._conversation_history = None
         self._relay_plugin_config = None
         self._relay_plugin_config_path = None
+        self._relay_artifact_versions = {}
         self._started = False
 
         if had_relay_plugin:

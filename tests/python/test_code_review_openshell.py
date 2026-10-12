@@ -4,6 +4,7 @@
 """Task-path and lifecycle regressions for the Model A review example."""
 
 from pathlib import Path
+import gzip
 import json
 import subprocess
 import sys
@@ -21,6 +22,151 @@ from examples.code_review_agent import (
 from examples.code_review_agent.__main__ import _review_turns
 from examples.code_review_agent.openshell.verify_run import hermes_read_calls
 from examples.code_review_agent.openshell.verify_run import verify_results
+from examples.code_review_agent.openshell.verify_run import verify_relay
+
+
+@pytest.mark.parametrize(
+    "first,second,accepted",
+    [
+        (["100", "162"], ["100"], True),
+        (["100"], ["200"], False),
+        (["100", "200"], ["100", "200"], False),
+        ([], ["100"], False),
+    ],
+)
+def test_openclaw_gateway_identity_is_correlated_to_both_user_turns(
+    first, second, accepted
+):
+    results = [
+        {
+            "status": "succeeded",
+            "runtime_id": "runtime-review",
+            "output": {"response": "calculator.py returns 41"},
+        },
+        {
+            "status": "succeeded",
+            "runtime_id": "runtime-review",
+            "output": {"response": "label-review"},
+        },
+    ]
+    evidence = {
+        "processes": {
+            "57": {"role": "adapter"},
+            "100": {"role": "openclaw_gateway"},
+            "162": {"role": "openclaw_gateway"},
+        },
+        "user_turns_by_session": {"session-review": 2},
+        "gateway_pids_by_user_turn": {"session-review": {"1": first, "2": second}},
+        "read_calls": [{"path": "/sandbox/calculator.py"}],
+    }
+    if accepted:
+        verify_results(results, evidence, harness="openclaw", label="label-review")
+    else:
+        with pytest.raises(ValueError, match="Gateway PID"):
+            verify_results(results, evidence, harness="openclaw", label="label-review")
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [None, "model", "correlation", "completion", "read", "atif", "scope", "missing"],
+)
+def test_relay_verification_requires_collected_correlated_completed_evidence(
+    tmp_path, failure
+):
+    results = []
+    for number in (1, 2):
+        invocation = f"invocation-{number}"
+        request = f"request-{number}"
+        metadata = {
+            "api_request_id": f"runtime-review:{request}:api:1",
+            "otel.status_code": "OK",
+        }
+        records = [
+            {
+                "uuid": "model",
+                "name": "openai.chat_completions",
+                "scope_category": "start",
+                "metadata": metadata,
+                "data": {"content": {"model": "review-model"}},
+            },
+            {
+                "uuid": "model",
+                "name": "openai.chat_completions",
+                "scope_category": "end",
+                "metadata": metadata,
+                "data": {},
+            },
+        ]
+        if number == 1:
+            records += [
+                {
+                    "uuid": "read",
+                    "name": "read_file",
+                    "scope_category": "start",
+                    "metadata": metadata,
+                    "data": {"path": "/sandbox/calculator.py"},
+                },
+                {
+                    "uuid": "read",
+                    "name": "read_file",
+                    "scope_category": "end",
+                    "metadata": metadata,
+                    "data": json.dumps({"content": "return 41"}),
+                },
+            ]
+            if failure == "model":
+                records[0]["data"]["content"]["model"] = "other-model"
+            elif failure == "correlation":
+                metadata["api_request_id"] = "runtime-other:request-other:api:1"
+            elif failure == "completion":
+                metadata["otel.status_code"] = "ERROR"
+            elif failure == "read":
+                records[-1]["data"] = '{"content":"denied","success":false}'
+        root = (
+            tmp_path
+            / ("runtime-other" if failure == "scope" else "runtime-review")
+            / invocation
+        )
+        root.mkdir(parents=True)
+        artifacts = []
+        for kind, data in [
+            ("atof", "\n".join(json.dumps(record) for record in records)),
+            (
+                "atif",
+                json.dumps(
+                    {
+                        "steps": [{"source": "agent"}],
+                        "extra": {
+                            "observed_events": [] if failure == "atif" else records
+                        },
+                    }
+                ),
+            ),
+        ]:
+            path = root / (kind + ".gz")
+            path.write_bytes(gzip.compress(data.encode()))
+            artifacts.append({"kind": kind, "path": str(path)})
+        if failure == "missing":
+            path.unlink()
+        results.append(
+            {
+                "runtime_id": "runtime-review",
+                "invocation_id": invocation,
+                "request_id": request,
+                "output": {"model": "review-model"},
+                "artifacts": {"artifacts": artifacts},
+            }
+        )
+    if failure:
+        with pytest.raises((ValueError, FileNotFoundError)):
+            verify_relay(results)
+    else:
+        summary = verify_relay(results)
+        assert summary["file_reads"] == ["/sandbox/calculator.py"]
+        assert [invocation["model_calls"] for invocation in summary["invocations"]] == [
+            1,
+            1,
+        ]
 
 
 @pytest.mark.parametrize("builder", [openclaw_config, hermes_config])

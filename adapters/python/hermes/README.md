@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # NVIDIA NeMo Fabric Hermes Agent Adapter
 
-This adapter runs Hermes Agent through its Python SDK. The [code-review OpenShell POC](../../../examples/code_review_agent/openshell/README.md) packages this same adapter and agent loop inside a sandbox.
+This adapter runs Hermes Agent through its Python SDK. The [code-review OpenShell POC](../../../examples/code_review_agent/openshell/README.md) packages this same adapter and agent loop inside a sandbox, with generated model access, task-side preflight, and optional collected Relay telemetry.
 
 ## Install
 
@@ -112,13 +112,13 @@ runtime.
 
 ## Execution Model
 
-Each NeMo Fabric runtime starts one local adapter host, constructs one Hermes Agent
+Each NeMo Fabric runtime starts one adapter host in the selected environment, constructs one Hermes Agent
 `AIAgent`, and opens one `SessionDB`. Ordered `Runtime.invoke(...)` calls reuse
 those native objects and pass the prior turn's returned transcript back to
 `run_conversation(...)`. Runtime stop calls the agent's idempotent `close()`
 method, closes the session database, and releases the Relay plugin context when
 enabled. Relay subscriber work is flushed after each invocation so ATIF output
-is complete before the result returns.
+is complete before the result returns. In OpenShell, the adapter declares separate gzip ATIF/ATOF snapshots for each invocation; the environment provider copies them into the host artifact manifest before sandbox cleanup.
 
 ## Maintaining The Adapter
 

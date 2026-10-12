@@ -33,6 +33,7 @@ COPY examples/code_review_agent/repos/my-service /sandbox/repos/my-service
 COPY examples/code_review_agent/skills/code-review /opt/nemo-fabric/skills/code-review
 COPY examples/code_review_agent/openshell/capture_evidence.py /opt/nemo-fabric/capture_evidence.py
 ENV PATH=/opt/hermes-venv/bin:$PATH
+COPY examples/code_review_agent/openshell/preflight.py examples/code_review_agent/openshell/preflight.mjs /opt/nemo-fabric/
 ENV HOME=/home/sandbox SQLITE_TMPDIR=/tmp TMPDIR=/tmp
 WORKDIR /sandbox
 USER sandbox:sandbox

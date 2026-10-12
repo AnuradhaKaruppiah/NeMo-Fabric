@@ -5,12 +5,14 @@
 
 from __future__ import annotations
 
+import gzip
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version
 from pathlib import Path
+import shutil
 from typing import Any
 
-from nemo_fabric_adapter_contract.models import RuntimeContext
+from nemo_fabric_adapter_contract.models import AgentArtifact, RuntimeContext
 import nemo_fabric_adapters.common.utils as common_utils
 
 
@@ -21,6 +23,43 @@ HERMES_RELAY_ENV_NAMES = (
     "HERMES_NEMO_RELAY_ATIF_ENABLED",
     "HERMES_NEMO_RELAY_ATOF_ENABLED",
 )
+
+
+def snapshot_remote_relay_artifacts(plugin_config, context: RuntimeContext, versions):
+    """Declare immutable per-invocation snapshots for provider collection."""
+    if not context.telemetry or "relay_config" not in context.telemetry.metadata:
+        return []
+    root = Path(context.artifacts.root).resolve()
+    destination = (
+        root / "relay-invocations" / context.runtime_id / context.invocation_id
+    )
+    declared = []
+    for artifact in common_utils.collect_relay_artifacts(plugin_config):
+        source = Path(artifact["path"]).resolve()
+        if not source.is_relative_to(root):
+            raise ValueError(
+                "remote Relay artifact must remain inside the task artifact root"
+            )
+        stat = source.stat()
+        version = (stat.st_mtime_ns, stat.st_size)
+        if artifact["kind"] == "atif" and versions.get(str(source)) == version:
+            continue
+        destination.mkdir(parents=True, exist_ok=True)
+        # Native trajectories can exceed the provider's per-file byte bound.
+        # Compress complete snapshots rather than truncate evidence or widen it.
+        target = destination / (source.name + ".gz")
+        with source.open("rb") as stream, gzip.open(target, "wb") as snapshot:
+            shutil.copyfileobj(stream, snapshot)
+        versions[str(source)] = version
+        declared.append(
+            AgentArtifact(
+                name=source.name + ".gz",
+                kind=artifact["kind"],
+                path=target.relative_to(root),
+                media_type="application/gzip",
+            )
+        )
+    return declared
 
 
 def finalize_hermes_relay_session(session_id: str) -> None:
