@@ -1228,6 +1228,10 @@ struct OpenShellSettings {
     image: String,
     sandbox_name: Option<String>,
     command: Vec<String>,
+    // SDK-owned task-side adapter discovery paths are projected into the task
+    // command contract and are intentionally ignored by host provisioning.
+    #[serde(default, rename = "task_discovery_paths")]
+    _task_discovery_paths: Vec<String>,
     #[serde(skip)]
     policy: Option<proto::SandboxPolicy>,
     #[serde(default)]
@@ -1848,6 +1852,22 @@ mod tests {
         .expect("valid settings");
 
         assert_eq!(settings.policy.expect("policy").version, 1);
+    }
+
+    #[test]
+    fn settings_accept_task_side_adapter_discovery_paths() {
+        OpenShellSettings::from_map(Map::from_iter([
+            (
+                "image".to_string(),
+                json!(format!("example/agent-runtime@sha256:{}", "a".repeat(64))),
+            ),
+            ("command".to_string(), json!(["fabric-agent-ctl", "serve"])),
+            (
+                "task_discovery_paths".to_string(),
+                json!(["/opt/fabric/adapter-descriptors/openclaw.fabric-adapter.json"]),
+            ),
+        ]))
+        .expect("SDK task-side discovery setting is accepted by host provisioning");
     }
 
     #[test]
