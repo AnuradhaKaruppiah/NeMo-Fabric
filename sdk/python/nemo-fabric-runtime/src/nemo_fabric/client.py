@@ -416,6 +416,10 @@ class Fabric:
         """
 
         _environment_json(environment)
+        if environment.provider == "openshell" and streaming:
+            raise FabricConfigError(
+                "OpenShell supports buffered invocation; streaming is unavailable"
+            )
         return await self._start_runtime(
             config,
             environment=environment,

@@ -18,6 +18,50 @@ Use a registered OpenShell gateway and match the CLI, gateway, and runtime compo
 
 Environment configuration uses `provider="openshell"` and `control_location="in_env_control"`. The gateway connection selects a named workspace or explicitly uses OpenShell's default workspace. Workspace and artifact roots are absolute POSIX paths inside the sandbox; `runtime.artifacts` remains the host collection destination. Select an immutable image digest or local Docker image ID. Task images contain the SDK, `fabric-agent-ctl`, the selected adapter, and the agent/harness.
 
+With an existing Fabric-ready configuration, use the normal SDK lifecycle:
+
+```python
+from nemo_fabric import EnvironmentReference, Fabric
+
+fabric = Fabric()
+environment = await fabric.attach_environment(
+    config,
+    EnvironmentReference.from_mapping({
+        "provider": "openshell",
+        "resource": {"sandbox_name": sandbox_name, "sandbox_id": sandbox_id},
+    }),
+)
+try:
+    async with await fabric.start_runtime_in(config, environment) as runtime:
+        result = await runtime.invoke(input=agent_input)
+finally:
+    await fabric.release_environment(environment)
+```
+
+The host sends a task-local `FabricConfig` to `fabric-agent-ctl start`, then full
+`RunRequest` values to invoke. The task SDK owns runtime IDs, state, and normalized
+results, including failed results with partial output. Host gateway settings and
+host discovery paths stay outside the sandbox. Installed task descriptors are
+discovered normally; custom descriptor directories use
+`environment.settings.task_discovery_paths` with absolute POSIX paths. Skills and
+MCP command paths in the agent configuration must refer to task-visible files.
+
+Declared artifacts are copied to
+`runtime.artifacts/<runtime_id>/<invocation_id>/` on the host. Each reference
+becomes a readable host path; earlier invocation files remain intact. Collection
+accepts up to 16 regular files, 256 KiB per file, and 512 KiB total. Files are read
+through directory descriptors with symlink and traversal checks; directories and
+special files are rejected. Collection never truncates files or copies the
+workspace. Relay file references retain their correlation metadata.
+
+Invocation is buffered, with a task deadline of at most 300 seconds. Streaming is
+rejected before startup. A used sandbox supports one bridge runtime lifecycle,
+including after stop; create a fresh sandbox for another run. Missing or invalid
+command responses retain an unknown binding against the immutable sandbox ID,
+including after reattachment, and do not trigger replay. Explicit stop and
+Fabric-owned deletion remain available for cleanup. Direct local SDK runtimes
+retain their existing concurrency, streaming, and service support.
+
 The two ownership paths have separate responsibilities:
 
 | Operation | Resource ownership | Release behavior |

@@ -216,6 +216,14 @@ runtime reuse limits depend on the selected environment implementation.
 Non-local workspace and artifact paths refer to the task environment and are
 not resolved against the host's `base_dir`.
 
+The optional [OpenShell provider](https://github.com/NVIDIA/NeMo-Fabric/blob/main/environment-providers/openshell/README.md)
+uses the task command bridge and returns the task-generated SDK runtime ID and
+normalized results. Declared files are collected under the host's
+`runtime.artifacts/<runtime_id>/<invocation_id>/` directory. The task artifact
+root is separate. OpenShell invocation is buffered; streaming and shared-service
+hosting remain local SDK capabilities. A used sandbox cannot start another
+bridge runtime, and uncertain outcomes are never replayed.
+
 ### Sandbox Command Bridge
 
 `fabric-agent-ctl serve` starts one runtime server per sandbox. The `start`, `invoke`, and `stop` commands call the existing `Fabric.start_runtime()`, `Runtime.invoke()`, and `Runtime.stop()` methods. Targeted commands require the returned runtime ID and exact agent name. The caller waits for the private socket before start. Caller-side preflight uses `Fabric.plan()` and `Fabric.doctor()`; startup validates configuration against installed descriptors.
