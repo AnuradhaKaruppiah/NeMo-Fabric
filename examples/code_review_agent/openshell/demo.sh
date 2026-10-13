@@ -3,6 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Workload hooks sourced by the shared OpenShell provisioning launcher.
+WORKLOAD_NAME=code-review
+SUPPORTED_MODES=(deployment)
 if [[ -z "${CODE_REVIEW_BASE_URL:-}" ]]; then
   echo "ERROR: set CODE_REVIEW_BASE_URL to a model endpoint reachable from the sandbox" >&2
   exit 2
@@ -31,7 +33,7 @@ if [[ "${CODE_REVIEW_RELAY}" != "0" && ( "${CODE_REVIEW_RELAY}" != "1" || "${COD
 fi
 RESULT_DIR="${FABRIC_ROOT}/.tmp/${CODE_REVIEW_HARNESS}-code-review"
 
-stage_code_review_image() {
+stage_workload_image() {
   python3 "${WORKLOAD_ROOT}/model_access.py" \
     --harness "${CODE_REVIEW_HARNESS}" --output-dir "${RESULT_DIR}"
   POLICY_FILE="${RESULT_DIR}/policy.yaml"
@@ -59,14 +61,14 @@ stage_code_review_image() {
   fi
 }
 
-smoke_code_review_image() {
+smoke_workload_image() {
   mkdir -p "${RESULT_DIR}"
   printf '%s\n' "${RUNTIME_IMAGE}" >"${RESULT_DIR}/image-id.txt"
   docker run --rm "${RUNTIME_IMAGE}" python3 -c 'import importlib,pathlib,subprocess,sys; importlib.import_module("nemo_fabric_adapters."+sys.argv[1]+".adapter"); assert pathlib.Path("/sandbox/repos/my-service/calculator.py").is_file(); assert pathlib.Path("/opt/nemo-fabric/skills/code-review/SKILL.md").is_file(); pathlib.Path("/sandbox/artifacts/image-smoke").touch(); print(sys.version); print(subprocess.check_output(["openclaw", "--version"],text=True).strip() if sys.argv[1]=="openclaw" else (importlib.import_module("run_agent").AIAgent.__name__ + " " + pathlib.Path("/opt/hermes-agent/.fabric-source-revision").read_text().strip()))' \
     "${CODE_REVIEW_HARNESS}"
 }
 
-run_code_review_consumer() {
+run_workload_consumer() {
   mkdir -p "${RESULT_DIR}"
   local probe_command=(/usr/local/bin/node /opt/nemo-fabric/preflight.mjs)
   if [[ "${CODE_REVIEW_HARNESS}" == "hermes" ]]; then
@@ -84,8 +86,6 @@ run_code_review_consumer() {
     >"${RESULT_DIR}/task-evidence.json" &
   EVIDENCE_PID=$!
   local label="review-$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
-  NEMO_FABRIC_OPEN_SHELL_PROVIDER="${FABRIC_ROOT}/target/debug/fabric-environment-openshell" \
-  PYTHONPATH="${FABRIC_ROOT}" UV_PROJECT_ENVIRONMENT="${DEMO_PYTHON_ENV}" \
   uv run --no-sync python -m examples.code_review_agent \
     --variant "${CODE_REVIEW_HARNESS}" --environment openshell \
     --gateway "http://127.0.0.1:${GATEWAY_PORT}" --image "${RUNTIME_IMAGE}" \
@@ -100,7 +100,7 @@ run_code_review_consumer() {
     --harness "${CODE_REVIEW_HARNESS}" --results-file "${RESULT_DIR}/results.json" --label "${label}" "${relay_args[@]}"
 }
 
-collect_code_review_diagnostics() {
+collect_workload_diagnostics() {
   mkdir -p "${RESULT_DIR}"
   "${OPENSHELL_CLI}" --gateway-endpoint "http://127.0.0.1:${GATEWAY_PORT}" \
     sandbox exec --name "${SANDBOX_NAME}" --no-tty --timeout 15 -- python3 -c 'import json,pathlib;root=pathlib.Path("/sandbox/artifacts");print(json.dumps([{ "path":str(p.relative_to(root)),"bytes":p.stat().st_size} for p in root.rglob("*") if p.is_file() and (p.name.endswith(".jsonl") or p.name.endswith(".atif.json") or p.name.endswith(".gz"))]))' \
@@ -110,5 +110,4 @@ collect_code_review_diagnostics() {
       sandbox exec --name "${SANDBOX_NAME}" --no-tty --timeout 15 -- python3 -c 'import glob,json; [print(json.loads(line).get("1", "")) for path in glob.glob("/tmp/openclaw/*.log") for line in open(path) if "model-fetch" in line or "ERROR" in line or "WARN" in line]' \
       >"${RESULT_DIR}/gateway-diagnostics.log" 2>&1 || true
   fi
-  cp "${GATEWAY_STATE_DIR}/gateway.log" "${RESULT_DIR}/openshell-gateway.log" || true
 }

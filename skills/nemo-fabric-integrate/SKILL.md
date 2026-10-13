@@ -198,7 +198,7 @@ Pick the smallest lifecycle the consumer needs:
   releases this environment. The OpenShell `in_env_control` profile supports process and
   Python adapters with buffered `invoke` and bounded collection of declared
   artifacts; it rejects a second runtime binding and does not yet provide
-  streaming. The code-review OpenShell example demonstrates Hermes Relay file telemetry: task-side configuration and gzip snapshots returned in `RunResult.artifacts` for each invocation. Provision model credentials and network policy in the deployment before attaching.
+  streaming. Package the existing adapter entry point, agent, dependencies, and runtime-control binaries in the task image; provision task-side workspace/skill/MCP paths and a writable artifact root. Credentials and caller-specific network policy belong to deployment setup. The agent loop needs no OpenShell calls. The example source-building launcher requires Linux and a Docker daemon with matching Linux architecture. The code-review OpenShell example demonstrates Hermes Relay file telemetry: task-side configuration and gzip snapshots returned in `RunResult.artifacts` for each invocation.
 - **Native OpenAI stream** — adapter-native OpenAI Chat Completions chunks plus
   a separate terminal normalized result. Check
   `runtime.supports_openai_streaming`, call

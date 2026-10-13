@@ -12,37 +12,41 @@ OPENSHELL_RELEASE_URL="https://github.com/NVIDIA/OpenShell/releases/download/${O
 GATEWAY_PORT="${OPENSHELL_EXAMPLE_PORT:-18080}"
 GATEWAY_START_TIMEOUT="${OPENSHELL_EXAMPLE_GATEWAY_START_TIMEOUT:-120}"
 EXAMPLE_MODE="${OPENSHELL_EXAMPLE_MODE:-deployment}"
-EXAMPLE_WORKLOAD="${OPENSHELL_EXAMPLE_WORKLOAD:-code-review}"
-COURIER_ROOT="${FABRIC_ROOT}/examples/langgraph_openshell"
-WORKLOAD_ROOT="${COURIER_ROOT}"
-IMAGE_TAG=""
-IMAGE_DOCKERFILE=""
-POLICY_FILE=""
-MODEL_ENV_ARGS=()
-if [[ "${EXAMPLE_WORKLOAD}" == "code-review" ]]; then
-  WORKLOAD_ROOT="${FABRIC_ROOT}/examples/code_review_agent/openshell"
-  source "${WORKLOAD_ROOT}/demo.sh"
-  if [[ "${EXAMPLE_MODE}" != "deployment" ]]; then
-    echo "ERROR: code-review supports deployment mode only" >&2
-    exit 2
-  fi
-elif [[ "${EXAMPLE_WORKLOAD}" == "courier" ]]; then
-  IMAGE_TAG="fabric-portable-courier:example"
-  IMAGE_DOCKERFILE="${WORKLOAD_ROOT}/runtime-image.Dockerfile"
-  POLICY_FILE="${WORKLOAD_ROOT}/policy.yaml"
-else
-  echo "ERROR: unknown OpenShell workload: ${EXAMPLE_WORKLOAD}" >&2
+if [[ $# -lt 1 || ! -f "$1" ]]; then
+  echo "Usage: bash examples/openshell/run-demo.sh <workload/demo.sh> [consumer-options]" >&2
   exit 2
 fi
+WORKLOAD_ROOT="$(cd "$(dirname "$1")" && pwd)"
+WORKLOAD_FILE="${WORKLOAD_ROOT}/$(basename "$1")"
+shift
+MODEL_ENV_ARGS=()
+SUPPORTED_MODES=(deployment development)
+IMAGE_DOCKERFILE="${WORKLOAD_ROOT}/runtime-image.Dockerfile"
+POLICY_FILE="${WORKLOAD_ROOT}/policy.yaml"
+source "${WORKLOAD_FILE}"
+if [[ ! "${WORKLOAD_NAME:-}" =~ ^[a-z0-9-]+$ ]]; then
+  echo "ERROR: workload must declare WORKLOAD_NAME using lowercase letters, digits, and hyphens" >&2
+  exit 2
+fi
+for hook in stage_workload_image run_workload_consumer; do
+  if ! declare -F "${hook}" >/dev/null; then
+    echo "ERROR: workload must define ${hook}" >&2
+    exit 2
+  fi
+done
+IMAGE_TAG="${IMAGE_TAG:-fabric-${WORKLOAD_NAME}:example}"
+RESULT_DIR="${OPENSHELL_EXAMPLE_RESULTS_DIR:-${RESULT_DIR:-${FABRIC_ROOT}/.tmp/${WORKLOAD_NAME}}}"
+mkdir -p "${RESULT_DIR}"
+RESULT_DIR="$(cd "${RESULT_DIR}" && pwd)"
 export UV_CACHE_DIR="${FABRIC_ROOT}/.tmp/uv-cache"
 DEMO_PYTHON_ENV="${FABRIC_ROOT}/.tmp/openshell-demo-venv"
 GATEWAY_PID=""
-SANDBOX_NAME="fab-${EXAMPLE_WORKLOAD}-$$"
+SANDBOX_NAME="fab-$$"
 FABRIC_SANDBOX_NAME="fab-dev-$$"
 SANDBOX_CREATED=""
 EVIDENCE_PID=""
 
-for dependency in cargo curl docker python3 tar uv; do
+for dependency in cargo rustc curl docker python3 tar uv; do
   if ! command -v "${dependency}" >/dev/null 2>&1; then
     echo "ERROR: ${dependency} is required to run the OpenShell example" >&2
     exit 2
@@ -53,12 +57,6 @@ if [[ "${EXAMPLE_MODE}" != "deployment" && "${EXAMPLE_MODE}" != "development" &&
   exit 2
 fi
 
-mkdir -p "${FABRIC_ROOT}/.tmp"
-STAGE_DIR="$(mktemp -d "${FABRIC_ROOT}/.tmp/openshell-image.XXXXXX")"
-OPENSHELL_CACHE_DIR="${FABRIC_ROOT}/.tmp/openshell-releases/${OPENSHELL_VERSION}"
-OPENSHELL_BIN_DIR="${OPENSHELL_CACHE_DIR}/bin"
-GATEWAY_STATE_DIR="$(mktemp -d "${FABRIC_ROOT}/.tmp/openshell-demo.XXXXXX")"
-
 normalize_arch() {
   case "$1" in
     x86_64 | amd64) echo "x86_64" ;;
@@ -67,26 +65,33 @@ normalize_arch() {
   esac
 }
 
-HOST_ARCH="$(normalize_arch "$(uname -m)")"
-DAEMON_ARCH="$(normalize_arch "$(docker info --format '{{.Architecture}}')")"
-case "$(uname -s)" in
-  Linux)
-    CLI_ASSET="openshell-${HOST_ARCH}-unknown-linux-musl.tar.gz"
-    GATEWAY_ASSET="openshell-gateway-${HOST_ARCH}-unknown-linux-gnu.tar.gz"
-    ;;
-  Darwin)
-    if [[ "${HOST_ARCH}" != "aarch64" ]]; then
-      echo "ERROR: published OpenShell artifacts do not support Intel macOS" >&2
+for requested_mode in deployment development; do
+  if [[ "${EXAMPLE_MODE}" == "both" || "${EXAMPLE_MODE}" == "${requested_mode}" ]]; then
+    if [[ " ${SUPPORTED_MODES[*]} " != *" ${requested_mode} "* ]]; then
+      echo "ERROR: ${WORKLOAD_NAME} does not support ${requested_mode} mode" >&2
       exit 2
     fi
-    CLI_ASSET="openshell-aarch64-apple-darwin.tar.gz"
-    GATEWAY_ASSET="openshell-gateway-aarch64-apple-darwin.tar.gz"
-    ;;
-  *)
-    echo "ERROR: this demo supports Linux and Apple Silicon macOS" >&2
-    exit 2
-    ;;
-esac
+  fi
+done
+if [[ "$(uname -s)" != "Linux" ]]; then
+  echo "ERROR: this source-building launcher requires a Linux host for Linux task binaries" >&2
+  exit 2
+fi
+HOST_ARCH="$(normalize_arch "$(uname -m)")"
+DAEMON_ARCH="$(normalize_arch "$(docker info --format '{{.Architecture}}')")"
+if [[ "$(docker info --format '{{.OSType}}')" != "linux" || "${HOST_ARCH}" != "${DAEMON_ARCH}" ]]; then
+  echo "ERROR: Docker must run Linux containers with the same architecture as the host" >&2
+  exit 2
+fi
+RUST_HOST_TARGET="$(rustc -vV | sed -n 's/^host: //p')"
+CLI_ASSET="openshell-${HOST_ARCH}-unknown-linux-musl.tar.gz"
+GATEWAY_ASSET="openshell-gateway-${HOST_ARCH}-unknown-linux-gnu.tar.gz"
+mkdir -p "${FABRIC_ROOT}/.tmp"
+STAGE_DIR="$(mktemp -d "${FABRIC_ROOT}/.tmp/openshell-image.XXXXXX")"
+OPENSHELL_CACHE_DIR="${FABRIC_ROOT}/.tmp/openshell-releases/${OPENSHELL_VERSION}"
+OPENSHELL_BIN_DIR="${OPENSHELL_CACHE_DIR}/bin"
+GATEWAY_STATE_DIR="$(mktemp -d "${FABRIC_ROOT}/.tmp/openshell-demo.XXXXXX")"
+
 SUPERVISOR_ASSET="openshell-sandbox-${DAEMON_ARCH}-unknown-linux-musl.tar.gz"
 OPENSHELL_CLI="${OPENSHELL_BIN_DIR}/openshell"
 OPENSHELL_GATEWAY="${OPENSHELL_BIN_DIR}/openshell-gateway"
@@ -155,11 +160,14 @@ install_openshell_release() {
 
 cleanup() {
   local status=$?
-  if [[ "${EXAMPLE_WORKLOAD}" == "code-review" && -n "${SANDBOX_CREATED}" ]]; then
-    collect_code_review_diagnostics
-    if (( status != 0 )); then
-      tail -n 30 "${RESULT_DIR}/openshell-gateway.log" >&2 || true
+  if [[ -n "${SANDBOX_CREATED}" ]]; then
+    if declare -F collect_workload_diagnostics >/dev/null; then
+      collect_workload_diagnostics || true
     fi
+    cp "${GATEWAY_STATE_DIR}/gateway.log" "${RESULT_DIR}/openshell-gateway.log" 2>/dev/null || true
+  fi
+  if (( status != 0 )); then
+    tail -n 30 "${GATEWAY_STATE_DIR}/gateway.log" >&2 || true
   fi
   if [[ -n "${SANDBOX_CREATED}" ]] && [[ -x "${OPENSHELL_CLI}" ]]; then
     "${OPENSHELL_CLI}" --gateway-endpoint "http://127.0.0.1:${GATEWAY_PORT}" \
@@ -197,24 +205,21 @@ gateway_failure() {
 }
 
 cd "${FABRIC_ROOT}"
-cargo build --release -p nemo-fabric-runtime-control --bins
-cargo build -p nemo-fabric-openshell-provider
+cargo build --release --target "${RUST_HOST_TARGET}" --target-dir "${FABRIC_ROOT}/target" -p nemo-fabric-runtime-control --bins
+cargo build --target "${RUST_HOST_TARGET}" --target-dir "${FABRIC_ROOT}/target" -p nemo-fabric-openshell-provider
 UV_PROJECT_ENVIRONMENT="${DEMO_PYTHON_ENV}" \
   uv sync --locked --no-default-groups --reinstall-package nemo-fabric-runtime
-cp target/release/fabric-runtime-server target/release/fabric-runtime-ctl "${STAGE_DIR}/"
+PROVIDER_BINARY="${FABRIC_ROOT}/target/${RUST_HOST_TARGET}/debug/fabric-environment-openshell"
+cp "target/${RUST_HOST_TARGET}/release/fabric-runtime-server" "target/${RUST_HOST_TARGET}/release/fabric-runtime-ctl" "${STAGE_DIR}/"
 cp -R adapter-contract/python "${STAGE_DIR}/adapter-contract"
 cp -R adapters/python/common "${STAGE_DIR}/adapters-common"
-mkdir -p "${STAGE_DIR}/examples"
-cp examples/__init__.py "${STAGE_DIR}/examples/"
-cp -R "${COURIER_ROOT}" "${STAGE_DIR}/examples/langgraph_openshell"
-if [[ "${EXAMPLE_WORKLOAD}" == "code-review" ]]; then
-  stage_code_review_image
-fi
-cp "${COURIER_ROOT}/runtime-image.dockerignore" "${STAGE_DIR}/.dockerignore"
+cp "${OPEN_SHELL_ROOT}/runtime-image.dockerignore" "${STAGE_DIR}/.dockerignore"
+stage_workload_image
 docker build -f "${IMAGE_DOCKERFILE}" -t "${IMAGE_TAG}" "${STAGE_DIR}"
 RUNTIME_IMAGE="$(docker image inspect "${IMAGE_TAG}" --format '{{.Id}}')"
-if [[ "${EXAMPLE_WORKLOAD}" == "code-review" ]]; then
-  smoke_code_review_image
+printf '%s\n' "${RUNTIME_IMAGE}" >"${RESULT_DIR}/image-id.txt"
+if declare -F smoke_workload_image >/dev/null; then
+  smoke_workload_image
 fi
 
 install_openshell_release
@@ -271,19 +276,10 @@ done
 
 run_consumer() {
   cd "${FABRIC_ROOT}"
-  if [[ "${EXAMPLE_WORKLOAD}" == "code-review" ]]; then
-    run_code_review_consumer "$@"
-    return
-  fi
-  NEMO_FABRIC_OPEN_SHELL_PROVIDER="${FABRIC_ROOT}/target/debug/fabric-environment-openshell" \
+  NEMO_FABRIC_OPEN_SHELL_PROVIDER="${PROVIDER_BINARY}" \
   PYTHONPATH="${FABRIC_ROOT}" \
   UV_PROJECT_ENVIRONMENT="${DEMO_PYTHON_ENV}" \
-  uv run --no-sync \
-    python -m examples.langgraph_openshell.consumer \
-    --gateway "http://127.0.0.1:${GATEWAY_PORT}" \
-    --image "${RUNTIME_IMAGE}" \
-    --base-dir "${FABRIC_ROOT}/.tmp/portable-courier" \
-    "$@"
+    run_workload_consumer "$@"
 }
 
 if [[ "${EXAMPLE_MODE}" == "deployment" || "${EXAMPLE_MODE}" == "both" ]]; then
@@ -304,14 +300,14 @@ if [[ "${EXAMPLE_MODE}" == "deployment" || "${EXAMPLE_MODE}" == "both" ]]; then
   )"
   SANDBOX_ID="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"${SANDBOX_JSON}")"
 
-  run_consumer --sandbox-name "${SANDBOX_NAME}" --sandbox-id "${SANDBOX_ID}"
+  run_consumer --sandbox-name "${SANDBOX_NAME}" --sandbox-id "${SANDBOX_ID}" "$@"
   "${OPENSHELL_CLI}" --gateway-endpoint "http://127.0.0.1:${GATEWAY_PORT}" \
     sandbox get "${SANDBOX_NAME}" --output json >/dev/null
   echo "Verified deployment mode: Fabric detached; the caller-owned sandbox still exists."
 fi
 
 if [[ "${EXAMPLE_MODE}" == "development" || "${EXAMPLE_MODE}" == "both" ]]; then
-  run_consumer --fabric-sandbox-name "${FABRIC_SANDBOX_NAME}"
+  run_consumer --fabric-sandbox-name "${FABRIC_SANDBOX_NAME}" "$@"
   if "${OPENSHELL_CLI}" --gateway-endpoint "http://127.0.0.1:${GATEWAY_PORT}" \
     sandbox get "${FABRIC_SANDBOX_NAME}" --output json >/dev/null 2>&1; then
     echo "ERROR: Fabric-owned sandbox still exists after release" >&2

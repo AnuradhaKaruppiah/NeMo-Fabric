@@ -51,18 +51,9 @@ run only the caller-owned deployment mode:
 OPENSHELL_EXAMPLE_MODE=deployment bash examples/langgraph_openshell/run-demo.sh
 ```
 
-The script performs the following actions:
+The [workload hooks](demo.sh) package the existing Courier adapter and graph, select its policy, and invoke the consumer. The [shared launcher](../openshell/README.md) builds the image, provisions OpenShell, and cleans up deployment-owned sandboxes. The consumer retains the normal NeMo Fabric lifecycle; the graph and adapter contain no OpenShell calls.
 
-1. Builds the agent runtime image and OpenShell environment provider.
-2. Downloads and verifies pinned, published OpenShell binaries.
-3. Starts the published OpenShell gateway with its Docker driver.
-4. Creates a digest-pinned, policy-configured sandbox as the consumer.
-5. Attaches NeMo Fabric to the sandbox by name and immutable ID.
-6. Runs the two-turn LangGraph session and collects the receipt.
-7. Stops the NeMo Fabric runtime and verifies that NeMo Fabric did not delete the
-   caller-owned sandbox.
-
-The script deletes the caller-owned sandbox during its own final cleanup.
+For another agent, refer to the shared [agent-readiness checklist](../openshell/README.md#agent-readiness). The route/state/receipt assertions in this example are verification, rather than agent requirements.
 
 To run both deployment and Fabric-managed development modes:
 
@@ -82,14 +73,7 @@ stops.
 
 ## Requirements
 
-Install the following tools before running the example:
-
-- Docker
-- Rust and Cargo
-- `curl`
-- Python 3
-- `tar`
-- `uv`
+Run on Linux with a Linux Docker daemon of the same architecture. Install Rust/Cargo, `uv`, Python 3, `curl`, and `tar`. The [shared setup guide](../openshell/README.md) explains platform checks and the workload interface.
 
 The first run downloads the pinned OpenShell release and builds the agent
 runtime image. Later runs reuse the verified release under `.tmp/`.

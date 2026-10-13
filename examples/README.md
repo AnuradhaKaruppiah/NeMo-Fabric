@@ -46,7 +46,7 @@ print one JSON document containing `atof_records` and the separate terminal
 `result`. Relay retains redirect-decision marks in configured ATOF artifacts, while
 Pi's startup `model_redirect` marks are not included in `atof_records`.
 
-The [OpenClaw and Hermes code-review OpenShell POC](code_review_agent/openshell/README.md) runs the existing agent loop and tools inside the sandbox, with two ordered review turns, model inference, task-side process/file-read evidence, and explicit cleanup. OpenClaw is the default harness. The examples share OpenShell provisioning and cleanup code while keeping separate workload entry points.
+The [OpenClaw and Hermes code-review OpenShell POC](code_review_agent/openshell/README.md) runs the existing agent loop and tools inside the sandbox, with two ordered review turns, model inference, task-side process/file-read evidence, and explicit cleanup. OpenClaw is the default harness. The examples use a [shared deployment launcher and agent-readiness guide](openshell/README.md) while keeping separate workload entry points.
 
 ## LangGraph Custom Agent
 
