@@ -4,10 +4,13 @@
 """One sandbox lifecycle and direct delegation to the existing SDK."""
 
 import asyncio
+import gzip
+from pathlib import Path
 
 import pytest
 from nemo_fabric import FabricConfigError, RuntimeStatus
 from nemo_fabric.host.protocol import ProtocolError
+from nemo_fabric.host.protocol import rust_run_result_mapping
 
 
 @pytest.mark.parametrize(
@@ -175,9 +178,72 @@ async def test_invoke_preserves_normalized_result_without_replay(
     assert response["changed"] is None
     assert (
         response["result"]["fabric_result"]
-        == mock_runtime.invoke.return_value.to_mapping.return_value
+        == rust_run_result_mapping(
+            mock_runtime.invoke.return_value.to_mapping.return_value
+        )
     )
     mock_runtime.invoke.assert_awaited_once_with(input={"prompt": "review"})
+
+
+async def test_invoke_projects_python_telemetry_to_rust_sdk_schema(
+    host, host_request, mock_runtime
+):
+    await host.handle(host_request("start"))
+    mock_runtime.invoke.return_value.to_mapping.return_value["telemetry"] = [
+        {"provider": "relay", "kind": "trace", "uri": "/sandbox/artifacts/relay"}
+    ]
+
+    response = await host.handle(host_request("invoke", input={}))
+
+    assert response["status"] == "succeeded"
+    assert response["result"]["fabric_result"]["telemetry"] == {
+        "provider": "relay",
+        "kind": "trace",
+        "uri": "/sandbox/artifacts/relay",
+    }
+
+
+async def test_invoke_rejects_multiple_python_telemetry_references(
+    host, host_request, mock_runtime
+):
+    await host.handle(host_request("start"))
+    mock_runtime.invoke.return_value.to_mapping.return_value["telemetry"] = [
+        {"provider": "relay", "kind": "trace"},
+        {"provider": "other", "kind": "trace"},
+    ]
+
+    response = await host.handle(host_request("invoke", input={}))
+
+    assert response["error"]["code"] == "invalid_response"
+    assert response["error"]["effects"] == "unknown"
+
+
+def test_rust_run_result_mapping_removes_empty_telemetry_sequence():
+    result = rust_run_result_mapping({"runtime_id": "runtime-1", "telemetry": []})
+
+    assert result == {"runtime_id": "runtime-1"}
+
+
+def test_rust_run_result_mapping_compresses_relay_snapshots(tmp_path):
+    source = tmp_path / "trace.atif.json"
+    source.write_text('{"steps":[]}', encoding="utf-8")
+    result = {
+        "invocation_id": "invocation-1",
+        "artifacts": {
+            "root": str(tmp_path),
+            "artifacts": [
+                {"name": "relay_atif", "kind": "atif", "path": str(source)}
+            ],
+        }
+    }
+
+    mapped = rust_run_result_mapping(result, artifact_root=tmp_path)
+
+    artifact = mapped["artifacts"]["artifacts"][0]
+    compressed = Path(artifact["path"])
+    assert compressed == Path(f"{source}.invocation-1.gz")
+    assert gzip.decompress(compressed.read_bytes()) == b'{"steps":[]}'
+    assert artifact["metadata"]["compression"] == "gzip"
 
 
 @pytest.mark.parametrize(

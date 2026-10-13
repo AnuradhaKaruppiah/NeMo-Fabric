@@ -23,6 +23,7 @@ from nemo_fabric.host.protocol import (
     OPERATIONS,
     ProtocolError,
     envelope,
+    rust_run_result_mapping,
     validate_request,
 )
 
@@ -131,7 +132,18 @@ class RuntimeHost:
                 else:
                     invocation = {"input": request["input"]}
                 changed, effects, stage = None, "unknown", "invoke"
-                native = (await owned.runtime.invoke(**invocation)).to_mapping()
+                task_environment = owned.runtime.handle.environment
+                artifact_root = (
+                    task_environment.get("artifacts")
+                    if isinstance(task_environment, dict)
+                    else getattr(task_environment, "artifacts", None)
+                )
+                native = rust_run_result_mapping(
+                    (await owned.runtime.invoke(**invocation)).to_mapping(),
+                    artifact_root=Path(artifact_root)
+                    if isinstance(artifact_root, str)
+                    else artifact_root,
+                )
                 result = {"runtime_id": request["runtime_id"], "fabric_result": native}
                 return envelope(operation, result, changed=None)
         except Exception as error:

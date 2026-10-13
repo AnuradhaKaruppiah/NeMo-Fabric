@@ -3,7 +3,9 @@
 
 """Versioned local requests and safe command responses."""
 
+import gzip
 import json
+from pathlib import Path
 from typing import Any
 
 from nemo_fabric import FabricConfigError, RunResult, RuntimeHandle
@@ -83,6 +85,86 @@ def envelope(
         if error
         else None,
     }
+
+
+def rust_run_result_mapping(
+    value: dict[str, Any], *, artifact_root: Path | None = None
+) -> dict[str, Any]:
+    """Project the Python SDK result onto the Rust SDK's public wire schema.
+
+    Python represents telemetry references as a sequence; the Rust result schema
+    currently has one optional reference. Preserve a singleton and reject a
+    multi-reference result rather than dropping information.
+    """
+
+    result = dict(value)
+    if artifact_root is not None:
+        _compress_relay_artifacts(result, artifact_root)
+    telemetry = result.get("telemetry")
+    if isinstance(telemetry, list):
+        if len(telemetry) > 1:
+            raise ProtocolError("invalid_response", "invoke")
+        if telemetry:
+            result["telemetry"] = telemetry[0]
+        else:
+            result.pop("telemetry", None)
+    return result
+
+
+def _compress_relay_artifacts(result: dict[str, Any], artifact_root: Path) -> None:
+    """Gzip bounded Relay snapshots before the OpenShell artifact transfer."""
+
+    manifest = result.get("artifacts")
+    artifacts = manifest.get("artifacts") if isinstance(manifest, dict) else None
+    if not isinstance(artifacts, list):
+        return
+    relay_artifacts = [
+        artifact
+        for artifact in artifacts
+        if isinstance(artifact, dict) and artifact.get("kind") in ("atif", "atof")
+    ]
+    if not relay_artifacts:
+        return
+    invocation_id = result.get("invocation_id")
+    if not isinstance(invocation_id, str) or not invocation_id:
+        raise ProtocolError("invalid_response", "invoke")
+    try:
+        root = artifact_root.resolve(strict=True)
+    except OSError as error:
+        raise ProtocolError("invalid_response", "invoke") from error
+    total_size = 0
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            raise ProtocolError("invalid_response", "invoke")
+        path_value = artifact.get("path")
+        path = Path(path_value) if isinstance(path_value, str) else path_value
+        if artifact in relay_artifacts:
+            try:
+                resolved = path.resolve(strict=True)
+                if not resolved.is_relative_to(root) or not resolved.is_file():
+                    raise ValueError("Relay artifact is outside the artifact root")
+                if resolved.stat().st_size > 16 * 1024 * 1024:
+                    raise ValueError("Relay artifact exceeds the compression limit")
+                compressed = gzip.compress(resolved.read_bytes(), mtime=0)
+                if len(compressed) > 256 * 1024:
+                    raise ValueError("Compressed Relay artifact exceeds the transfer limit")
+                target = resolved.with_name(f"{resolved.name}.{invocation_id}.gz")
+                with target.open("xb") as stream:
+                    stream.write(compressed)
+            except (OSError, TypeError, ValueError) as error:
+                raise ProtocolError("invalid_response", "invoke") from error
+            artifact["path"] = str(target)
+            artifact.setdefault("metadata", {})["compression"] = "gzip"
+            total_size += len(compressed)
+        else:
+            try:
+                total_size += path.stat().st_size
+            except (OSError, TypeError, AttributeError):
+                # The provider remains the authority for safely reading the
+                # remaining declared artifact paths.
+                pass
+    if total_size > 512 * 1024:
+        raise ProtocolError("invalid_response", "invoke")
 
 
 def validate_request(request: Any) -> str:

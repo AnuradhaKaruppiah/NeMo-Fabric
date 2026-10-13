@@ -13,8 +13,8 @@ SPDX-License-Identifier: Apache-2.0
 | --- | --- | --- |
 | `serve` | Start the foreground runtime server; no agent selection | None |
 | `start --agent NAME --config FILE` | `Fabric.start_runtime(config, base_dir=...)` | `RuntimeHandle.to_mapping()` |
-| `invoke --agent NAME --runtime-id ID --input FILE` | `Runtime.invoke(input=...)` | `RunResult.to_mapping()` |
-| `invoke --agent NAME --runtime-id ID --request FILE` | `Runtime.invoke(request=RunRequest(...))` | `RunResult.to_mapping()` |
+| `invoke --agent NAME --runtime-id ID --input FILE` | `Runtime.invoke(input=...)` | Rust SDK `RunResult` JSON schema |
+| `invoke --agent NAME --runtime-id ID --request FILE` | `Runtime.invoke(request=RunRequest(...))` | Rust SDK `RunResult` JSON schema |
 | `stop --agent NAME --runtime-id ID` | `Runtime.stop()` | `null` |
 
 Run the server under the sandbox supervisor:
@@ -31,7 +31,7 @@ fabric-agent-ctl invoke --agent researcher --runtime-id RUNTIME_ID --input /sand
 fabric-agent-ctl stop --agent researcher --runtime-id RUNTIME_ID
 ```
 
-Replace `RUNTIME_ID` with `runtime_id` from the returned SDK handle. Command stdout uses the public SDK schemas directly: the start handle, invocation result, and JSON `null` for stop. The private socket envelope stays internal to the bridge. Multiple invocations retain the same runtime and conversation. Targeted commands require both the returned runtime ID and exact agent name. Repeated successful stop is a no-op. Serve starts a process and is never forwarded over the socket.
+Replace `RUNTIME_ID` with `runtime_id` from the returned SDK handle. Command stdout uses the Rust SDK schemas directly: the start handle, invocation result, and JSON `null` for stop. The private socket envelope stays internal to the bridge. The task-side Python SDK represents telemetry references as a sequence; the bridge preserves zero or one reference in the Rust SDK's optional-reference field and rejects multiple references rather than dropping data. Multiple invocations retain the same runtime and conversation. Targeted commands require both the returned runtime ID and exact agent name. Repeated successful stop is a no-op. Serve starts a process and is never forwarded over the socket.
 
 There are no health commands, generation tokens, fingerprints, state snapshots, or additional SDK lifecycle APIs. Caller-side preflight uses existing `Fabric.plan()` and `Fabric.doctor()`. `Fabric.start_runtime()` validates configuration against installed descriptors before native runtime startup. A configuration rejection before startup does not consume the sandbox lifecycle.
 
