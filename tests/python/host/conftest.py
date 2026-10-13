@@ -10,6 +10,7 @@ from nemo_fabric import (
     RunResult,
     Runtime,
     RuntimeStatus,
+    RunRequest,
 )
 
 
@@ -50,6 +51,18 @@ def mock_runtime_fixture():
     return runtime
 
 
+@pytest.fixture(name="sdk_request")
+def sdk_request_fixture():
+    return RunRequest(
+        input=["review", {"stream": True}],
+        request_id="host-request-1",
+        relay_session_root="3b3cab40-6aca-4a63-b5ef-0e5e7a82d14d",
+        context={"task": "review", "turn": 2},
+        overrides={"max_iterations": 3},
+        max_iterations=3,
+    )
+
+
 @pytest.fixture(name="mock_fabric")
 def mock_fabric_fixture(mock_runtime):
     fabric = MagicMock(spec=Fabric)
@@ -67,7 +80,7 @@ def host_fixture(tmp_path, mock_fabric):
 @pytest.fixture(name="host_request")
 def request_fixture(host, config):
     def host_request(operation, **fields):
-        value = {"interface_version": 2, "operation": operation}
+        value = {"interface_version": 3, "operation": operation}
         if operation in ("start", "invoke", "stop") or "runtime_id" in fields:
             value["agent"] = "researcher"
         if operation in ("invoke", "stop"):

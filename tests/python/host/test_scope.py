@@ -6,7 +6,7 @@ from nemo_fabric.host import cli
 
 def test_serve_remains_the_server_bootstrap():
     assert cli.parse_command(["serve"]) == {
-        "interface_version": 2,
+        "interface_version": 3,
         "operation": "serve",
     }
 

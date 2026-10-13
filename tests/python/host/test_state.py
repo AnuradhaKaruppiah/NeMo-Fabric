@@ -179,12 +179,62 @@ async def test_invoke_preserves_normalized_result_without_replay(
 
 
 @pytest.mark.parametrize(
+    "value",
+    ["route", ["deliver"], 42, False, None, {"stream": True, "streaming": True}],
+)
+async def test_input_delegates_to_the_sdk_without_reinterpretation(
+    host, host_request, mock_runtime, value
+):
+    await host.handle(host_request("start"))
+    response = await host.handle(host_request("invoke", input=value))
+    assert response["status"] == "succeeded"
+    mock_runtime.invoke.assert_awaited_once_with(input=value)
+
+
+async def test_complete_request_reaches_the_sdk(
+    host, host_request, mock_runtime, sdk_request
+):
+    await host.handle(host_request("start"))
+    response = await host.handle(
+        host_request("invoke", request=sdk_request.to_mapping())
+    )
+    assert response["status"] == "succeeded"
+    invocation = mock_runtime.invoke.call_args.kwargs
+    assert set(invocation) == {"request"}
+    assert invocation["request"].to_mapping() == sdk_request.to_mapping()
+
+
+@pytest.mark.parametrize(
+    "value", [{"request_id": ""}, {"context": []}, {"overrides": []}, None]
+)
+async def test_invalid_sdk_request_has_no_invocation_effects(
+    host, host_request, mock_runtime, value
+):
+    await host.handle(host_request("start"))
+    response = await host.handle(host_request("invoke", request=value))
+    assert response["status"] == "failed"
+    assert response["error"]["effects"] == "none"
+    mock_runtime.invoke.assert_not_awaited()
+
+
+@pytest.mark.parametrize("version", [1, 2, True])
+async def test_previous_interfaces_are_rejected_without_effects(
+    host, host_request, mock_fabric, version
+):
+    response = await host.handle(host_request("start", interface_version=version))
+    assert response["status"] == "unsupported"
+    assert response["error"]["code"] == "interface_unsupported"
+    assert response["error"]["effects"] == "none"
+    mock_fabric.start_runtime.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
     "fields",
     [
         {"runtime_id": "other"},
         {"agent": "other"},
-        {"input": []},
-        {"input": {"stream": True}},
+        {"request": {}},
+        {"stream": True},
     ],
 )
 async def test_invalid_invoke_cannot_reach_sdk(

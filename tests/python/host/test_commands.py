@@ -112,7 +112,7 @@ def test_serve_errors_use_stderr_without_command_response(arguments, capsys):
 )
 def test_named_commands_construct_versioned_requests(operation, flags, fields):
     assert cli.parse_command([operation, *flags]) == {
-        "interface_version": 2,
+        "interface_version": 3,
         "operation": operation,
         **fields,
     }
@@ -138,6 +138,84 @@ def test_config_and_input_files_are_objects_without_wrappers(tmp_path, config):
     assert request["input"] == {"prompt": "hello"}
 
 
+@pytest.mark.parametrize("value", ["route", [], [1, {"stream": True}], 1, False, None])
+def test_input_accepts_sdk_json_values(tmp_path, value):
+    path = tmp_path / "input.json"
+    path.write_text(json.dumps(value))
+    request = cli.parse_command(
+        ["invoke", "--agent", "researcher", "--runtime-id", "r", "--input", str(path)]
+    )
+    assert request["input"] == value
+
+
+@pytest.mark.parametrize("source", ["file", "stdin"])
+def test_request_preserves_sdk_metadata(tmp_path, sdk_request, monkeypatch, source):
+    content = json.dumps(sdk_request.to_mapping())
+    path = tmp_path / "request.json"
+    path.write_text(content)
+    if source == "stdin":
+        monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(content.encode())))
+    request = cli.parse_command(
+        [
+            "invoke",
+            "--agent",
+            "researcher",
+            "--runtime-id",
+            "r",
+            "--request",
+            "-" if source == "stdin" else str(path),
+        ]
+    )
+    assert request["request"] == sdk_request.to_mapping()
+    assert "input" not in request
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        [],
+        ["--input", "unused", "--request", "unused"],
+        ["--request", "a", "--request", "b"],
+    ],
+)
+def test_invoke_requires_one_payload_before_reading_files(flags):
+    with pytest.raises(protocol.ProtocolError):
+        cli.parse_command(
+            ["invoke", "--agent", "researcher", "--runtime-id", "r", *flags]
+        )
+
+
+@pytest.mark.parametrize(
+    "value", [[], None, {"request_id": ""}, {"context": []}, {"overrides": []}]
+)
+def test_request_uses_sdk_validation_before_transport(
+    tmp_path, value, monkeypatch, capsys
+):
+    from unittest.mock import AsyncMock
+
+    path = tmp_path / "request.json"
+    path.write_text(json.dumps(value))
+    mock_client = AsyncMock()
+    monkeypatch.setattr(cli.transport, "client", mock_client)
+    assert (
+        cli.main(
+            [
+                "invoke",
+                "--agent",
+                "researcher",
+                "--runtime-id",
+                "r",
+                "--request",
+                str(path),
+            ]
+        )
+        == 1
+    )
+    response = json.loads(capsys.readouterr().out)
+    assert response["error"]["effects"] == "none"
+    mock_client.assert_not_awaited()
+
+
 @pytest.mark.parametrize(
     "fingerprint", ["", "a" * 63, "a" * 64, "a" * 65, "A" * 64, "g" * 64]
 )
@@ -161,12 +239,12 @@ def test_removed_fingerprint_flag_is_rejected_before_sending_command(
 
 
 @pytest.mark.parametrize(
-    "content", [b"[]", b"{}{}", b'{"x":NaN}', b'{"x":1,"x":2}', b"\xff", b"null", b"{"]
+    "content", [b"{}{}", b'{"x":NaN}', b'{"x":1,"x":2}', b"\xff", b"{"]
 )
 def test_invalid_json_files_are_rejected_before_commands(tmp_path, content):
     path = tmp_path / "input.json"
     path.write_bytes(content)
-    with pytest.raises(protocol.ProtocolError, match="bounded UTF-8 JSON object"):
+    with pytest.raises(protocol.ProtocolError, match="bounded UTF-8 JSON value"):
         cli.parse_command(
             [
                 "invoke",
@@ -211,7 +289,7 @@ def test_stdin_is_read_only_when_explicitly_selected(monkeypatch):
 
 def test_combined_socket_request_limit_includes_framing():
     request = {
-        "interface_version": 2,
+        "interface_version": 3,
         "operation": "invoke",
         "agent": "researcher",
         "runtime_id": "r",

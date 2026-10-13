@@ -5,6 +5,8 @@
 
 from unittest.mock import MagicMock
 
+import json
+
 import pytest
 from nemo_fabric import _native
 from nemo_fabric.host.state import RuntimeHost
@@ -14,6 +16,44 @@ import asyncio
 from contextlib import suppress
 
 
+async def test_complete_request_reaches_real_sdk_and_preserves_correlation(
+    hermes_shim_agent_dir, sdk_request, monkeypatch
+):
+    config = hermes_shim_config()
+    host = RuntimeHost(directory=hermes_shim_agent_dir)
+    mock_invoke = MagicMock(wraps=_native.invoke_runtime)
+    monkeypatch.setattr(_native, "invoke_runtime", mock_invoke)
+    try:
+        started = await host.handle(
+            {
+                "interface_version": 3,
+                "operation": "start",
+                "agent": config.metadata.name,
+                "config": config.to_mapping(),
+            }
+        )
+        assert started["status"] == "succeeded", started
+        runtime_id = started["result"]["runtime_id"]
+        invoked = await host.handle(
+            {
+                "interface_version": 3,
+                "operation": "invoke",
+                "agent": config.metadata.name,
+                "runtime_id": runtime_id,
+                "request": sdk_request.to_mapping(),
+            }
+        )
+        assert invoked["status"] == "succeeded", invoked
+        native = invoked["result"]["fabric_result"]
+        assert native["runtime_id"] == runtime_id
+        assert native["request_id"] == sdk_request.request_id
+        assert native["output"]["received"] == sdk_request.input
+        mock_invoke.assert_called_once()
+        assert json.loads(mock_invoke.call_args.args[2]) == sdk_request.to_mapping()
+    finally:
+        await host.shutdown()
+
+
 async def test_real_sdk_busy_shutdown_requires_sandbox_cleanup(
     blocking_adapter_config, tmp_path
 ):
@@ -21,7 +61,7 @@ async def test_real_sdk_busy_shutdown_requires_sandbox_cleanup(
     config = blocking_adapter_config.to_mapping()
     started = await host.handle(
         {
-            "interface_version": 2,
+            "interface_version": 3,
             "operation": "start",
             "agent": "blocking",
             "config": config,
@@ -33,7 +73,7 @@ async def test_real_sdk_busy_shutdown_requires_sandbox_cleanup(
     invoked = asyncio.create_task(
         host.handle(
             {
-                "interface_version": 2,
+                "interface_version": 3,
                 "operation": "invoke",
                 "agent": "blocking",
                 "runtime_id": runtime_id,
@@ -66,7 +106,7 @@ async def test_real_sdk_enforces_one_lifecycle_per_sandbox(
     host = RuntimeHost(directory=hermes_shim_agent_dir)
 
     def command(operation, **fields):
-        request = {"interface_version": 2, "operation": operation, "agent": name}
+        request = {"interface_version": 3, "operation": operation, "agent": name}
         if operation == "start":
             request["config"] = config.to_mapping()
         return {**request, **fields}
@@ -104,7 +144,7 @@ async def test_real_sdk_rejects_start_before_native_runtime_creation(
     config = hermes_shim_config().to_mapping()
     host = RuntimeHost(directory=hermes_shim_agent_dir)
     request = {
-        "interface_version": 2,
+        "interface_version": 3,
         "operation": "start",
         "agent": config["metadata"]["name"],
         "config": config,

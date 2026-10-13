@@ -15,6 +15,9 @@ import time
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
+from nemo_fabric import RunRequest
 from nemo_fabric.host import transport
 from nemo_fabric.host.protocol import (
     CONFIG_OPERATIONS,
@@ -25,6 +28,7 @@ from nemo_fabric.host.protocol import (
     SOCKET_PATH,
     ProtocolError,
     decode_object,
+    decode_value,
     encode_request,
     encode_response,
     envelope,
@@ -32,7 +36,7 @@ from nemo_fabric.host.protocol import (
 from nemo_fabric.host.state import RuntimeHost
 
 
-def read_input(path: str) -> dict[str, Any]:
+def read_input(path: str, *, object_required: bool = True) -> Any:
     try:
         if path == "-":
             if sys.stdin is None or sys.stdin.isatty():
@@ -66,7 +70,7 @@ def read_input(path: str) -> dict[str, Any]:
                 encoded = stream.read(REQUEST_LIMIT + 1)
         if len(encoded) > REQUEST_LIMIT:
             raise ValueError("input exceeds limit")
-        return decode_object(encoded)
+        return decode_object(encoded) if object_required else decode_value(encoded)
     except (OSError, ValueError, RecursionError) as error:
         raise ProtocolError("invalid_input") from error
 
@@ -86,6 +90,7 @@ def parse_command(arguments: list[str]) -> dict[str, Any]:
             "--runtime-id",
             "--config",
             "--input",
+            "--request",
         ):
             if index + 1 == len(arguments) or arguments[index + 1].startswith("--"):
                 raise ProtocolError()
@@ -101,7 +106,10 @@ def parse_command(arguments: list[str]) -> dict[str, Any]:
     if operation in CONFIG_OPERATIONS:
         required.add("--config")
     if operation == "invoke":
-        required.add("--input")
+        payloads = flags.keys() & {"--input", "--request"}
+        if len(payloads) != 1:
+            raise ProtocolError()
+        required.update(payloads)
     allowed = required.copy()
     if not required <= flags.keys() or not flags.keys() <= allowed:
         raise ProtocolError()
@@ -118,7 +126,15 @@ def parse_command(arguments: list[str]) -> dict[str, Any]:
     if operation in CONFIG_OPERATIONS:
         request["config"] = read_input(flags["--config"])
     if operation == "invoke":
-        request["input"] = read_input(flags["--input"])
+        if "--request" in flags:
+            try:
+                request["request"] = RunRequest.model_validate(
+                    read_input(flags["--request"])
+                ).to_mapping()
+            except ValidationError as error:
+                raise ProtocolError() from error
+        else:
+            request["input"] = read_input(flags["--input"], object_required=False)
     encode_request(request)
     return request
 

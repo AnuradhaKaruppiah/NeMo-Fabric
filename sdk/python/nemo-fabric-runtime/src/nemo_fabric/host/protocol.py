@@ -6,7 +6,7 @@
 import json
 from typing import Any
 
-INTERFACE_VERSION = 2
+INTERFACE_VERSION = 3
 REQUEST_LIMIT = 512 * 1024
 RESPONSE_LIMIT = 4 * 1024 * 1024
 CALL_SECONDS = 320.0
@@ -31,12 +31,11 @@ MESSAGES = {
     "host_stopping": "The Fabric host is shutting down.",
     "runtime_unavailable": "No active Fabric runtime is available.",
     "runtime_exists": "This sandbox has used its runtime lifecycle; replace the sandbox before starting another.",
-    "streaming_unsupported": "Streaming invocation is unsupported by this command interface.",
     "host_unavailable": "The Fabric host is unavailable.",
     "invalid_response": "The host response is missing, invalid, or truncated.",
     "request_too_large": "The request exceeds the transport limit.",
     "response_too_large": "The response exceeds the transport limit; the outcome is unknown.",
-    "invalid_input": "Input must contain one bounded UTF-8 JSON object.",
+    "invalid_input": "Input must contain one bounded UTF-8 JSON value of the expected type.",
 }
 
 
@@ -101,7 +100,10 @@ def validate_request(request: Any) -> str:
     if operation == "start":
         required.add("config")
     if operation == "invoke":
-        required.add("input")
+        payloads = request.keys() & {"input", "request"}
+        if len(payloads) != 1:
+            raise ProtocolError()
+        required.update(payloads)
     if not required <= request.keys() or not request.keys() <= required:
         raise ProtocolError()
     for field in ("agent", "runtime_id"):
@@ -118,15 +120,13 @@ def validate_request(request: Any) -> str:
         metadata = config.get("metadata")
         if not isinstance(metadata, dict) or metadata.get("name") != request["agent"]:
             raise ProtocolError("wrong_agent")
-    if operation == "invoke":
-        if not isinstance(request["input"], dict):
+    if operation == "invoke" and "request" in request:
+        if not isinstance(request["request"], dict):
             raise ProtocolError()
-        if request["input"].get("stream") or request["input"].get("streaming"):
-            raise ProtocolError("streaming_unsupported", "invoke", unsupported=True)
     return operation
 
 
-def decode_object(encoded: bytes) -> dict[str, Any]:
+def decode_value(encoded: bytes) -> Any:
     def reject_constant(value: str) -> None:
         raise ValueError("non-finite JSON number")
 
@@ -138,11 +138,15 @@ def decode_object(encoded: bytes) -> dict[str, Any]:
             result[key] = value
         return result
 
-    value = json.loads(
+    return json.loads(
         encoded.decode("utf-8"),
         parse_constant=reject_constant,
         object_pairs_hook=unique_object,
     )
+
+
+def decode_object(encoded: bytes) -> dict[str, Any]:
+    value = decode_value(encoded)
     if not isinstance(value, dict):
         raise ValueError("expected one JSON object")
     return value

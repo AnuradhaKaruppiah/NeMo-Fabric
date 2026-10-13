@@ -11,7 +11,14 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
-from nemo_fabric import Fabric, FabricConfig, FabricConfigError, Runtime, RuntimeStatus
+from nemo_fabric import (
+    Fabric,
+    FabricConfig,
+    FabricConfigError,
+    RunRequest,
+    Runtime,
+    RuntimeStatus,
+)
 from nemo_fabric.host.protocol import (
     OPERATIONS,
     ProtocolError,
@@ -116,10 +123,15 @@ class RuntimeHost:
                     or owned.runtime.status != RuntimeStatus.ACTIVE
                 ):
                     raise ProtocolError("runtime_unavailable", stage)
-                changed, effects = None, "unknown"
-                native = (
-                    await owned.runtime.invoke(input=request["input"])
-                ).to_mapping()
+                if "request" in request:
+                    stage = "validation"
+                    invocation = {
+                        "request": RunRequest.model_validate(request["request"])
+                    }
+                else:
+                    invocation = {"input": request["input"]}
+                changed, effects, stage = None, "unknown", "invoke"
+                native = (await owned.runtime.invoke(**invocation)).to_mapping()
                 result = {"runtime_id": request["runtime_id"], "fabric_result": native}
                 if native.get("status") != "succeeded":
                     raise ProtocolError("invoke_failed", stage)

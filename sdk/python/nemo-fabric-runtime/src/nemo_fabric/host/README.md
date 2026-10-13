@@ -14,6 +14,7 @@ SPDX-License-Identifier: Apache-2.0
 | `serve` | Start the foreground runtime server; no agent selection |
 | `start --agent NAME --config FILE` | `Fabric.start_runtime(config, base_dir=...)` |
 | `invoke --agent NAME --runtime-id ID --input FILE` | `Runtime.invoke(input=...)` |
+| `invoke --agent NAME --runtime-id ID --request FILE` | `Runtime.invoke(request=RunRequest(...))` |
 | `stop --agent NAME --runtime-id ID` | `Runtime.stop()` |
 
 Run the server under the sandbox supervisor:
@@ -58,7 +59,7 @@ Completed commands except serve write exactly one newline-terminated JSON respon
 
 A timeout or missing, malformed, truncated, or oversized response leaves dispatched effects unknown. Errors use fixed diagnostics with `effects: none`, `applied`, or `unknown`. Routine errors exclude prompts, configuration values, and raw exceptions. Invocation results preserve normalized SDK results, including failed results with null output, and may contain user data. Calls are never replayed after an uncertain outcome.
 
-`--config -` and `--input -` explicitly select stdin. Otherwise commands read staged regular files containing exactly one bounded UTF-8 JSON object. Unknown or duplicate flags, duplicate JSON keys, streaming input, and oversized input are rejected.
+`--config -`, `--input -`, and `--request -` explicitly select stdin. Otherwise commands read staged regular files containing one bounded UTF-8 JSON value. Config and full-request files must be objects. `--input` accepts the SDK's JSON input values; keys named `stream` or `streaming` remain agent data. `--request` uses the public `RunRequest` schema and preserves request IDs, Relay session roots, context, overrides, and supported extensions. The payload options are mutually exclusive. Unknown or duplicate flags, duplicate JSON keys, non-finite numbers, and oversized input are rejected. Invocation remains buffered.
 
 ## Ownership And Shutdown
 
@@ -72,6 +73,6 @@ The bridge requires Unix sockets and `fcntl`; Windows imports remain safe and co
 
 ## Local Qualification And Migration
 
-Follow the [OpenShell Code Review instructions](../../../../../../examples/code_review_agent/README.md#openshell-code-review) to build the image and create a sandbox. The image contains the current SDK, host, adapter, and harness, and advertises `fabric-agent-ctl`, interface version 2, and `start/invoke/stop/serve`. Rebuild older images and create fresh sandboxes after this scope change.
+Follow the [OpenShell Code Review instructions](../../../../../../examples/code_review_agent/README.md#openshell-code-review) to build the image and create a sandbox. The image contains the current SDK, host, adapter, and harness, and advertises `fabric-agent-ctl`, interface version 3, and `start/invoke/stop/serve`. Rebuild older images and create fresh sandboxes after this scope change.
 
-The example starts the server, waits for its socket, starts one runtime, invokes twice, and stops through separate exec calls. The older NemoClaw client using `validate/prepare/configure` requires migration. Version 1 requests fail explicitly. Direct SDK lifecycle and streaming APIs retain their existing behavior.
+The example starts the server, waits for its socket, starts one runtime, invokes twice, and stops through separate exec calls. The older NemoClaw client using `validate/prepare/configure` requires migration. Version 1 and 2 requests fail explicitly; CLI and server must use the same interface version. Direct SDK lifecycle and streaming APIs retain their existing behavior.

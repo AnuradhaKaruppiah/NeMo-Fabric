@@ -24,6 +24,7 @@ from _utils.configs import hermes_shim_config
 
 async def test_command_process_lifecycle_and_signal_cleanup(
     hermes_shim_agent_dir,
+    sdk_request,
 ):
     with tempfile.TemporaryDirectory(prefix="fh-process-", dir="/tmp") as directory:
         root = Path(directory)
@@ -96,6 +97,21 @@ async def test_command_process_lifecycle_and_signal_cleanup(
             assert invoked["result"]["fabric_result"]["output"]["received"] == {
                 "message": "hello"
             }
+            full_invocation = await call(
+                "invoke",
+                "--agent",
+                name,
+                "--runtime-id",
+                runtime_id,
+                "--request",
+                "-",
+                stdin=json.dumps(sdk_request.to_mapping()).encode(),
+            )
+            assert full_invocation["status"] == "succeeded", full_invocation
+            native = full_invocation["result"]["fabric_result"]
+            assert native["runtime_id"] == runtime_id
+            assert native["request_id"] == sdk_request.request_id
+            assert native["output"]["received"] == sdk_request.input
             stopped = await call(
                 "stop",
                 "--agent",

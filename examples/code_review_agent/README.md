@@ -199,7 +199,7 @@ docker build -f examples/code_review_agent/Dockerfile.openshell \
 uv pip install --python .venv/bin/python openshell==0.1.2
 ```
 
-The image records its installed descriptor inventory in `/opt/fabric/runtime-server.json`. It advertises interface version 2 and a single-runtime limit. The older NemoClaw v1 client uses a different bridge protocol and needs migration before it can manage this server directly.
+The image records its installed descriptor inventory in `/opt/fabric/runtime-server.json`. It advertises interface version 3 and a single-runtime limit. The older NemoClaw v1 client uses a different bridge protocol and needs migration before it can manage this server directly.
 
 The current CLI exposes `serve`, `start`, `invoke`, and `stop`. The example waits for the socket, then starts, invokes, and stops using the returned runtime ID. Each sandbox supports one runtime lifecycle; create a fresh sandbox for each demonstration. Rebuild the image and create a new sandbox after updating the CLI; an existing sandbox keeps its original image and command protocol.
 
