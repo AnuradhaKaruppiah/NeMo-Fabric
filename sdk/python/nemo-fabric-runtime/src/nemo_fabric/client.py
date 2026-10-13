@@ -305,11 +305,37 @@ class Fabric:
 
         plan = await _call_blocking(lambda: self.plan(config, base_dir=base_dir))
         native = self._require_native_module("prepare_environment")
+        prepared: EnvironmentHandle | None = None
+
+        def prepare() -> EnvironmentHandle:
+            nonlocal prepared
+            raw = native.prepare_environment(json.dumps(plan.to_mapping()))
+            prepared = EnvironmentHandle.from_mapping(json.loads(raw))
+            return prepared
+
         try:
-            raw = await _call_blocking(
-                lambda: native.prepare_environment(json.dumps(plan.to_mapping()))
-            )
-            return EnvironmentHandle.from_mapping(json.loads(raw))
+            return await _call_blocking(prepare)
+        except asyncio.CancelledError:
+            # Blocking provider work finishes before cancellation propagates.
+            # Release a confirmed resource so cancellation cannot orphan it.
+            if prepared is not None:
+                try:
+                    await _call_blocking(
+                        lambda: native.release_environment(_environment_json(prepared))
+                    )
+                except Exception as error:
+                    raise FabricRuntimeError(
+                        "Environment cleanup after cancelled preparation is unconfirmed",
+                        stage="environment_release",
+                        code="environment_cleanup_unconfirmed",
+                        details={
+                            "environment_id": prepared.environment_id,
+                            "provider": prepared.provider,
+                            "sandbox_id": prepared.connection.get("sandbox_id"),
+                            "sandbox_name": prepared.connection.get("sandbox_name"),
+                        },
+                    ) from error
+            raise
         except FabricError:
             raise
         except Exception as error:

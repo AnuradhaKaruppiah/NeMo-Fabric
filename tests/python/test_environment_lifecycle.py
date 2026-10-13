@@ -3,6 +3,9 @@
 
 """Explicit environment lifecycle remains separate from runtime shutdown."""
 
+import asyncio
+import json
+import threading
 from pathlib import Path, WindowsPath
 from unittest.mock import MagicMock
 
@@ -134,3 +137,56 @@ def test_openshell_config_rejects_host_or_traversal_paths(path):
 
     with pytest.raises(ValidationError, match="absolute POSIX task path"):
         EnvironmentConfig(provider="openshell", workspace=path)
+
+
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+async def test_cancelled_preparation_releases_a_confirmed_resource(
+    monkeypatch, remote_handle, cleanup_fails
+):
+    from nemo_fabric import FabricRuntimeError
+
+    entered, release = threading.Event(), threading.Event()
+    mock_native = MagicMock()
+
+    def prepare(_plan):
+        entered.set()
+        assert release.wait(timeout=5)
+        return json.dumps({**remote_handle, "ownership": "fabric_owned"})
+
+    mock_native.prepare_environment.side_effect = prepare
+    if cleanup_fails:
+        mock_native.release_environment.side_effect = RuntimeError("PRIVATE")
+    fabric = Fabric()
+    mock_plan = MagicMock()
+    mock_plan.to_mapping.return_value = {}
+    monkeypatch.setattr(fabric, "plan", MagicMock(return_value=mock_plan))
+    monkeypatch.setattr(
+        fabric, "_require_native_module", MagicMock(return_value=mock_native)
+    )
+    task = asyncio.create_task(fabric.prepare_environment(hermes_shim_config()))
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        task.cancel()
+        release.set()
+        if cleanup_fails:
+            with pytest.raises(FabricRuntimeError) as caught:
+                await task
+            assert caught.value.code == "environment_cleanup_unconfirmed"
+            assert caught.value.details["sandbox_id"] == "immutable-1"
+            assert "PRIVATE" not in str(caught.value)
+        else:
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        mock_native.release_environment.assert_called_once()
+        released = EnvironmentHandle.from_mapping(
+            json.loads(mock_native.release_environment.call_args.args[0])
+        )
+        assert released.environment_id == "environment-1"
+    finally:
+        release.set()
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
