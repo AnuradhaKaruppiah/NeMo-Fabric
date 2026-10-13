@@ -25,8 +25,9 @@ raise SystemExit(cli.main(["stop", "--agent", "review", "--runtime-id", "runtime
         [sys.executable, "-c", code], capture_output=True, text=True, timeout=10
     )
     assert result.returncode == 1
-    assert len(result.stdout.splitlines()) == 1, result.stderr
-    response = json.loads(result.stdout)
+    assert result.stdout == ""
+    assert len(result.stderr.splitlines()) == 2
+    response = json.loads(result.stderr.splitlines()[-1])
     assert response["status"] == "unsupported"
     assert response["error"]["code"] == "platform_unsupported"
     assert response["error"]["effects"] == "none"

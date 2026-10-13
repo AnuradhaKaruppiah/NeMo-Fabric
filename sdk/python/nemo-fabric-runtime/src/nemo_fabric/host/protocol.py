@@ -6,6 +6,8 @@
 import json
 from typing import Any
 
+from nemo_fabric import FabricConfigError, RunResult, RuntimeHandle
+
 INTERFACE_VERSION = 3
 REQUEST_LIMIT = 512 * 1024
 RESPONSE_LIMIT = 4 * 1024 * 1024
@@ -152,7 +154,7 @@ def decode_object(encoded: bytes) -> dict[str, Any]:
     return value
 
 
-def _encode(value: dict[str, Any]) -> bytes:
+def encode_value(value: Any) -> bytes:
     return (
         json.dumps(
             value, ensure_ascii=False, allow_nan=False, separators=(",", ":")
@@ -164,7 +166,7 @@ def _encode(value: dict[str, Any]) -> bytes:
 def encode_request(request: dict[str, Any]) -> bytes:
     validate_request(request)
     try:
-        encoded = _encode(request)
+        encoded = encode_value(request)
     except (ValueError, TypeError, RecursionError) as error:
         raise ProtocolError() from error
     if len(encoded) > REQUEST_LIMIT:
@@ -174,12 +176,12 @@ def encode_request(request: dict[str, Any]) -> bytes:
 
 def encode_response(response: dict[str, Any]) -> bytes:
     try:
-        encoded = _encode(response)
+        encoded = encode_value(response)
         if len(encoded) <= RESPONSE_LIMIT:
             return encoded
     except (ValueError, TypeError, RecursionError):
         pass
-    return _encode(
+    return encode_value(
         envelope(
             response["operation"],
             changed=None,
@@ -231,12 +233,22 @@ def validate_response(response: dict[str, Any], operation: str) -> None:
             not isinstance(result.get("runtime_id"), str)
             or not result["runtime_id"]
             or not isinstance(native, dict)
-            or native.get("status") != "succeeded"
             or response["changed"] is not None
         ):
             raise invalid
+        try:
+            sdk_result = RunResult.from_mapping(native)
+        except (FabricConfigError, TypeError, ValueError, KeyError) as error:
+            raise invalid from error
+        if sdk_result.runtime_id != result["runtime_id"]:
+            raise invalid
         return
-    if operation not in ("start", "stop") or set(result) != {"runtime_id"}:
+    if operation == "start":
+        try:
+            RuntimeHandle.from_mapping(result)
+        except (FabricConfigError, TypeError, ValueError, KeyError) as error:
+            raise invalid from error
+    elif operation != "stop" or set(result) != {"runtime_id"}:
         raise invalid
     if not isinstance(result["runtime_id"], str) or not result["runtime_id"]:
         raise invalid

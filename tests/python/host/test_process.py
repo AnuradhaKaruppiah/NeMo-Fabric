@@ -52,11 +52,12 @@ async def test_command_process_lifecycle_and_signal_cleanup(
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout, stderr = await asyncio.wait_for(process.communicate(stdin), 10)
+            if process.returncode != 0:
+                assert stdout == b""
+                return json.loads(stderr)
             assert len(stdout.splitlines()) == 1
             response = json.loads(stdout)
-            assert process.returncode == (
-                0 if response["status"] == "succeeded" else 1
-            ), stderr
+            assert process.returncode == 0, stderr
             return response
 
         # Caller-side planning happens before the host; planning creates no agent.
@@ -81,8 +82,10 @@ async def test_command_process_lifecycle_and_signal_cleanup(
                 "--config",
                 str(config_path),
             )
-            assert configured["status"] == "succeeded", configured
-            runtime_id = configured["result"]["runtime_id"]
+            from nemo_fabric import RuntimeHandle, RunResult
+
+            RuntimeHandle.from_mapping(configured)
+            runtime_id = configured["runtime_id"]
             invoked = await call(
                 "invoke",
                 "--agent",
@@ -94,9 +97,7 @@ async def test_command_process_lifecycle_and_signal_cleanup(
                 stdin=b'{"message":"hello"}',
             )
             assert invoked["status"] == "succeeded", invoked
-            assert invoked["result"]["fabric_result"]["output"]["received"] == {
-                "message": "hello"
-            }
+            assert invoked["output"]["received"] == {"message": "hello"}
             full_invocation = await call(
                 "invoke",
                 "--agent",
@@ -108,7 +109,8 @@ async def test_command_process_lifecycle_and_signal_cleanup(
                 stdin=json.dumps(sdk_request.to_mapping()).encode(),
             )
             assert full_invocation["status"] == "succeeded", full_invocation
-            native = full_invocation["result"]["fabric_result"]
+            native = full_invocation
+            RunResult.from_mapping(native)
             assert native["runtime_id"] == runtime_id
             assert native["request_id"] == sdk_request.request_id
             assert native["output"]["received"] == sdk_request.input
@@ -119,7 +121,7 @@ async def test_command_process_lifecycle_and_signal_cleanup(
                 "--runtime-id",
                 runtime_id,
             )
-            assert stopped["status"] == "succeeded", stopped
+            assert stopped is None
             assert host.returncode is None
             snapshot = await call(
                 "stop",
@@ -128,7 +130,7 @@ async def test_command_process_lifecycle_and_signal_cleanup(
                 "--runtime-id",
                 runtime_id,
             )
-            assert snapshot["changed"] is False
+            assert snapshot is None
             replacement_start = await call(
                 "start", "--agent", name, "--config", str(config_path)
             )
@@ -187,7 +189,7 @@ async def test_busy_shutdown_and_timeout_keep_sandbox_owned(
             )
             stdout, stderr = await asyncio.wait_for(process.communicate(), 10)
             assert process.returncode == expected_exit, stderr
-            return json.loads(stdout)
+            return json.loads(stderr if expected_exit else stdout)
 
         try:
             async with asyncio.timeout(10):
@@ -209,7 +211,7 @@ async def test_busy_shutdown_and_timeout_keep_sandbox_owned(
                 "--agent",
                 "blocking",
                 "--runtime-id",
-                started["result"]["runtime_id"],
+                started["runtime_id"],
                 "--input",
                 str(input_path),
                 env=environment,
@@ -221,9 +223,12 @@ async def test_busy_shutdown_and_timeout_keep_sandbox_owned(
                     await asyncio.sleep(0.01)
             pid = int((root / "adapter.pid").read_text())
             if shutdown_mode == "invoke_timeout":
-                invoke_stdout, _ = await asyncio.wait_for(invocation.communicate(), 5)
+                invoke_stdout, invoke_stderr = await asyncio.wait_for(
+                    invocation.communicate(), 5
+                )
                 assert invocation.returncode == 1
-                assert json.loads(invoke_stdout)["error"]["code"] == "invoke_failed"
+                assert invoke_stdout == b""
+                assert json.loads(invoke_stderr)["error"]["code"] == "invoke_failed"
                 with pytest.raises(ProcessLookupError):
                     os.kill(pid, 0)
                 # Native timeout teardown now terminates the adapter's tree,
@@ -234,9 +239,9 @@ async def test_busy_shutdown_and_timeout_keep_sandbox_owned(
                     "--agent",
                     "blocking",
                     "--runtime-id",
-                    started["result"]["runtime_id"],
+                    started["runtime_id"],
                 )
-                assert stopped["status"] == "succeeded"
+                assert stopped is None
                 replacement_runtime = await call(
                     "start",
                     "--agent",

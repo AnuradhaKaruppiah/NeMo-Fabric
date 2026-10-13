@@ -9,7 +9,8 @@ import sys
 from unittest.mock import MagicMock
 
 import pytest
-from nemo_fabric import Fabric, FabricConfig
+from nemo_fabric import Fabric, FabricConfig, RunResult, RuntimeHandle
+from nemo_fabric.host.protocol import envelope, ProtocolError
 
 from examples.code_review_agent.config import openclaw_config
 
@@ -22,24 +23,33 @@ def client_fixture():
         operation = command[1] if command[0] == "fabric-agent-ctl" else "serve"
         if operation == "serve":
             return MagicMock(exit_code=0, stdout="", stderr="")
-        result = {"runtime_id": "runtime-1"}
-        if operation == "invoke":
-            result = {
-                "runtime_id": "runtime-1",
-                "fabric_result": {
-                    "status": "succeeded",
+        if operation == "start":
+            value = RuntimeHandle.from_mapping(
+                {
                     "runtime_id": "runtime-1",
+                    "runtime_binding": "binding-1",
+                    "agent_name": "code-review-agent",
+                    "harness": "openclaw",
+                    "adapter_kind": "python",
+                    "environment": {"provider": "local"},
+                }
+            ).to_mapping()
+        elif operation == "invoke":
+            value = RunResult.from_mapping(
+                {
+                    "agent_name": "code-review-agent",
+                    "harness": "openclaw",
+                    "adapter_kind": "python",
+                    "runtime_id": "runtime-1",
+                    "request_id": "request-1",
+                    "invocation_id": "invocation-1",
+                    "status": "succeeded",
                     "output": {"response": "calculator.py: answer() returns 41."},
-                },
-            }
-        response = {
-            "operation": operation,
-            "status": "succeeded",
-            "changed": None if operation == "invoke" else True,
-            "result": result,
-            "error": None,
-        }
-        return MagicMock(exit_code=0, stdout=json.dumps(response) + "\n", stderr="")
+                }
+            ).to_mapping()
+        else:
+            value = None
+        return MagicMock(exit_code=0, stdout=json.dumps(value) + "\n", stderr="")
 
     client.exec.side_effect = execute
     return client
@@ -115,17 +125,16 @@ def test_failed_invocation_is_not_retried_and_still_attempts_stop(mock_client, f
                 return MagicMock(exit_code=0, stdout="PRIVATE\n{}\n", stderr="PRIVATE")
             return MagicMock(
                 exit_code=1,
-                stdout=json.dumps(
-                    {
-                        "operation": "invoke",
-                        "status": "failed",
-                        "changed": None,
-                        "result": None,
-                        "error": {"code": "invoke_failed", "effects": "unknown"},
-                    }
+                stdout="",
+                stderr=json.dumps(
+                    envelope(
+                        "invoke",
+                        changed=None,
+                        error=ProtocolError("invoke_failed", "invoke"),
+                        effects="unknown",
+                    )
                 )
                 + "\n",
-                stderr="PRIVATE",
             )
         return execute(sandbox, command, **kwargs)
 
@@ -152,17 +161,16 @@ def test_stop_failure_is_reported_without_losing_review_results(mock_client):
         if command[:2] == ["fabric-agent-ctl", "stop"]:
             return MagicMock(
                 exit_code=1,
-                stdout=json.dumps(
-                    {
-                        "operation": "stop",
-                        "status": "failed",
-                        "changed": None,
-                        "result": None,
-                        "error": {"code": "stop_failed", "effects": "unknown"},
-                    }
+                stdout="",
+                stderr=json.dumps(
+                    envelope(
+                        "stop",
+                        changed=None,
+                        error=ProtocolError("stop_failed", "stop"),
+                        effects="unknown",
+                    )
                 )
                 + "\n",
-                stderr="",
             )
         return execute(sandbox, command, **kwargs)
 
@@ -425,32 +433,35 @@ def test_failed_review_preserves_normalized_error_partial_output_and_artifacts(
     from examples.code_review_agent import openshell
 
     execute = mock_client.exec.side_effect
-    failed = {
-        "runtime_id": "runtime-1",
-        "status": "failed",
-        "output": {"response": "calculator.py: partial finding"},
-        "error": {
-            "code": "model_rate_limited",
-            "message": "Model rate limited",
-            "retryable": True,
-        },
-        "artifacts": {"files": [{"name": "partial-review", "path": "review.txt"}]},
-    }
+    failed = RunResult.from_mapping(
+        {
+            "agent_name": "code-review-agent",
+            "harness": "openclaw",
+            "adapter_kind": "python",
+            "runtime_id": "runtime-1",
+            "request_id": "request-1",
+            "invocation_id": "invocation-1",
+            "status": "failed",
+            "output": {"response": "calculator.py: partial finding"},
+            "error": {
+                "stage": "invoke",
+                "code": "model_rate_limited",
+                "message": "Model rate limited",
+                "retryable": True,
+            },
+            "artifacts": {
+                "artifacts": [
+                    {"name": "partial-review", "kind": "review", "path": "review.txt"}
+                ]
+            },
+        }
+    ).to_mapping()
 
     def failed_review(sandbox, command, **kwargs):
         if command[:2] == ["fabric-agent-ctl", "invoke"]:
             return MagicMock(
                 exit_code=1,
-                stdout=json.dumps(
-                    {
-                        "operation": "invoke",
-                        "status": "failed",
-                        "changed": None,
-                        "result": {"runtime_id": "runtime-1", "fabric_result": failed},
-                        "error": {"code": "invoke_failed", "effects": "unknown"},
-                    }
-                )
-                + "\n",
+                stdout=json.dumps(failed) + "\n",
                 stderr="PRIVATE",
             )
         return execute(sandbox, command, **kwargs)
@@ -480,27 +491,29 @@ def test_cli_records_failed_review_with_null_or_non_text_output(
     from examples.code_review_agent import openshell
 
     execute = mock_client.exec.side_effect
-    failed = {
-        "runtime_id": "runtime-1",
-        "status": "failed",
-        "output": output,
-        "error": {"code": "model_unavailable", "message": "Model unavailable"},
-    }
+    failed = RunResult.from_mapping(
+        {
+            "agent_name": "code-review-agent",
+            "harness": "openclaw",
+            "adapter_kind": "python",
+            "runtime_id": "runtime-1",
+            "request_id": "request-1",
+            "invocation_id": "invocation-1",
+            "status": "failed",
+            "output": output,
+            "error": {
+                "stage": "invoke",
+                "code": "model_unavailable",
+                "message": "Model unavailable",
+            },
+        }
+    ).to_mapping()
 
     def failed_review(sandbox, command, **kwargs):
         if command[:2] == ["fabric-agent-ctl", "invoke"]:
             return MagicMock(
                 exit_code=1,
-                stdout=json.dumps(
-                    {
-                        "operation": "invoke",
-                        "status": "failed",
-                        "changed": None,
-                        "result": {"runtime_id": "runtime-1", "fabric_result": failed},
-                        "error": {"code": "invoke_failed", "effects": "unknown"},
-                    }
-                )
-                + "\n",
+                stdout=json.dumps(failed) + "\n",
                 stderr="PRIVATE",
             )
         return execute(sandbox, command, **kwargs)

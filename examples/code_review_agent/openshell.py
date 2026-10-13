@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Sequence
 
-from nemo_fabric import FabricConfig
+from nemo_fabric import FabricConfig, RunResult, RuntimeHandle
 
 from examples.code_review_agent.config import openclaw_config
 
@@ -97,28 +97,46 @@ class OpenShellCodeReview:
             executed = self._exec(
                 ["fabric-agent-ctl", operation, *flags], stdin=stdin, timeout=timeout
             )
+            if not executed.stdout:
+                if executed.exit_code == 0 or len(executed.stderr.encode()) > 64 * 1024:
+                    return _failure(operation, "invalid_response")
+                # Transport diagnostics are separate from SDK result JSON.
+                from nemo_fabric.host.protocol import validate_response
+
+                diagnostic = json.loads(executed.stderr)
+                validate_response(diagnostic, operation)
+                if diagnostic["status"] == "succeeded":
+                    return _failure(operation, "invalid_response")
+                return diagnostic
             if (
                 len(executed.stdout.encode()) > 4 * 1024 * 1024
                 or len(executed.stdout.splitlines()) != 1
             ):
                 return _failure(operation, "invalid_response")
-            response = json.loads(executed.stdout)
-            if (
-                not isinstance(response, dict)
-                or response.get("operation") != operation
-                or response.get("status") not in ("succeeded", "failed", "unsupported")
-                or (executed.exit_code == 0) != (response["status"] == "succeeded")
-                or (
-                    response["status"] == "succeeded"
-                    and not isinstance(response.get("result"), dict)
-                )
-                or (
-                    response["status"] != "succeeded"
-                    and not isinstance(response.get("error"), dict)
-                )
-            ):
+            value = json.loads(executed.stdout)
+            if operation == "start":
+                RuntimeHandle.from_mapping(value)
+                result = value
+            elif operation == "invoke":
+                RunResult.from_mapping(value)
+                result = {"runtime_id": value["runtime_id"], "fabric_result": value}
+            else:
+                if value is not None:
+                    return _failure(operation, "invalid_response")
+                result = None
+            succeeded = operation != "invoke" or value["status"] == "succeeded"
+            if (executed.exit_code == 0) != succeeded:
                 return _failure(operation, "invalid_response")
-            return response
+            # This is the example's command report, not the CLI wire schema.
+            return {
+                "operation": operation,
+                "status": "succeeded" if succeeded else "failed",
+                "changed": None if operation == "invoke" else True,
+                "result": result,
+                "error": None
+                if succeeded
+                else {"code": "invoke_failed", "effects": "unknown"},
+            }
         except Exception:
             # Missing responses cannot prove a dispatched command stopped.
             return _failure(operation, "command_outcome_unknown")

@@ -10,6 +10,7 @@ from nemo_fabric import (
     RunResult,
     Runtime,
     RuntimeStatus,
+    RuntimeHandle,
     RunRequest,
 )
 
@@ -41,13 +42,30 @@ def mock_runtime_fixture():
     runtime = MagicMock(spec=Runtime)
     runtime.runtime_id = "runtime-1"
     runtime.status = RuntimeStatus.ACTIVE
+    runtime.handle = RuntimeHandle.from_mapping(
+        {
+            "runtime_id": "runtime-1",
+            "runtime_binding": "binding-1",
+            "agent_name": "researcher",
+            "harness": "test.host",
+            "adapter_kind": "python",
+            "environment": {"provider": "local"},
+        }
+    )
     runtime.stop = AsyncMock()
     runtime.invoke = AsyncMock(return_value=MagicMock(spec=RunResult))
-    runtime.invoke.return_value.to_mapping.return_value = {
-        "status": "succeeded",
-        "runtime_id": "runtime-1",
-        "output": {"response": "FOUR"},
-    }
+    runtime.invoke.return_value.to_mapping.return_value = RunResult.from_mapping(
+        {
+            "agent_name": "researcher",
+            "harness": "test.host",
+            "adapter_kind": "python",
+            "invocation_id": "invocation-1",
+            "request_id": "request-1",
+            "status": "succeeded",
+            "runtime_id": "runtime-1",
+            "output": {"response": "FOUR"},
+        }
+    ).to_mapping()
     return runtime
 
 

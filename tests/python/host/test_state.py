@@ -25,7 +25,9 @@ async def test_non_runtime_commands_cannot_mutate_runtime(
 async def test_start_delegates_to_existing_sdk(host, host_request, mock_fabric, config):
     response = await host.handle(host_request("start"))
     assert response["status"] == "succeeded"
-    assert response["result"] == {"runtime_id": "runtime-1"}
+    assert (
+        response["result"] == mock_fabric.start_runtime.return_value.handle.to_mapping()
+    )
     args, kwargs = mock_fabric.start_runtime.call_args
     assert args[0].to_mapping()["metadata"]["name"] == config["metadata"]["name"]
     assert kwargs == {"base_dir": host.directory}
@@ -262,7 +264,8 @@ async def test_failed_native_result_retains_error_and_null_output(
     native = {"status": "failed", "output": None, "error": {"code": "timeout"}}
     mock_runtime.invoke.return_value.to_mapping.return_value = native
     response = await host.handle(host_request("invoke", input={}))
-    assert response["error"]["code"] == "invoke_failed"
+    assert response["status"] == "succeeded"
+    assert response["error"] is None
     assert response["result"]["fabric_result"] == native
     mock_runtime.invoke.assert_awaited_once()
 

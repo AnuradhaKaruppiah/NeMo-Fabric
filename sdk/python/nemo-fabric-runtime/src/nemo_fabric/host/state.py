@@ -107,7 +107,7 @@ class RuntimeHost:
                         raise ProtocolError("start_failed", "start")
                     self.runtimes[runtime.runtime_id].state = "running"
                     return envelope(
-                        operation, {"runtime_id": runtime.runtime_id}, changed=True
+                        operation, runtime.handle.to_mapping(), changed=True
                     )
                 owned = self._owned(request)
                 result = {"runtime_id": request["runtime_id"]}
@@ -133,8 +133,6 @@ class RuntimeHost:
                 changed, effects, stage = None, "unknown", "invoke"
                 native = (await owned.runtime.invoke(**invocation)).to_mapping()
                 result = {"runtime_id": request["runtime_id"], "fabric_result": native}
-                if native.get("status") != "succeeded":
-                    raise ProtocolError("invoke_failed", stage)
                 return envelope(operation, result, changed=None)
         except Exception as error:
             if not isinstance(error, ProtocolError):

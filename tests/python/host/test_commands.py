@@ -28,7 +28,7 @@ def test_removed_check_is_rejected_before_transport(monkeypatch, capsys, flags):
     mock_client = AsyncMock()
     monkeypatch.setattr(cli.transport, "client", mock_client)
     assert cli.main(["check", *flags]) == 1
-    response = json.loads(capsys.readouterr().out)
+    response = json.loads(capsys.readouterr().err)
     assert response["operation"] == "unknown"
     assert response["error"]["code"] == "invalid_request"
     assert response["changed"] is False
@@ -72,12 +72,13 @@ def test_start_bootstraps_without_extra_lifecycle_flags(tmp_path, config):
         ["configure", "--agent", "researcher", "--config"],
     ],
 )
-def test_invalid_flags_emit_one_safe_json_response_and_exit_one(arguments, capsys):
+def test_invalid_flags_emit_one_safe_json_diagnostic_and_exit_one(arguments, capsys):
     assert cli.main(arguments) == 1
     captured = capsys.readouterr()
-    assert captured.out.endswith("\n")
-    assert len(captured.out.splitlines()) == 1
-    response = json.loads(captured.out)
+    assert captured.out == ""
+    assert captured.err.endswith("\n")
+    assert len(captured.err.splitlines()) == 1
+    response = json.loads(captured.err)
     assert response["status"] == "failed"
     assert response["error"]["code"] == "invalid_request"
     assert response["error"]["effects"] == "none"
@@ -211,7 +212,7 @@ def test_request_uses_sdk_validation_before_transport(
         )
         == 1
     )
-    response = json.loads(capsys.readouterr().out)
+    response = json.loads(capsys.readouterr().err)
     assert response["error"]["effects"] == "none"
     mock_client.assert_not_awaited()
 
@@ -370,7 +371,81 @@ def test_unusable_input_preserves_existing_bridge_error_code(
         )
         == 1
     )
-    response = json.loads(capsys.readouterr().out)
+    response = json.loads(capsys.readouterr().err)
     assert response["error"]["code"] == "invalid_input"
     assert response["error"]["effects"] == "none"
     assert response["changed"] is False
+
+
+@pytest.mark.parametrize("operation", ["start", "invoke", "stop"])
+def test_command_stdout_is_the_sdk_value(
+    operation, host_request, mock_runtime, monkeypatch, capsys
+):
+    from unittest.mock import AsyncMock
+
+    request = host_request(operation)
+    if operation == "start":
+        value = mock_runtime.handle.to_mapping()
+        result = value
+    elif operation == "invoke":
+        value = mock_runtime.invoke.return_value.to_mapping()
+        result = {"runtime_id": "runtime-1", "fabric_result": value}
+    else:
+        value = None
+        result = {"runtime_id": "runtime-1"}
+    response = protocol.envelope(
+        operation, result, changed=None if operation == "invoke" else True
+    )
+    protocol.validate_response(response, operation)
+    monkeypatch.setattr(cli, "parse_command", lambda _: request)
+    mock_client = AsyncMock(return_value=response)
+    monkeypatch.setattr(cli.transport, "client", mock_client)
+    assert cli.main([operation]) == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert len(captured.out.splitlines()) == 1
+    assert json.loads(captured.out) == value
+    mock_client.assert_awaited_once()
+
+
+@pytest.mark.parametrize("output", [None, {"partial": "review"}])
+def test_failed_sdk_result_preserves_output_and_declared_artifacts(
+    output, host_request, mock_runtime, monkeypatch, capsys
+):
+    from unittest.mock import AsyncMock
+    from nemo_fabric import RunResult
+
+    value = RunResult.from_mapping(
+        {
+            **mock_runtime.invoke.return_value.to_mapping(),
+            "status": "failed",
+            "output": output,
+            "error": {"code": "agent_failed", "stage": "invoke", "message": "Failed"},
+            "artifacts": {
+                "artifacts": [{"name": "review", "kind": "review", "path": "review.md"}]
+            },
+        }
+    ).to_mapping()
+    response = protocol.envelope(
+        "invoke", {"runtime_id": "runtime-1", "fabric_result": value}, changed=None
+    )
+    protocol.validate_response(response, "invoke")
+    monkeypatch.setattr(cli, "parse_command", lambda _: host_request("invoke"))
+    monkeypatch.setattr(cli.transport, "client", AsyncMock(return_value=response))
+    assert cli.main(["invoke"]) == 1
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert json.loads(captured.out) == value
+
+
+def test_private_response_rejects_mismatched_sdk_runtime_identity(mock_runtime):
+    response = protocol.envelope(
+        "invoke",
+        {
+            "runtime_id": "another-runtime",
+            "fabric_result": mock_runtime.invoke.return_value.to_mapping(),
+        },
+        changed=None,
+    )
+    with pytest.raises(protocol.ProtocolError):
+        protocol.validate_response(response, "invoke")

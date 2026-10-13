@@ -9,13 +9,13 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Commands
 
-| Command | Operation |
-| --- | --- |
-| `serve` | Start the foreground runtime server; no agent selection |
-| `start --agent NAME --config FILE` | `Fabric.start_runtime(config, base_dir=...)` |
-| `invoke --agent NAME --runtime-id ID --input FILE` | `Runtime.invoke(input=...)` |
-| `invoke --agent NAME --runtime-id ID --request FILE` | `Runtime.invoke(request=RunRequest(...))` |
-| `stop --agent NAME --runtime-id ID` | `Runtime.stop()` |
+| Command | SDK operation | JSON stdout |
+| --- | --- | --- |
+| `serve` | Start the foreground runtime server; no agent selection | None |
+| `start --agent NAME --config FILE` | `Fabric.start_runtime(config, base_dir=...)` | `RuntimeHandle.to_mapping()` |
+| `invoke --agent NAME --runtime-id ID --input FILE` | `Runtime.invoke(input=...)` | `RunResult.to_mapping()` |
+| `invoke --agent NAME --runtime-id ID --request FILE` | `Runtime.invoke(request=RunRequest(...))` | `RunResult.to_mapping()` |
+| `stop --agent NAME --runtime-id ID` | `Runtime.stop()` | `null` |
 
 Run the server under the sandbox supervisor:
 
@@ -31,7 +31,7 @@ fabric-agent-ctl invoke --agent researcher --runtime-id RUNTIME_ID --input /sand
 fabric-agent-ctl stop --agent researcher --runtime-id RUNTIME_ID
 ```
 
-Replace `RUNTIME_ID` with the identity returned by start. Start and stop return `result: {"runtime_id": "..."}`; invocation returns that identity and the normalized SDK result as `fabric_result`. Multiple invocations retain the same runtime and conversation. Targeted commands require both the returned runtime ID and exact agent name. Repeated successful stop is a no-op. Serve starts a process and is never forwarded over the socket.
+Replace `RUNTIME_ID` with `runtime_id` from the returned SDK handle. Command stdout uses the public SDK schemas directly: the start handle, invocation result, and JSON `null` for stop. The private socket envelope stays internal to the bridge. Multiple invocations retain the same runtime and conversation. Targeted commands require both the returned runtime ID and exact agent name. Repeated successful stop is a no-op. Serve starts a process and is never forwarded over the socket.
 
 There are no health commands, generation tokens, fingerprints, state snapshots, or additional SDK lifecycle APIs. Caller-side preflight uses existing `Fabric.plan()` and `Fabric.doctor()`. `Fabric.start_runtime()` validates configuration against installed descriptors before native runtime startup. A configuration rejection before startup does not consume the sandbox lifecycle.
 
@@ -55,7 +55,7 @@ Ordinary SDK stop does not establish that all harness descendants exited. A succ
 
 ## Transport And Failure Behavior
 
-Completed commands except serve write exactly one newline-terminated JSON response to stdout. Logs use stderr. Success exits 0; failure or unsupported behavior exits 1. Requests are bounded to 512 KiB and responses to 4 MiB, including framing. Calls have a 320-second transport deadline; incomplete input has a ten-second deadline. The caller also bounds OpenShell execution and startup polling.
+Successful commands except serve write exactly one newline-terminated SDK JSON value to stdout and exit 0. An invocation returning a failed SDK `RunResult` writes that complete result to stdout and exits 1. Preserve this result even when the exit code is nonzero. SDK exceptions, validation errors, and transport failures leave stdout empty, write a bounded JSON diagnostic to stderr, and exit 1. Server logs also use stderr. Requests are bounded to 512 KiB and responses to 4 MiB, including framing. Calls have a 320-second transport deadline; incomplete input has a ten-second deadline. The caller also bounds OpenShell execution and startup polling.
 
 A timeout or missing, malformed, truncated, or oversized response leaves dispatched effects unknown. Errors use fixed diagnostics with `effects: none`, `applied`, or `unknown`. Routine errors exclude prompts, configuration values, and raw exceptions. Invocation results preserve normalized SDK results, including failed results with null output, and may contain user data. Calls are never replayed after an uncertain outcome.
 

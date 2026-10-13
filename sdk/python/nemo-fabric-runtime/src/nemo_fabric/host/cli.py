@@ -31,6 +31,7 @@ from nemo_fabric.host.protocol import (
     decode_value,
     encode_request,
     encode_response,
+    encode_value,
     envelope,
 )
 from nemo_fabric.host.state import RuntimeHost
@@ -166,6 +167,14 @@ def main(arguments: list[str] | None = None) -> int:
         if not isinstance(error, ProtocolError):
             error = ProtocolError()
         response = envelope(operation, error=error)
-    encoded = encode_response(response)
-    sys.stdout.write(encoded.decode("utf-8"))
-    return 0 if decode_object(encoded)["status"] == "succeeded" else 1
+    if response["status"] != "succeeded":
+        sys.stderr.write(encode_response(response).decode("utf-8"))
+        return 1
+    if operation == "start":
+        value = response["result"]
+    elif operation == "invoke":
+        value = response["result"]["fabric_result"]
+    else:
+        value = None
+    sys.stdout.write(encode_value(value).decode("utf-8"))
+    return 1 if operation == "invoke" and value["status"] != "succeeded" else 0
