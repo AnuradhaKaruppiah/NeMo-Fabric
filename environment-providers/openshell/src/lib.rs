@@ -267,7 +267,11 @@ async fn runtime_command<F: GatewayFactory>(
             arguments,
             ExecRequest {
                 workdir: None,
-                environment: HashMap::new(),
+                environment: environment
+                    .env
+                    .iter()
+                    .map(|(name, value)| (name.clone(), value.clone()))
+                    .collect(),
                 timeout: Duration::from_secs(timeout_seconds),
                 stdin,
             },
@@ -2405,7 +2409,15 @@ mod tests {
             runtime_id: "runtime-task".to_string(),
             request: json!({"request_id": "request-host", "input": [true, null], "context": {"turn": 2}}),
         };
-        let output = runtime_command(environment_handle_fixture(), command, 30, &factory)
+        let mut environment = environment_handle_fixture();
+        environment.env.insert(
+            "ADAPTER_PYTHON".to_string(),
+            "/opt/hermes-venv/bin/python".to_string(),
+        );
+        environment
+            .env
+            .insert("TMPDIR".to_string(), "/sandbox/tmp".to_string());
+        let output = runtime_command(environment, command, 30, &factory)
             .await
             .expect("failed SDK return");
         assert_eq!(output, json!({"status": "returned", "value": value}));
@@ -2417,6 +2429,14 @@ mod tests {
                 .any(|call| call.contains(
                     "fabric-agent-ctl invoke --agent echo --runtime-id runtime-task --request -"
                 ))
+        );
+        assert!(
+            calls
+                .lock()
+                .expect("calls")
+                .iter()
+                .any(|call| call.contains("ADAPTER_PYTHON")
+                    && call.contains("/opt/hermes-venv/bin/python"))
         );
     }
 
@@ -2647,11 +2667,17 @@ mod tests {
             command: Vec<String>,
             request: ExecRequest,
         ) -> Result<ExecResponse, ProviderError> {
+            let environment = if request.environment.is_empty() {
+                String::new()
+            } else {
+                format!(":{:?}", request.environment)
+            };
             self.calls.lock().expect("calls").push(format!(
-                "exec:{}:{name}:{}:{}",
+                "exec:{}:{name}:{}:{}{}",
                 workspace.unwrap_or("default"),
                 command.join(" "),
-                request.timeout.as_secs()
+                request.timeout.as_secs(),
+                environment
             ));
             if let Some((exit_code, stdout, stderr)) = &self.execution {
                 return Ok(ExecResponse {
