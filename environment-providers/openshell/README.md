@@ -55,12 +55,13 @@ special files are rejected. Collection never truncates files or copies the
 workspace. Relay file references retain their correlation metadata.
 
 Invocation is buffered, with a task deadline of at most 300 seconds. Streaming is
-rejected before startup. A used sandbox supports one bridge runtime lifecycle,
-including after stop; create a fresh sandbox for another run. Missing or invalid
-command responses retain an unknown binding against the immutable sandbox ID,
-including after reattachment, and do not trigger replay. Explicit stop and
-Fabric-owned deletion remain available for cleanup. Direct local SDK runtimes
-retain their existing concurrency, streaming, and service support.
+rejected before startup. One OpenShell sandbox can own multiple bridge runtime
+IDs, including starting another runtime after one stops. Missing or invalid
+start responses retain an unknown binding against the immutable sandbox ID,
+including after reattachment, and prevent another start because the runtime
+identity cannot be recovered safely. Commands are not replayed. Explicit stop
+and Fabric-owned deletion remain available for cleanup. Bridge invocations are
+buffered; direct local SDK runtimes retain streaming and service support.
 
 The two ownership paths have separate responsibilities:
 

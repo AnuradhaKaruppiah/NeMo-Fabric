@@ -1,14 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""One sandbox lifecycle and direct delegation to the existing SDK."""
+"""Multiple sandbox runtimes and direct delegation to the existing SDK."""
 
 import asyncio
 import gzip
 from pathlib import Path
 
 import pytest
-from nemo_fabric import FabricConfigError, RuntimeStatus
+from nemo_fabric import FabricConfigError, RuntimeHandle, RuntimeStatus
 from nemo_fabric.host.protocol import ProtocolError
 from nemo_fabric.host.protocol import rust_run_result_mapping
 
@@ -52,40 +52,49 @@ async def test_extra_start_fields_have_no_effects(
 
 
 @pytest.mark.parametrize("agent", ["researcher", "writer"])
-async def test_second_start_preserves_ownership(
-    host, host_request, mock_fabric, config, agent
+async def test_second_start_creates_an_independent_runtime(
+    host, host_request, mock_fabric, mock_runtime, second_mock_runtime, config, agent
 ):
+    second_mock_runtime.handle = RuntimeHandle.from_mapping(
+        {**second_mock_runtime.handle.to_mapping(), "agent_name": agent}
+    )
+    mock_fabric.start_runtime.side_effect = [mock_runtime, second_mock_runtime]
     await host.handle(host_request("start"))
     request_config = {**config, "metadata": {"name": agent}}
     response = await host.handle(
         host_request("start", agent=agent, config=request_config)
     )
-    assert response["error"]["code"] == "runtime_exists"
-    assert response["error"]["effects"] == "none"
-    mock_fabric.start_runtime.assert_awaited_once()
-    assert list(host.runtimes) == ["runtime-1"]
+    assert response["status"] == "succeeded"
+    assert response["result"]["runtime_id"] == "runtime-2"
+    assert mock_fabric.start_runtime.await_count == 2
+    assert list(host.runtimes) == ["runtime-1", "runtime-2"]
 
 
 async def test_competing_starts_call_sdk_once(
-    host, host_request, mock_fabric, mock_runtime
+    host, host_request, mock_fabric, mock_runtime, second_mock_runtime
 ):
     entered, release = asyncio.Event(), asyncio.Event()
+    calls = 0
 
     async def start(*args, **kwargs):
-        entered.set()
-        await release.wait()
-        return mock_runtime
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            entered.set()
+            await release.wait()
+            return mock_runtime
+        return second_mock_runtime
 
     mock_fabric.start_runtime.side_effect = start
     first = asyncio.create_task(host.handle(host_request("start")))
     await entered.wait()
-    try:
-        second = await asyncio.wait_for(host.handle(host_request("start")), 0.5)
-        assert second["error"]["code"] == "runtime_exists"
-    finally:
-        release.set()
-        assert (await first)["status"] == "succeeded"
-    mock_fabric.start_runtime.assert_awaited_once()
+    second = asyncio.create_task(host.handle(host_request("start")))
+    await asyncio.sleep(0)
+    assert not second.done()
+    release.set()
+    first_result, second_result = await asyncio.gather(first, second)
+    assert first_result["status"] == second_result["status"] == "succeeded"
+    assert mock_fabric.start_runtime.await_count == 2
 
 
 async def test_invalid_configuration_does_not_consume_lifecycle(
@@ -129,7 +138,7 @@ async def test_uncertain_start_consumes_lifecycle_without_replay(
     assert "PRIVATE" not in str(response)
     assert (await host.handle(host_request("start")))["error"][
         "code"
-    ] == "runtime_exists"
+    ] == "start_state_unknown"
     mock_fabric.start_runtime.assert_awaited_once()
 
 
@@ -151,9 +160,10 @@ async def test_stop_keeps_data_and_is_idempotent(host, host_request, mock_runtim
     ] == "runtime_unavailable"
 
 
-async def test_failed_stop_keeps_ownership_and_rejects_replacement(
-    host, host_request, mock_runtime, mock_fabric
+async def test_failed_stop_keeps_ownership_and_allows_another_runtime(
+    host, host_request, mock_runtime, second_mock_runtime, mock_fabric
 ):
+    mock_fabric.start_runtime.side_effect = [mock_runtime, second_mock_runtime]
     await host.handle(host_request("start"))
     mock_runtime.stop.side_effect = RuntimeError("PRIVATE")
     response = await host.handle(host_request("stop"))
@@ -163,10 +173,8 @@ async def test_failed_stop_keeps_ownership_and_rejects_replacement(
     assert "PRIVATE" not in str(response)
     assert host.runtimes["runtime-1"].runtime is mock_runtime
     assert host.runtimes["runtime-1"].state == "unknown"
-    assert (await host.handle(host_request("start")))["error"][
-        "code"
-    ] == "runtime_exists"
-    mock_fabric.start_runtime.assert_awaited_once()
+    assert (await host.handle(host_request("start")))["status"] == "succeeded"
+    assert mock_fabric.start_runtime.await_count == 2
 
 
 async def test_invoke_preserves_normalized_result_without_replay(
@@ -345,7 +353,7 @@ async def test_non_active_returned_runtime_is_owned_for_stop(
     assert host.runtimes["runtime-1"].runtime is mock_runtime
     assert (await host.handle(host_request("start")))["error"][
         "code"
-    ] == "runtime_exists"
+    ] == "start_state_unknown"
     assert (await host.handle(host_request("stop")))["status"] == "succeeded"
     mock_runtime.stop.assert_awaited_once_with()
 

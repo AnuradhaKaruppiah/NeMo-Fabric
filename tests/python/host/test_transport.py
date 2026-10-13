@@ -71,8 +71,9 @@ async def test_malformed_start_response_preserves_unknown_dispatched_effects(
 
 
 async def test_serve_has_exclusive_private_socket_and_preserves_data(
-    host, host_request, mock_runtime, socket_path
+    host, host_request, mock_runtime, second_mock_runtime, mock_fabric, socket_path
 ):
+    mock_fabric.start_runtime.side_effect = [mock_runtime, second_mock_runtime]
     stop, ready = asyncio.Event(), asyncio.Event()
     retained = socket_path.parent / "retained"
     retained.write_text("keep")
@@ -100,14 +101,16 @@ async def test_serve_has_exclusive_private_socket_and_preserves_data(
         response = await transport.client(
             host_request("start"), socket_path=socket_path
         )
-        assert response["error"]["code"] == "runtime_exists"
-        assert len(host.runtimes) == 1
+        assert response["status"] == "succeeded"
+        assert response["result"]["runtime_id"] == "runtime-2"
+        assert len(host.runtimes) == 2
     finally:
         stop.set()
         await asyncio.wait_for(task, 2)
     assert not socket_path.exists()
     assert retained.read_text() == "keep"
     mock_runtime.stop.assert_awaited_once_with()
+    second_mock_runtime.stop.assert_awaited_once_with()
     assert socket_path.with_suffix(".unclean").exists()
 
 
@@ -152,8 +155,9 @@ async def test_missing_malformed_and_truncated_responses_are_unknown_and_never_r
 
 
 async def test_client_timeout_does_not_cancel_or_replay_host_invocation(
-    host, host_request, mock_runtime, socket_path
+    host, host_request, mock_runtime, second_mock_runtime, mock_fabric, socket_path
 ):
+    mock_fabric.start_runtime.side_effect = [mock_runtime, second_mock_runtime]
     await host.handle(host_request("start"))
     entered, release, completed = asyncio.Event(), asyncio.Event(), asyncio.Event()
     native_result = mock_runtime.invoke.return_value
@@ -180,11 +184,14 @@ async def test_client_timeout_does_not_cancel_or_replay_host_invocation(
         )
         assert entered.is_set()
         assert response["error"]["effects"] == "unknown"
-        refused = await transport.client(host_request("start"), socket_path=socket_path)
-        assert refused["error"]["code"] == "runtime_exists"
-        assert len(host.runtimes) == 1
+        starting = asyncio.create_task(
+            transport.client(host_request("start"), socket_path=socket_path)
+        )
         release.set()
         await asyncio.wait_for(completed.wait(), 1)
+        second = await asyncio.wait_for(starting, 1)
+        assert second["status"] == "succeeded"
+        assert len(host.runtimes) == 2
         mock_runtime.invoke.assert_awaited_once()
     finally:
         release.set()

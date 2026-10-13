@@ -25,7 +25,10 @@ struct Binding {
     state: State,
     runtime_id: Option<String>,
 }
-static BINDINGS: LazyLock<Mutex<BTreeMap<String, Binding>>> =
+const START_KEY: &str = "\0starting";
+const UNKNOWN_START_KEY: &str = "\0unknown-start";
+const RELEASE_KEY: &str = "\0releasing";
+static BINDINGS: LazyLock<Mutex<BTreeMap<String, BTreeMap<String, Binding>>>> =
     LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
 fn resource_key(environment: &EnvironmentHandle) -> Result<String> {
@@ -121,11 +124,31 @@ fn task_config(plan: &RunPlan, environment: &EnvironmentHandle) -> Result<crate:
     }
     Ok(config)
 }
-fn set_state(key: &str, state: State, runtime_id: Option<String>) {
+fn set_state(key: &str, runtime_id: &str, state: State) {
     BINDINGS
         .lock()
         .unwrap_or_else(|error| error.into_inner())
-        .insert(key.to_string(), Binding { state, runtime_id });
+        .entry(key.to_string())
+        .or_default()
+        .insert(
+            runtime_id.to_string(),
+            Binding {
+                state,
+                runtime_id: Some(runtime_id.to_string()),
+            },
+        );
+}
+fn set_start_state(key: &str, state: State) {
+    let mut bindings = BINDINGS.lock().unwrap_or_else(|error| error.into_inner());
+    let environment_bindings = bindings.entry(key.to_string()).or_default();
+    environment_bindings.remove(START_KEY);
+    environment_bindings.insert(
+        UNKNOWN_START_KEY.to_string(),
+        Binding {
+            state,
+            runtime_id: None,
+        },
+    );
 }
 fn command_value(
     response: TaskCommandResponse,
@@ -149,7 +172,25 @@ fn command_value(
 fn claim(runtime: &RuntimeHandle, stopping: bool) -> Result<Option<String>> {
     let key = resource_key(&runtime.environment)?;
     let mut bindings = BINDINGS.lock().unwrap_or_else(|error| error.into_inner());
-    let binding = bindings.get_mut(&key).ok_or_else(|| {
+    let environment_bindings = bindings.get_mut(&key).ok_or_else(|| {
+        lifecycle_error(
+            AdapterLifecycleOperation::Invoke,
+            &runtime.runtime_id,
+            "runtime_unavailable",
+            "remote runtime binding is unavailable",
+            "",
+        )
+    })?;
+    if environment_bindings.contains_key(RELEASE_KEY) {
+        return Err(lifecycle_error(
+            AdapterLifecycleOperation::Invoke,
+            &runtime.runtime_id,
+            "runtime_unavailable",
+            "remote environment is being released",
+            "",
+        ));
+    }
+    let binding = environment_bindings.get_mut(&runtime.runtime_id).ok_or_else(|| {
         lifecycle_error(
             AdapterLifecycleOperation::Invoke,
             &runtime.runtime_id,
@@ -196,7 +237,12 @@ impl RuntimeAdapter for OpenShellRuntimeAdapter {
         let key = resource_key(&environment)?;
         {
             let mut bindings = BINDINGS.lock().unwrap_or_else(|error| error.into_inner());
-            if let Some(binding) = bindings.get(&key) {
+            let environment_bindings = bindings.entry(key.clone()).or_default();
+            if let Some(binding) = environment_bindings
+                .get(START_KEY)
+                .or_else(|| environment_bindings.get(UNKNOWN_START_KEY))
+                .or_else(|| environment_bindings.get(RELEASE_KEY))
+            {
                 return Err(FabricError::EnvironmentInUse {
                     environment_id: environment.environment_id.clone(),
                     runtime_id: binding
@@ -205,8 +251,8 @@ impl RuntimeAdapter for OpenShellRuntimeAdapter {
                         .unwrap_or_else(|| "unconfirmed".to_string()),
                 });
             }
-            bindings.insert(
-                key.clone(),
+            environment_bindings.insert(
+                START_KEY.to_string(),
                 Binding {
                     state: State::Starting,
                     runtime_id: None,
@@ -228,7 +274,9 @@ impl RuntimeAdapter for OpenShellRuntimeAdapter {
                 BINDINGS
                     .lock()
                     .unwrap_or_else(|error| error.into_inner())
-                    .remove(&key);
+                    .entry(key.clone())
+                    .or_default()
+                    .remove(START_KEY);
                 return Err(lifecycle_error(
                     AdapterLifecycleOperation::Start,
                     "unconfirmed",
@@ -238,7 +286,7 @@ impl RuntimeAdapter for OpenShellRuntimeAdapter {
                 ));
             }
         }
-        set_state(&key, State::Unknown, None);
+        set_start_state(&key, State::Unknown);
         let value = command_value(response?, AdapterLifecycleOperation::Start, "unconfirmed")?;
         let task: RuntimeHandle = serde_json::from_value(value).map_err(|_| {
             lifecycle_error(
@@ -250,6 +298,7 @@ impl RuntimeAdapter for OpenShellRuntimeAdapter {
             )
         })?;
         if task.runtime_id.trim().is_empty()
+            || task.runtime_id.starts_with('\0')
             || task.agent_name != plan.agent_name
             || task.harness != harness(plan)
             || task.adapter_kind != adapter_kind(plan)
@@ -273,7 +322,28 @@ impl RuntimeAdapter for OpenShellRuntimeAdapter {
             service_id: None,
             environment,
         };
-        set_state(&key, State::Active, Some(runtime.runtime_id.clone()));
+        {
+            let mut bindings = BINDINGS.lock().unwrap_or_else(|error| error.into_inner());
+            let environment_bindings = bindings.entry(key).or_default();
+            if environment_bindings.contains_key(&runtime.runtime_id) {
+                return Err(lifecycle_error(
+                    AdapterLifecycleOperation::Start,
+                    "unconfirmed",
+                    "invalid_response",
+                    "task runtime ID is already bound in this environment",
+                    "",
+                ));
+            }
+            environment_bindings.remove(UNKNOWN_START_KEY);
+            environment_bindings.remove(START_KEY);
+            environment_bindings.insert(
+                runtime.runtime_id.clone(),
+                Binding {
+                    state: State::Active,
+                    runtime_id: Some(runtime.runtime_id.clone()),
+                },
+            );
+        }
         Ok(runtime)
     }
     fn invoke(
@@ -342,6 +412,7 @@ impl RuntimeAdapter for OpenShellRuntimeAdapter {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .get_mut(&key)
+            .and_then(|bindings| bindings.get_mut(&runtime.runtime_id))
         {
             if binding.state == State::Invoking {
                 binding.state = if confirmed {
@@ -390,12 +461,12 @@ impl RuntimeAdapter for OpenShellRuntimeAdapter {
             })();
             set_state(
                 &key,
+                &runtime.runtime_id,
                 if result.is_ok() {
                     State::Stopped
                 } else {
                     State::Unknown
                 },
-                Some(runtime.runtime_id.clone()),
             );
             result?;
         }
@@ -415,16 +486,18 @@ pub(super) fn release(environment: &EnvironmentHandle) -> Result<()> {
     let previous = {
         let mut bindings = BINDINGS.lock().unwrap_or_else(|error| error.into_inner());
         let previous = bindings.get(&key).cloned();
-        if let Some(binding) = &previous {
-            if binding.state == State::Releasing {
+        if let Some(environment_bindings) = &previous {
+            if environment_bindings.contains_key(RELEASE_KEY) {
                 return Err(FabricError::EnvironmentReleaseInProgress {
                     environment_id: environment.environment_id.clone(),
                 });
             }
-            if matches!(
-                binding.state,
-                State::Starting | State::Active | State::Invoking | State::Stopping
-            ) {
+            if let Some(binding) = environment_bindings.values().find(|binding| {
+                matches!(
+                    binding.state,
+                    State::Starting | State::Active | State::Invoking | State::Stopping
+                )
+            }) {
                 return Err(FabricError::EnvironmentInUse {
                     environment_id: environment.environment_id.clone(),
                     runtime_id: binding
@@ -434,13 +507,11 @@ pub(super) fn release(environment: &EnvironmentHandle) -> Result<()> {
                 });
             }
         }
-        bindings.insert(
-            key.clone(),
+        bindings.entry(key.clone()).or_default().insert(
+            RELEASE_KEY.to_string(),
             Binding {
                 state: State::Releasing,
-                runtime_id: previous
-                    .as_ref()
-                    .and_then(|binding| binding.runtime_id.clone()),
+                runtime_id: None,
             },
         );
         previous
@@ -454,10 +525,13 @@ pub(super) fn release(environment: &EnvironmentHandle) -> Result<()> {
     } else if result.is_err() {
         bindings.insert(
             key,
-            Binding {
-                state: State::Unknown,
-                runtime_id: None,
-            },
+            BTreeMap::from([(
+                UNKNOWN_START_KEY.to_string(),
+                Binding {
+                    state: State::Unknown,
+                    runtime_id: None,
+                },
+            )]),
         );
     } else {
         bindings.remove(&key);
@@ -731,7 +805,7 @@ mod tests {
         let mut rebound = original.clone();
         rebound.environment_id = new_id("reattachment");
         assert_eq!(resource_key(&rebound).expect("rebound resource"), key);
-        set_state(&key, State::Unknown, Some("runtime-task".to_string()));
+        set_state(&key, "runtime-task", State::Unknown);
         let runtime = RuntimeHandle {
             runtime_id: "runtime-task".to_string(),
             runtime_binding: "unused".to_string(),
@@ -748,6 +822,37 @@ mod tests {
             Some(key.clone())
         );
         assert!(claim(&runtime, false).is_err());
+        BINDINGS.lock().expect("bindings").remove(&key);
+    }
+
+    #[test]
+    fn runtime_bindings_are_independent_within_one_sandbox() {
+        let environment = environment();
+        let key = resource_key(&environment).expect("resource key");
+        set_state(&key, "runtime-one", State::Active);
+        set_state(&key, "runtime-two", State::Active);
+
+        let runtime = |runtime_id: &str| RuntimeHandle {
+            runtime_id: runtime_id.to_string(),
+            runtime_binding: "unused".to_string(),
+            agent_name: "echo".to_string(),
+            harness: "echo".to_string(),
+            adapter_kind: AdapterKind::Python,
+            adapter_id: None,
+            service_id: None,
+            environment: environment.clone(),
+        };
+
+        assert_eq!(
+            claim(&runtime("runtime-one"), false).expect("first runtime claim"),
+            Some(key.clone())
+        );
+        assert_eq!(
+            claim(&runtime("runtime-two"), false).expect("second runtime claim"),
+            Some(key.clone())
+        );
+        set_state(&key, "runtime-one", State::Active);
+        set_state(&key, "runtime-two", State::Active);
         BINDINGS.lock().expect("bindings").remove(&key);
     }
 

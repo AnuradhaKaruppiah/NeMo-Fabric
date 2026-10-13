@@ -69,6 +69,22 @@ def mock_runtime_fixture():
     return runtime
 
 
+@pytest.fixture(name="second_mock_runtime")
+def second_mock_runtime_fixture(mock_runtime):
+    runtime = MagicMock(spec=Runtime)
+    runtime.runtime_id = "runtime-2"
+    runtime.status = RuntimeStatus.ACTIVE
+    handle = mock_runtime.handle.to_mapping()
+    handle["runtime_id"] = runtime.runtime_id
+    runtime.handle = RuntimeHandle.from_mapping(handle)
+    runtime.stop = AsyncMock()
+    runtime.invoke = AsyncMock(return_value=MagicMock(spec=RunResult))
+    runtime.invoke.return_value.to_mapping.return_value = (
+        mock_runtime.invoke.return_value.to_mapping.return_value
+    )
+    return runtime
+
+
 @pytest.fixture(name="sdk_request")
 def sdk_request_fixture():
     return RunRequest(

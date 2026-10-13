@@ -98,7 +98,7 @@ async def test_real_sdk_busy_shutdown_requires_sandbox_cleanup(
         await owned.stop()
 
 
-async def test_real_sdk_enforces_one_lifecycle_per_sandbox(
+async def test_real_sdk_supports_multiple_lifecycles_per_sandbox(
     hermes_shim_agent_dir,
 ):
     config = hermes_shim_config()
@@ -114,12 +114,17 @@ async def test_real_sdk_enforces_one_lifecycle_per_sandbox(
     try:
         first = await host.handle(command("start"))
         assert first["status"] == "succeeded", first
-        rejected = await host.handle(command("start"))
-        assert rejected["error"]["code"] == "runtime_exists"
-        assert rejected["error"]["effects"] == "none"
         first_id = first["result"]["runtime_id"]
-        for message in ("first review", "follow-up review"):
-            runtime_id = first_id
+        second = await host.handle(command("start"))
+        assert second["status"] == "succeeded", second
+        second_id = second["result"]["runtime_id"]
+        assert second_id != first_id
+        assert len(host.runtimes) == 2
+        for runtime_id, message in (
+            (first_id, "first review"),
+            (second_id, "isolated review"),
+            (first_id, "follow-up review"),
+        ):
             invoked = await host.handle(
                 command("invoke", runtime_id=runtime_id, input={"message": message})
             )
@@ -130,9 +135,13 @@ async def test_real_sdk_enforces_one_lifecycle_per_sandbox(
             }
         stopped = await host.handle(command("stop", runtime_id=first_id))
         assert stopped["status"] == "succeeded", stopped
-        second = await host.handle(command("start"))
-        assert second["error"]["code"] == "runtime_exists"
-        assert len(host.runtimes) == 1
+        third = await host.handle(command("start"))
+        assert third["status"] == "succeeded", third
+        assert third["result"]["runtime_id"] not in {first_id, second_id}
+        assert len(host.runtimes) == 3
+        for runtime_id in (second_id, third["result"]["runtime_id"]):
+            stopped = await host.handle(command("stop", runtime_id=runtime_id))
+            assert stopped["status"] == "succeeded", stopped
     finally:
         await host.shutdown()
 

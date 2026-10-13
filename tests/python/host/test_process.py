@@ -134,7 +134,12 @@ async def test_command_process_lifecycle_and_signal_cleanup(
             replacement_start = await call(
                 "start", "--agent", name, "--config", str(config_path)
             )
-            assert replacement_start["error"]["code"] == "runtime_exists"
+            assert replacement_start["agent_name"] == name
+            replacement_id = replacement_start["runtime_id"]
+            assert replacement_id != runtime_id
+            assert await call(
+                "stop", "--agent", name, "--runtime-id", replacement_id
+            ) is None
             host.terminate()
             stdout, stderr = await asyncio.wait_for(host.communicate(), 6)
             assert host.returncode == 0, stderr
@@ -248,13 +253,15 @@ async def test_busy_shutdown_and_timeout_keep_sandbox_owned(
                     "blocking",
                     "--config",
                     str(config_path),
-                    expected_exit=1,
                 )
-                assert replacement_runtime["error"]["code"] == "runtime_exists"
-                assert (
-                    replacement_runtime["changed"] is False
-                    and replacement_runtime["error"]["effects"] == "none"
-                )
+                assert replacement_runtime["agent_name"] == "blocking"
+                assert await call(
+                    "stop",
+                    "--agent",
+                    "blocking",
+                    "--runtime-id",
+                    replacement_runtime["runtime_id"],
+                ) is None
             begin = asyncio.get_running_loop().time()
             host.terminate()
             stdout, stderr = await asyncio.wait_for(host.communicate(), 6)

@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # NVIDIA NeMo Fabric Host And Command Bridge
 
-`fabric-agent-ctl` is installed with `nemo-fabric-runtime`. One foreground `serve` process owns one runtime lifecycle inside one sandbox. Short-lived commands connect through a private Unix socket and call the existing public SDK. The caller owns image selection, credentials, mounts, network policy, retained storage, and sandbox deletion.
+`fabric-agent-ctl` is installed with `nemo-fabric-runtime`. One foreground `serve` process can own multiple SDK runtime lifecycles inside one sandbox. Short-lived commands connect through a private Unix socket and call the existing public SDK. The caller owns image selection, credentials, mounts, network policy, retained storage, and sandbox deletion.
 
 ## Commands
 
@@ -35,9 +35,11 @@ Replace `RUNTIME_ID` with `runtime_id` from the returned SDK handle. Command std
 
 There are no health commands, generation tokens, fingerprints, state snapshots, or additional SDK lifecycle APIs. Caller-side preflight uses existing `Fabric.plan()` and `Fabric.doctor()`. `Fabric.start_runtime()` validates configuration against installed descriptors before native runtime startup. A configuration rejection before startup does not consume the sandbox lifecycle.
 
-## One Lifecycle Per Sandbox
+## Multiple Runtimes Per Sandbox
 
-After successful or uncertain runtime startup, every subsequent start returns `runtime_exists` without calling the SDK, including after stop or invocation timeout. Failed stops retain the owned handle. Replace the sandbox for another runtime lifecycle. Reuse and advanced descendant cleanup are deferred.
+Each successful start creates an independent SDK runtime with its own returned runtime ID. Start, invoke, and stop commands route by both runtime ID and exact agent name. Multiple runtimes can remain active in the same sandbox, and a new runtime can be started after another has stopped. The host serializes SDK operations so concurrent calls do not race the runtime registry or workspace setup.
+
+A configuration rejection before SDK startup has no effects. If start is dispatched but the SDK result is lost or invalid, the host refuses further starts because it cannot identify or own a possible runtime. Failed stops retain their runtime handle for retry. The sandbox ownership marker remains after any start and is cleared only by the enclosing sandbox supervisor after all processes exit.
 
 ```mermaid
 flowchart TD
@@ -45,11 +47,11 @@ flowchart TD
     Bridge["fabric-agent-ctl start / invoke / stop"]
     Socket["Private Unix socket"]
     Host["fabric-agent-ctl serve"]
-    Runtime["One SDK Runtime lifecycle"]
+    Runtime["SDK Runtime IDs"]
     Caller --> Bridge --> Socket --> Host --> Runtime
 ```
 
-The outer server is separate from the SDK's adapter process and the selected harness. Direct SDK consumers retain the existing ability to create multiple runtimes and use streaming or shared services. This server serializes runtime operations and waits for an active invocation before ordinary stop.
+The outer server is separate from the SDK adapter process and selected harness. It uses the same public `Fabric.start_runtime`, `Runtime.invoke`, and `Runtime.stop` APIs, and preserves the SDK's multiple-runtime behavior. This command bridge currently buffers invocations; streaming and shared-service operations remain available to direct SDK consumers.
 
 Ordinary SDK stop does not establish that all harness descendants exited. A successful stop response reports completion of the SDK operation. The caller must delete the sandbox so the enclosing supervisor handles descendants. The server does not interrupt adapters through a new forced-stop SDK API.
 
@@ -75,4 +77,4 @@ The bridge requires Unix sockets and `fcntl`; Windows imports remain safe and co
 
 Follow the [OpenShell Code Review instructions](../../../../../../examples/code_review_agent/README.md#openshell-code-review) to build the image and create a sandbox. The image contains the current SDK, host, adapter, and harness, and advertises `fabric-agent-ctl`, interface version 3, and `start/invoke/stop/serve`. Rebuild older images and create fresh sandboxes after this scope change.
 
-The example starts the server, waits for its socket, starts one runtime, invokes twice, and stops through separate exec calls. The older NemoClaw client using `validate/prepare/configure` requires migration. Version 1 and 2 requests fail explicitly; CLI and server must use the same interface version. Direct SDK lifecycle and streaming APIs retain their existing behavior.
+The example starts the server, waits for its socket, starts one runtime, invokes twice, and stops through separate exec calls. Add another `start` to create an independent runtime in the same sandbox. The older NemoClaw client using `validate/prepare/configure` requires migration. Version 1 and 2 requests fail explicitly; CLI and server must use the same interface version.

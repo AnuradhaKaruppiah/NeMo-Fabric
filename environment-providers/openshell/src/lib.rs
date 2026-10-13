@@ -346,6 +346,7 @@ fn valid_diagnostic_code(code: &str) -> bool {
             | "host_stopping"
             | "runtime_unavailable"
             | "runtime_exists"
+            | "start_state_unknown"
             | "host_unavailable"
             | "invalid_response"
             | "request_too_large"
@@ -2447,6 +2448,39 @@ mod tests {
         assert_eq!(
             output,
             json!({"status": "rejected", "error": {"code": "start_failed", "stage": "start", "effects": "unknown"}})
+        );
+        assert!(!output.to_string().contains("PRIVATE"));
+    }
+
+    #[tokio::test]
+    async fn unknown_start_diagnostic_is_preserved_by_the_provider() {
+        let diagnostic = json!({"operation": "start", "status": "failed", "error": {"code": "start_state_unknown", "stage": "start", "effects": "unknown", "message": "PRIVATE"}});
+        let factory = MockFactory {
+            calls: Arc::new(Mutex::new(Vec::new())),
+            ready_id: "sandbox-id-1",
+            deletion: None,
+            execution: Some((
+                1,
+                Vec::new(),
+                serde_json::to_vec(&diagnostic).expect("diagnostic JSON"),
+            )),
+        };
+
+        let output = runtime_command(
+            environment_handle_fixture(),
+            TaskCommand::Start {
+                agent: "echo".to_string(),
+                config: json!({}),
+            },
+            30,
+            &factory,
+        )
+        .await
+        .expect("observed task rejection");
+
+        assert_eq!(
+            output,
+            json!({"status": "rejected", "error": {"code": "start_state_unknown", "stage": "start", "effects": "unknown"}})
         );
         assert!(!output.to_string().contains("PRIVATE"));
     }

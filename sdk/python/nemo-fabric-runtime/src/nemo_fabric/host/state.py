@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""One runtime lifecycle per sandbox, using the existing public SDK."""
+"""Multiple runtime lifecycles per sandbox, using the existing public SDK."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ class OwnedRuntime:
 
 
 class RuntimeHost:
-    """Serialize commands for one owned runtime. A stopped sandbox cannot be reused."""
+    """Serialize commands and route each command to its owned SDK runtime."""
 
     def __init__(
         self, *, directory: Path = Path("/sandbox"), fabric: Fabric | None = None
@@ -45,9 +45,12 @@ class RuntimeHost:
         self.fabric = fabric if fabric is not None else Fabric()
         self.runtimes: dict[str, OwnedRuntime] = {}
         self.shutting_down = False
-        # Sticky after a successful start or an uncertain SDK start. Ordinary SDK
-        # stop cannot establish descendant cleanup, so the sandbox stays owned.
+        # Sticky after any dispatched start so shutdown preserves the sandbox
+        # ownership marker until its supervisor has cleaned up descendants.
         self.lifecycle_used = False
+        # A start without a confirmed SDK result cannot be safely retried because
+        # the SDK may have created a runtime whose ID was not returned.
+        self.start_uncertain = False
         self._lock = asyncio.Lock()
 
     def _owned(self, request: dict[str, Any]) -> OwnedRuntime:
@@ -79,32 +82,41 @@ class RuntimeHost:
                 raise ProtocolError()
             if self.shutting_down:
                 raise ProtocolError("host_stopping")
-            if operation == "start" and self.lifecycle_used:
-                raise ProtocolError("runtime_exists", "start")
+            if operation == "start" and self.start_uncertain:
+                raise ProtocolError("start_state_unknown", "start")
             async with self._lock:
                 if self.shutting_down:
                     raise ProtocolError("host_stopping")
                 if operation == "start":
-                    if self.lifecycle_used:
-                        raise ProtocolError("runtime_exists", "start")
+                    if self.start_uncertain:
+                        raise ProtocolError("start_state_unknown", "start")
                     stage = "validation"
                     config = FabricConfig.model_validate(request["config"])
                     changed, effects, stage = None, "unknown", "start"
-                    # Set ownership before awaiting native work, including when
-                    # the requesting connection closes or start is cancelled.
+                    previously_used = self.lifecycle_used
                     self.lifecycle_used = True
                     try:
                         runtime = await self.fabric.start_runtime(
                             config, base_dir=self.directory
                         )
                     except FabricConfigError:
-                        self.lifecycle_used = False
+                        self.lifecycle_used = previously_used
                         changed, effects = False, "none"
                         raise
+                    except asyncio.CancelledError:
+                        self.start_uncertain = True
+                        raise
+                    except Exception:
+                        self.start_uncertain = True
+                        raise
+                    if runtime.runtime_id in self.runtimes:
+                        self.start_uncertain = True
+                        raise ProtocolError("start_failed", "start")
                     self.runtimes[runtime.runtime_id] = OwnedRuntime(
                         runtime, request["agent"], "unknown"
                     )
                     if runtime.status != RuntimeStatus.ACTIVE:
+                        self.start_uncertain = True
                         raise ProtocolError("start_failed", "start")
                     self.runtimes[runtime.runtime_id].state = "running"
                     return envelope(
