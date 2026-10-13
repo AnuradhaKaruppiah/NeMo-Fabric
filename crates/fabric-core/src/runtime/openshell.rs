@@ -190,15 +190,17 @@ fn claim(runtime: &RuntimeHandle, stopping: bool) -> Result<Option<String>> {
             "",
         ));
     }
-    let binding = environment_bindings.get_mut(&runtime.runtime_id).ok_or_else(|| {
-        lifecycle_error(
-            AdapterLifecycleOperation::Invoke,
-            &runtime.runtime_id,
-            "runtime_unavailable",
-            "remote runtime binding is unavailable",
-            "",
-        )
-    })?;
+    let binding = environment_bindings
+        .get_mut(&runtime.runtime_id)
+        .ok_or_else(|| {
+            lifecycle_error(
+                AdapterLifecycleOperation::Invoke,
+                &runtime.runtime_id,
+                "runtime_unavailable",
+                "remote runtime binding is unavailable",
+                "",
+            )
+        })?;
     if binding.runtime_id.as_deref() != Some(&runtime.runtime_id) {
         return Err(lifecycle_error(
             AdapterLifecycleOperation::Invoke,
