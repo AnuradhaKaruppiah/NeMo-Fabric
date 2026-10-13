@@ -58,7 +58,7 @@ def client_fixture():
 def test_reviews_use_separate_calls_and_one_runtime_without_changing_input_config(
     mock_client,
 ):
-    from examples.code_review_agent.openshell import OpenShellCodeReview
+    from examples.code_review_agent.command_bridge.openshell import OpenShellCodeReview
 
     config = openclaw_config()
     before = config.to_mapping()
@@ -92,7 +92,7 @@ def test_reviews_use_separate_calls_and_one_runtime_without_changing_input_confi
 
 
 def test_demo_waits_for_socket_and_starts_without_a_health_command(mock_client):
-    from examples.code_review_agent.openshell import OpenShellCodeReview
+    from examples.code_review_agent.command_bridge.openshell import OpenShellCodeReview
 
     report = OpenShellCodeReview(mock_client, sandbox="review", workspace="test").run(
         openclaw_config(), ["Review", "Follow up"]
@@ -113,7 +113,7 @@ def test_demo_waits_for_socket_and_starts_without_a_health_command(mock_client):
     "failure", ["structured_error", "malformed_response", "timeout"]
 )
 def test_failed_invocation_is_not_retried_and_still_attempts_stop(mock_client, failure):
-    from examples.code_review_agent.openshell import OpenShellCodeReview
+    from examples.code_review_agent.command_bridge.openshell import OpenShellCodeReview
 
     execute = mock_client.exec.side_effect
 
@@ -153,7 +153,7 @@ def test_failed_invocation_is_not_retried_and_still_attempts_stop(mock_client, f
 
 
 def test_stop_failure_is_reported_without_losing_review_results(mock_client):
-    from examples.code_review_agent.openshell import OpenShellCodeReview
+    from examples.code_review_agent.command_bridge.openshell import OpenShellCodeReview
 
     execute = mock_client.exec.side_effect
 
@@ -184,7 +184,7 @@ def test_stop_failure_is_reported_without_losing_review_results(mock_client):
 
 
 def test_uncertain_start_does_not_guess_runtime_identity_or_retry(mock_client):
-    from examples.code_review_agent.openshell import OpenShellCodeReview
+    from examples.code_review_agent.command_bridge.openshell import OpenShellCodeReview
 
     execute = mock_client.exec.side_effect
 
@@ -207,7 +207,7 @@ def test_uncertain_start_does_not_guess_runtime_identity_or_retry(mock_client):
 def test_cli_uses_the_attached_openai_provider_credentials(
     mock_client, monkeypatch, capsys, tmp_path
 ):
-    from examples.code_review_agent import openshell
+    from examples.code_review_agent.command_bridge import openshell
 
     module = MagicMock()
     module.SandboxClient.return_value.__enter__.return_value = mock_client
@@ -255,7 +255,7 @@ def test_cli_uses_the_attached_openai_provider_credentials(
 
 
 def test_socket_wait_respects_remaining_deadline(mock_client, monkeypatch):
-    from examples.code_review_agent import openshell
+    from examples.code_review_agent.command_bridge import openshell
 
     clock = [0.0]
     monkeypatch.setattr(openshell.time, "monotonic", lambda: clock[0])
@@ -283,7 +283,7 @@ def test_socket_wait_respects_remaining_deadline(mock_client, monkeypatch):
 def test_cli_records_success_and_failure_without_raw_diagnostics(
     mock_client, monkeypatch, capsys, tmp_path, invocation_fails
 ):
-    from examples.code_review_agent import openshell
+    from examples.code_review_agent.command_bridge import openshell
 
     execute = mock_client.exec.side_effect
 
@@ -354,7 +354,7 @@ def test_cli_records_success_and_failure_without_raw_diagnostics(
 def test_cli_refuses_to_overwrite_recorded_results_before_sandbox_work(
     mock_client, monkeypatch, tmp_path, capsys
 ):
-    from examples.code_review_agent import openshell
+    from examples.code_review_agent.command_bridge import openshell
 
     module = MagicMock()
     monkeypatch.setitem(sys.modules, "openshell", module)
@@ -393,7 +393,7 @@ def test_cli_refuses_to_overwrite_recorded_results_before_sandbox_work(
 def test_command_record_includes_readiness_polls_without_repeating_agent_work(
     mock_client, monkeypatch
 ):
-    from examples.code_review_agent import openshell
+    from examples.code_review_agent.command_bridge import openshell
 
     execute = mock_client.exec.side_effect
     checks = 0
@@ -430,7 +430,7 @@ def test_command_record_includes_readiness_polls_without_repeating_agent_work(
 def test_failed_review_preserves_normalized_error_partial_output_and_artifacts(
     mock_client, tmp_path
 ):
-    from examples.code_review_agent import openshell
+    from examples.code_review_agent.command_bridge import openshell
 
     execute = mock_client.exec.side_effect
     failed = RunResult.from_mapping(
@@ -488,7 +488,7 @@ def test_failed_review_preserves_normalized_error_partial_output_and_artifacts(
 def test_cli_records_failed_review_with_null_or_non_text_output(
     mock_client, tmp_path, monkeypatch, capsys, output
 ):
-    from examples.code_review_agent import openshell
+    from examples.code_review_agent.command_bridge import openshell
 
     execute = mock_client.exec.side_effect
     failed = RunResult.from_mapping(
@@ -559,7 +559,7 @@ def test_cli_records_failed_review_with_null_or_non_text_output(
 def test_transcript_rendering_failure_preserves_json_report(
     mock_client, tmp_path, monkeypatch
 ):
-    from examples.code_review_agent import openshell
+    from examples.code_review_agent.command_bridge import openshell
 
     report = openshell.OpenShellCodeReview(
         mock_client, sandbox="review", workspace="test"
@@ -575,3 +575,59 @@ def test_transcript_rendering_failure_preserves_json_report(
     transcript = (tmp_path / "transcript.md").read_text()
     assert "See report.json" in transcript
     assert "PRIVATE" not in transcript
+
+
+def test_hermes_verification_uses_sdk_host_pid_when_task_has_child_processes():
+    from examples.code_review_agent.deployment.openshell.verify_run import verify_results
+
+    results = [
+        {
+            "runtime_id": "runtime-1",
+            "status": "succeeded",
+            "metadata": {"host_pid": 85},
+            "output": {
+                "response": "Reviewed calculator.py",
+                "messages": [
+                    {
+                        "tool_calls": [
+                            {
+                                "id": "read-1",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": {"path": "/sandbox/calculator.py"},
+                                },
+                            }
+                        ]
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": "read-1",
+                        "content": {"content": "def answer(): return 42"},
+                    },
+                ],
+                "hermes_home": "/sandbox/artifacts/hermes/runtime-1",
+            },
+        },
+        {
+            "runtime_id": "runtime-1",
+            "status": "succeeded",
+            "metadata": {"host_pid": 85},
+            "output": {
+                "response": "The review label was cedar-4827",
+                "messages": [],
+                "hermes_home": "/sandbox/artifacts/hermes/runtime-1",
+            },
+        },
+    ]
+    evidence = {
+        "processes": {
+            "85": {"role": "adapter"},
+            "242": {"role": "adapter"},
+        }
+    }
+
+    summary = verify_results(
+        results, evidence, harness="hermes", label="cedar-4827"
+    )
+
+    assert summary["runtime_id"] == "runtime-1"

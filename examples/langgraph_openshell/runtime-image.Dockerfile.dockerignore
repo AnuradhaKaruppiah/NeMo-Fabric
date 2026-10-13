@@ -1,0 +1,7 @@
+**
+!examples/
+!examples/__init__.py
+!examples/langgraph_openshell/
+!examples/langgraph_openshell/**
+**/__pycache__
+**/*.pyc

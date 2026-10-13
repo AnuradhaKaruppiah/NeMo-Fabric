@@ -30,6 +30,7 @@ from examples.code_review_agent import pi_config
 from examples.code_review_agent import qwen_config
 from examples.code_review_agent import with_github_mcp
 from examples.code_review_agent import with_native_otel
+from examples.code_review_agent import with_openshell
 from examples.code_review_agent import with_opensandbox
 from examples.code_review_agent import with_relay
 from examples.code_review_agent import with_relay_openinference
@@ -178,6 +179,54 @@ def test_capability_and_telemetry_variants_do_not_mutate_their_input():
     assert variants[2].environment.provider == "opensandbox"
     assert variants[3].telemetry is not None
     assert "relay" in variants[3].telemetry.providers
+
+
+def test_openshell_variant_uses_task_paths_and_preserves_the_agent_config():
+    base = openclaw_config()
+
+    config = with_openshell(
+        base,
+        gateway="http://127.0.0.1:18080",
+        gateway_workspace="default",
+        image="sha256:runtime-image",
+    )
+
+    assert config is not base
+    assert base.environment.provider == "local"
+    assert config.environment.provider == "openshell"
+    assert config.environment.control_location == "in_env_control"
+    assert config.environment.ownership == "caller_owned"
+    assert config.environment.workspace == "/sandbox/code-review/repos/my-service"
+    assert config.environment.connection == {
+        "gateway": "http://127.0.0.1:18080",
+        "workspace": "default",
+    }
+    assert config.environment.settings["task_discovery_paths"] == [
+        "/opt/fabric/adapter-descriptors"
+    ]
+    assert config.skills.paths == ["/sandbox/code-review/skills/code-review"]
+    assert config.environment.env["ADAPTER_PYTHON"] == "/opt/fabric/bin/python"
+
+    hermes = with_openshell(
+        hermes_config(),
+        gateway="http://127.0.0.1:18080",
+        image="sha256:runtime-image",
+    )
+    assert hermes.environment.env["ADAPTER_PYTHON"] == "/opt/hermes-venv/bin/python"
+
+
+def test_openshell_variant_rejects_non_packaged_adapters_and_relative_skills():
+    with pytest.raises(ValueError, match="support OpenClaw and Hermes"):
+        with_openshell(
+            pi_config(), gateway="http://127.0.0.1:18080", image="sha256:image"
+        )
+
+    config = openclaw_config()
+    config.skills.paths.append("relative/custom-skill")
+    with pytest.raises(ValueError, match="absolute POSIX task paths"):
+        with_openshell(
+            config, gateway="http://127.0.0.1:18080", image="sha256:image"
+        )
 
 
 def test_skill_path_variants_replace_defaults_without_mutating_their_input():
