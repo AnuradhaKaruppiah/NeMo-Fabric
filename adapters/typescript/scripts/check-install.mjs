@@ -330,6 +330,7 @@ try {
       "@earendil-works/pi-ai@1.0.3",
       "@earendil-works/pi-coding-agent@1.0.3",
       "@earendil-works/pi-mcp@1.0.3",
+      "@earendil-works/pi-codemode@1.0.3",
     ],
     consumerRoot,
   );
