@@ -74,7 +74,11 @@ def _source_tree(root: Path) -> None:
     )
 
 
-def test_repository_links_are_resolved_only_in_published_pages(tmp_path):
+@pytest.mark.parametrize(
+    "title",
+    ["", ' "Repository README"', " 'Repository README'", " (Repository README)"],
+)
+def test_repository_links_are_resolved_only_in_published_pages(tmp_path, title):
     source_root = tmp_path / "source"
     target_root = tmp_path / "target"
     _source_tree(source_root)
@@ -84,7 +88,7 @@ def test_repository_links_are_resolved_only_in_published_pages(tmp_path):
     page = source_root / "docs" / "guide.mdx"
     text = (
         "[Schema](../schemas/result.json#definitions)\n"
-        "[Repository](../README.md)\n"
+        f"[Repository](../README.md{title})\n"
         "[Page](./My%20Guide.md)\n"
         "[Missing](../missing.json)\n"
         "![Image](../README.md)\n"
@@ -95,7 +99,7 @@ def test_repository_links_are_resolved_only_in_published_pages(tmp_path):
     assert page.read_text() == text
     assert published.read_text() == (
         "[Schema](https://github.com/NVIDIA/NeMo-Fabric/blob/main/schemas/result.json#definitions)\n"
-        "[Repository](https://github.com/NVIDIA/NeMo-Fabric/blob/main/README.md)\n"
+        f"[Repository](https://github.com/NVIDIA/NeMo-Fabric/blob/main/README.md{title})\n"
         "[Page](./My%20Guide.md)\n"
         "[Missing](../missing.json)\n"
         "![Image](../README.md)\n"
@@ -103,6 +107,7 @@ def test_repository_links_are_resolved_only_in_published_pages(tmp_path):
     sync_fern_docs_branch.release_version(target_root, "0.6.0", source_root)
     released = target_root / "fern" / "pages-v0.6.0" / "guide.mdx"
     assert "blob/v0.6.0/schemas/result.json#definitions" in released.read_text()
+    assert f"blob/v0.6.0/README.md{title})" in released.read_text()
 
 
 def test_sync_dev_rewrites_navigation_and_preserves_versions(tmp_path: Path):

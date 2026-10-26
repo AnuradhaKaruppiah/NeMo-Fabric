@@ -176,7 +176,10 @@ def rewrite_repository_links(pages_dir: Path, source_root: Path) -> None:
     """Resolve links outside docs to repository files in the published copy."""
     source_root = source_root.resolve()
     source_docs = source_root / "docs"
-    links = re.compile(r"(?<!!)(\[[^\]\n]+\]\()(?P<target>\.\./[^)\s]+)(\))")
+    links = re.compile(
+        r"(?<!!)(\[[^\]\n]+\]\()(?P<target>\.\./[^)\s]+)"
+        r"""((?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?\))"""
+    )
     for page in pages_dir.rglob("*"):
         if not page.is_file() or page.suffix not in {".md", ".mdx"}:
             continue
