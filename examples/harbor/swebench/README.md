@@ -146,7 +146,7 @@ export MODEL_API_KEY="unused"
   --n-concurrent 1 --n-attempts 1 --max-retries 0
 ```
 
-The local-shell backend lets Deep Agents run commands in the task container. It requires the explicit tool allowlist shown above, which includes `execute` and the file tools. Its command environment is explicit; the testbed Python comes first on `PATH`. For this harness, `fabric_max_turns` maps to the graph recursion limit. Sampling covers the task-side adapter and its descendants, including local commands. Remote inference and subsequent verifier execution fall outside the invocation window. `TMPDIR` keeps temporary Compose files in the workspace so Docker launchers with a private `/tmp` can access the same files as Harbor.
+The local-shell backend lets Deep Agents run commands in the task container. It requires the explicit tool allowlist shown above, which includes `execute` and the file tools. Its command environment is explicit; the testbed Python comes first on `PATH`. For this harness, `fabric_max_turns` maps to the graph recursion limit. Harbor's verifier runs after the measured invocation. `TMPDIR` keeps temporary Compose files in the workspace so Docker launchers with a private `/tmp` can access the same files as Harbor.
 
 `fabric_system_stats` accepts the SDK configuration object. Omit it for all groups with before/after collection, use `--ak fabric_system_stats=null` to disable invocation stats, or add `"collect":["process","cgroup.cpu"]` to select groups. Invalid settings fail host preflight. Host and task runtime versions must both support the selected configuration.
 
@@ -160,7 +160,7 @@ REMOTE_SAMPLES="$(jq -r '.system_stats.sampled.samples.path' "$RESULT_PATH")"
 cat "$AGENT_DIR/${REMOTE_SAMPLES#/logs/agent/}"
 ```
 
-Paths inside `RunResult` refer to the task filesystem. Harbor downloads `/logs/agent` into the trial's `agent` directory, retaining the `fabric-artifacts` subtree. Keep the runner payload (`fabric-run-*.json`), result, samples, summary, and Harbor verifier result together. Agent completion and verifier reward answer different questions. See [Resource Usage and Stats](../../../docs/sdk/system-stats.mdx) for interpretation and collection-quality fields.
+Paths inside `RunResult` refer to the task filesystem. Harbor downloads `/logs/agent` into the trial's `agent` directory, retaining the `fabric-artifacts` subtree. Keep the runner payload (`fabric-run-*.json`), result, samples, summary, and Harbor verifier result together. Agent completion and verifier reward answer different questions.
 
 ### Captured Container Run
 
@@ -177,7 +177,7 @@ A Linux run with the locked Deep Agents 0.7.9 environment and the model above pr
 | Cgroup throttled-time delta | 360.323 seconds |
 | Samples / dropped samples / RSS coverage | 236 / 0 / 100% |
 
-The memory peak captures demand that the final reading misses. Cgroup and process-tree scopes overlap, so their CPU values must not be added. Throttled time is cumulative accounting and can exceed invocation wall time; it is not an additional 360 seconds of elapsed delay. Actual measurements and agent outcomes vary between runs.
+In this run, peak RSS is nearly five times the final reading. Actual measurements and agent outcomes vary between runs. For metric definitions, collection scope, and coverage, see [Resource Usage and Stats](../../../docs/sdk/system-stats.mdx).
 
 ## Run One Task with Hermes Agent
 

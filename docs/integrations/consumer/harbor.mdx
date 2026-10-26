@@ -22,7 +22,7 @@ workflows:
 
 ## Resource Stats
 
-Pass `--ak 'fabric_system_stats={"sampling":{"interval_ms":1000,"max_samples":10000}}'` to enable task-side resource sampling. Omission collects all groups before and after the invocation; `--ak fabric_system_stats=null` disables invocation stats. Use the SDK's `collect` list to select metric groups. Results and stats artifacts are retained with the trial's agent logs. See [Resource Usage and Stats](../../sdk/system-stats.mdx) and the [SWE-bench walkthrough](https://github.com/NVIDIA/NeMo-Fabric/blob/main/examples/harbor/swebench/README.md#run-deep-agents-with-resource-stats) for configuration, commands, and interpretation.
+For an example of collecting resource stats inside a task container, follow the [SWE-bench walkthrough](../../../examples/harbor/swebench/README.md#run-deep-agents-with-resource-stats). The [Resource Usage and Stats](../../sdk/system-stats.mdx) guide explains the configuration model, collection scope, and metric interpretation.
 
 ## Environment Forwarding
 

@@ -120,18 +120,6 @@ Selection applies to both before/after and periodic reads. `collected_groups` in
 
 Empty, duplicate, and unknown group selections are rejected. Use `system_stats=None` to disable collection, or `system_stats.sampling=None` to disable only periodic sampling. The separate final `resource_snapshot` remains independent of these controls.
 
-### Run the Harbor Example
-
-For SWE-bench tasks, follow the [Harbor walkthrough](../../examples/harbor/swebench/README.md#run-deep-agents-with-resource-stats). It provides the source-built task image, installation check, and Deep Agents command for a self-hosted Nemotron model.
-
-Harbor's `FabricAgent` accepts the same collection settings through `fabric_system_stats`. Add this option to a Harbor run to collect all groups and sample every second:
-
-```bash
---ak 'fabric_system_stats={"sampling":{"interval_ms":1000,"max_samples":10000}}'
-```
-
-Omit the option for before/after collection, pass `--ak fabric_system_stats=null` to disable invocation stats, or add a `collect` list to select groups. The host validates the configuration and transports it to the task-side runner. Collection happens inside the task container, around the adapter invocation. Harbor's subsequent verifier execution falls outside that window.
-
 ## Read the Results
 
 For the code-review example, inspect `$RUN_DIR/run-result.json` with `jq` or open it directly in your editor:
@@ -171,11 +159,7 @@ The shared cgroup's 8.480 CPU-seconds cannot be attributed exclusively to this r
 
 Read collection quality alongside usage. A sampled maximum can miss a spike between readings even with 100% reported coverage. When sources are missing, availability states carry the reason rather than substituting zero. Disabled collection yields no `system_stats`; failures before a normalized result may leave only partial artifacts.
 
-### Harbor Results
-
-Harbor downloads stats artifacts under the trial's `agent/fabric-artifacts` directory. Their JSON references retain task-side paths beginning with `/logs/agent`; resolve those against the downloaded `agent` directory when inspecting the samples locally. The [SWE-bench walkthrough](../../examples/harbor/swebench/README.md#run-deep-agents-with-resource-stats) includes commands for reading these files.
-
-In the captured container run, sampled process RSS peaked at 985.99 MiB and ended at 201.79 MiB. The agent reached its graph recursion limit, so the verifier did not run, but stats collection retained 236 samples and a finalized summary. The walkthrough records the measurements and execution outcome separately.
+For stats collection with SWE-bench tasks, see the [Harbor walkthrough](../../examples/harbor/swebench/README.md#run-deep-agents-with-resource-stats).
 
 ### Representative Metrics
 
@@ -211,7 +195,9 @@ The limits below come from `cgroup.after.snapshot` when that observation is avai
 | `cgroup.cpu_usage_microseconds` | Increase in the cgroup's CPU usage counter between before/after readings | Microseconds of CPU time |
 | `cgroup.cpu_throttled_microseconds` | Increase in the cgroup's CPU throttling counter between before/after readings | Microseconds |
 
-A limit is a ceiling, not a reservation or a measurement of free capacity. An `unlimited` memory limit means no numeric bound was found among the visible limit sources; it does not mean physical memory is unlimited. These counters cover the cgroup and its descendants, potentially including parallel workloads. Throttled time is accounting evidence, not elapsed delay or proof that another task caused contention.
+A limit is a ceiling, not a reservation or a measurement of free capacity. An `unlimited` memory limit means no numeric bound was found among the visible limit sources; it does not mean physical memory is unlimited. These counters cover the cgroup and its descendants, potentially including parallel workloads.
+
+Throttled time is cumulative accounting and can exceed invocation wall time. It is not additional elapsed delay or proof that another task caused contention.
 
 #### Collection Quality
 
