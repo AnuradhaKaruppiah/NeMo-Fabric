@@ -5,13 +5,36 @@ description: "Configure resource collection, understand measurements, and inspec
 {/* SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0 */}
 
-NVIDIA NeMo Fabric collects resource observations around agent invocations. This guide explains how to configure collection, read the results, and understand the meaning and limits of each measurement.
+Resource stats help answer two questions: what resource limits apply to an agent invocation, and how does resource usage change while it runs? NVIDIA NeMo Fabric records duration, CPU, memory, and execution conditions to help answer them.
 
-## Example: Configure and Run
+Before/after readings show the starting and ending state. Optional sampling reveals temporary demand between them, such as memory used by a tool that exits before the agent returns.
 
-This example uses the code-review agent to demonstrate stats configuration and collection. The same `system_stats` settings apply to other NeMo Fabric workflows.
+## What Stats Measure
 
-Use the maintained [code-review example](../../examples/code_review_agent/README.md) with the Deep Agents harness and an OpenAI-compatible model endpoint.
+An invocation is one request sent to an agent through the runtime. Its stats describe two resource boundaries:
+
+- **Adapter process tree:** the adapter host and its child processes. This includes the agent's local work and tools that execute within that tree.
+- **Linux cgroup:** the resource group containing the adapter host, including its descendant groups. It reports resource limits and usage, and can include other workloads sharing that group.
+
+A resource limit is a ceiling, not a reservation or a measure of free capacity. Shared cgroup usage cannot be attributed exclusively to one invocation.
+
+CPU and memory used by remote model and tool servers are outside this scope. Invocation duration includes time spent waiting for them. Measuring their resource usage requires collection where those services run.
+
+## Configure and Run
+
+This example uses the maintained [code-review agent](../../examples/code_review_agent/README.md) with the Deep Agents harness and an OpenAI-compatible model endpoint. The same `system_stats` settings apply to other NeMo Fabric workflows.
+
+### Choose Collection Settings
+
+`FabricConfig.system_stats` has three controls:
+
+| Setting | What it controls | Default |
+| --- | --- | --- |
+| `system_stats` | Whether invocation stats are collected; set it to `None` to disable them | Enabled |
+| `system_stats.collect` | Which metric groups are read and retained | All four groups |
+| `system_stats.sampling` | Whether periodic readings supplement the before/after readings | `None`: before/after only |
+
+For the first run, keep all metric groups and enable sampling every second with the example flags below.
 
 ### Prepare the Environment
 
@@ -37,6 +60,8 @@ export RUN_DIR="$(mktemp -d "$PWD/stats-review.XXXXXX")"
 ```
 
 ### Enable Sampling and Run
+
+Run the code-review agent with one-second sampling:
 
 ```bash
 .venv/bin/python -m examples.code_review_agent \
@@ -67,15 +92,7 @@ Repeat the command with a new `RUN_DIR` and change only these flags:
 
 Sampling interval and retention flags require `--stats sampled`. Intervals range from 100 to 60000 ms; retention ranges from 2 to 100000 readings, including before/after readings. Without overrides, sampled mode uses 1000 ms and 10000 readings. Agent behavior may change between runs; differences do not by themselves measure collector overhead.
 
-### Choose What to Collect
-
-`FabricConfig.system_stats` has three controls:
-
-| Setting | What it controls | Default |
-| --- | --- | --- |
-| `system_stats` | Whether invocation stats are collected; set it to `None` to disable them | Enabled |
-| `system_stats.collect` | Which metric groups are read and retained | All four groups |
-| `system_stats.sampling` | Whether periodic readings supplement the before/after readings | `None`: before/after only |
+### Select Metric Groups
 
 The four metric groups are:
 
@@ -99,11 +116,25 @@ config.system_stats = SystemStatsConfig(
 )
 ```
 
-Selection applies to both before/after and periodic reads. `collected_groups` in the result records the selection. Excluded observations or measurements use `not_collected`; unselected process reductions and an entirely excluded cgroup block are omitted. Empty, duplicate, and unknown group selections are rejected. Use `system_stats=None` to disable collection, or `system_stats.sampling=None` to disable only periodic sampling. The separate final `resource_snapshot` remains independent of these controls.
+Selection applies to both before/after and periodic reads. `collected_groups` in the result records the selection. Excluded observations or measurements use `not_collected`; unselected process reductions and an entirely excluded cgroup block are omitted.
 
-## Find and Read the Results
+Empty, duplicate, and unknown group selections are rejected. Use `system_stats=None` to disable collection, or `system_stats.sampling=None` to disable only periodic sampling. The separate final `resource_snapshot` remains independent of these controls.
 
-Use `jq` to inspect the JSON, or open it directly in your editor:
+### Run the Harbor Example
+
+For SWE-bench tasks, follow the [Harbor walkthrough](../../examples/harbor/swebench/README.md#run-deep-agents-with-resource-stats). It provides the source-built task image, installation check, and Deep Agents command for a self-hosted Nemotron model.
+
+Harbor's `FabricAgent` accepts the same collection settings through `fabric_system_stats`. Add this option to a Harbor run to collect all groups and sample every second:
+
+```bash
+--ak 'fabric_system_stats={"sampling":{"interval_ms":1000,"max_samples":10000}}'
+```
+
+Omit the option for before/after collection, pass `--ak fabric_system_stats=null` to disable invocation stats, or add a `collect` list to select groups. The host validates the configuration and transports it to the task-side runner. Collection happens inside the task container, around the adapter invocation. Harbor's subsequent verifier execution falls outside that window.
+
+## Read the Results
+
+For the code-review example, inspect `$RUN_DIR/run-result.json` with `jq` or open it directly in your editor:
 
 ```bash
 jq '{status, runtime_id, invocation_id, request_id, system_stats}' \
@@ -117,6 +148,8 @@ jq '.artifacts.artifacts[] | select(.kind | startswith("system_stats"))' \
 SAMPLES_PATH="$(jq -r '.system_stats.sampled.samples.path' "$RUN_DIR/run-result.json")"
 cat "$SAMPLES_PATH"
 ```
+
+### A Captured Code-Review Run
 
 The following values came from a Linux run of the command above using NeMo Fabric source `67acf1cff0d598fc3e6a32370cd63fc088e86958` plus the example's stats CLI changes, Deep Agents 0.7.9, and the model named above. Model work and resource values vary between runs; these are observations, not expected outputs.
 
@@ -132,25 +165,68 @@ The following values came from a Linux run of the command above using NeMo Fabri
 | Visible CPU limit | 8 cores | A visible capacity bound, not a guarantee of eight available cores |
 | Cgroup CPU delta | 8.480 s | Shared cgroup accounting; includes work beyond this adapter process tree |
 
-Memory values use MiB (bytes divided by 1048576). The final RSS is not memory leaked or left behind by the invocation: most of it was present before the invocation, and the final observation occurs before runtime teardown. Likewise, the shared cgroup's 8.480 CPU-seconds cannot be attributed exclusively to this run. The configured memory limit was reported as `unlimited` within the visible hierarchy; this does not establish unlimited physical memory or available headroom.
+Memory values use MiB (bytes divided by 1048576). The final RSS is not memory leaked or left behind by the invocation: most of it was present before the invocation, and the final observation occurs before runtime teardown.
+
+The shared cgroup's 8.480 CPU-seconds cannot be attributed exclusively to this run. The configured memory limit was reported as `unlimited` within the visible hierarchy; this does not establish unlimited physical memory or available headroom.
 
 Read collection quality alongside usage. A sampled maximum can miss a spike between readings even with 100% reported coverage. When sources are missing, availability states carry the reason rather than substituting zero. Disabled collection yields no `system_stats`; failures before a normalized result may leave only partial artifacts.
 
-### Collect Stats in Harbor
+### Harbor Results
 
-Harbor's `FabricAgent` accepts the same configuration through `fabric_system_stats`. For example, add this option to a Harbor run to select all groups and sample every second:
-
-```bash
---ak 'fabric_system_stats={"sampling":{"interval_ms":1000,"max_samples":10000}}'
-```
-
-Omit the option for before/after collection, pass `--ak fabric_system_stats=null` to disable invocation stats, or add a `collect` list to select groups. The host validates the configuration and transports it to the task-side runner. Collection happens inside the task container, around the adapter invocation; remote inference and Harbor's subsequent verifier execution remain outside the measured process tree.
-
-The [SWE-bench walkthrough](../../examples/harbor/swebench/README.md#run-deep-agents-with-resource-stats) contains the source-built task image, installation check, and Deep Agents command for a self-hosted Nemotron model. Stats artifacts are downloaded under the trial's `agent/fabric-artifacts` directory. Their JSON references retain task-side paths beginning with `/logs/agent`; resolve those against the downloaded `agent` directory when inspecting the trace locally.
+Harbor downloads stats artifacts under the trial's `agent/fabric-artifacts` directory. Their JSON references retain task-side paths beginning with `/logs/agent`; resolve those against the downloaded `agent` directory when inspecting the samples locally. The [SWE-bench walkthrough](../../examples/harbor/swebench/README.md#run-deep-agents-with-resource-stats) includes commands for reading these files.
 
 In the captured container run, sampled process RSS peaked at 985.99 MiB and ended at 201.79 MiB. The agent reached its graph recursion limit, so the verifier did not run, but stats collection retained 236 samples and a finalized summary. The walkthrough records the measurements and execution outcome separately.
 
-## How Collection Works
+### Representative Metrics
+
+Use these fields to interpret your own run. Paths are relative to `result.system_stats`.
+
+#### Duration and CPU
+
+| Field | Meaning | Unit |
+| --- | --- | --- |
+| `elapsed_seconds` | Duration of the adapter exchange, including waiting for remote services; excludes startup, before/after collection, and teardown | Seconds |
+| `cpu_time_seconds_estimate` | Difference between the process tree's before/after CPU counters | CPU-seconds |
+
+CPU-seconds measure processor work, while elapsed seconds measure time passing. In the example, 0.14 CPU-seconds over 3.919 elapsed seconds describes the local adapter's work; it does not measure remote model compute. The CPU estimate is absent if a reading is missing, identities differ, or the counter decreases. Processes leaving the tree can distort the estimate even when it is positive.
+
+#### Memory
+
+| Field | Meaning | Unit |
+| --- | --- | --- |
+| `before.snapshot.resident_memory_bytes`, `after.snapshot.resident_memory_bytes` | Process-tree resident memory immediately before and after the invocation, when observations are available | Bytes |
+| `sampled.resident_memory_bytes.sampled_peak` | Largest valid retained RSS reading during the invocation | Bytes |
+| `sampled.resident_memory_bytes.time_weighted_mean` | Average RSS over the intervals covered by valid readings | Bytes |
+
+RSS sums the resident memory of the adapter host and its descendants; shared pages can be counted more than once. Before/after values are instantaneous observations. Sampling can reveal temporary demand that disappears before the final reading, but its peak can still miss shorter spikes. The mean holds each reading until the next valid reading and excludes intervals with missing readings or gaps longer than twice the requested cadence. Check coverage alongside the mean.
+
+#### Resources and Execution Conditions
+
+The limits below come from `cgroup.after.snapshot` when that observation is available. The CPU usage and throttling fields are invocation deltas under `cgroup`.
+
+| Field | Meaning | Unit |
+| --- | --- | --- |
+| `cgroup.after.snapshot.visible_cpu_limit_cores` | CPU bound derived from the effective cpuset and visible ancestor quotas | CPU cores |
+| `cgroup.after.snapshot.visible_memory_limit_bytes` | Smallest configured memory limit among visible ancestors | Bytes |
+| `cgroup.cpu_usage_microseconds` | Increase in the cgroup's CPU usage counter between before/after readings | Microseconds of CPU time |
+| `cgroup.cpu_throttled_microseconds` | Increase in the cgroup's CPU throttling counter between before/after readings | Microseconds |
+
+A limit is a ceiling, not a reservation or a measurement of free capacity. An `unlimited` memory limit means no numeric bound was found among the visible limit sources; it does not mean physical memory is unlimited. These counters cover the cgroup and its descendants, potentially including parallel workloads. Throttled time is accounting evidence, not elapsed delay or proof that another task caused contention.
+
+#### Collection Quality
+
+| Field | Meaning | Unit |
+| --- | --- | --- |
+| `sampled.resident_memory_bytes.covered_fraction` | Fraction of invocation time contributing to the RSS mean | Fraction from 0 to 1 |
+| `sampled.dropped_samples` | Samples skipped because collection fell behind or retention was full | Count |
+
+Coverage of 1 means the full duration qualified for the mean under the collector's gap rules, not that every memory spike was observed. Dropped samples disclose incomplete sampling; zero drops does not guarantee every measurement was available. Read availability states and diagnostics too. `not_collected` means a metric group was excluded, `unsupported` means the source is not supported, and `unavailable` means evidence could not be obtained. None of these states represents zero usage.
+
+#### Complete Field Reference
+
+See the [RunResult JSON Schema](../../schemas/sdk/run-result.schema.json) for the complete field list, types, and required or optional structure. Start at `system_stats` and follow its definitions for invocation stats, cgroup observations, sampled summaries, and gauges. For configuration fields, see the [FabricConfig JSON Schema](../../schemas/sdk/agent.schema.json). Use the schemas from the same release or commit as your runtime when checking saved results.
+
+## Collection Details
 
 ### The Invocation Window
 
@@ -209,52 +285,3 @@ Remote model inference and remote MCP tool execution fall outside this process t
 The same distinction applies to agents reached through ACP or gateways: local adapter measurements describe the client-side work, not the remote agent's resource usage. Measuring remote execution requires collection where it runs, with an explicit execution scope and correlation to the invocation.
 
 Linux cgroup measurements describe a different boundary: the adapter host's cgroup and its descendants. That boundary can include other workloads. Do not attribute shared cgroup usage exclusively to this invocation or add it to overlapping process-tree usage.
-
-## Understanding the Metrics
-
-These representative fields explain how to read the results. All paths below are relative to `result.system_stats`.
-
-### Duration and CPU
-
-| Field | Meaning | Unit |
-| --- | --- | --- |
-| `elapsed_seconds` | Duration of the adapter exchange, including waiting for remote services; excludes startup, before/after collection, and teardown | Seconds |
-| `cpu_time_seconds_estimate` | Difference between the process tree's before/after CPU counters | CPU-seconds |
-
-CPU-seconds measure processor work, while elapsed seconds measure time passing. In the example, 0.14 CPU-seconds over 3.919 elapsed seconds describes the local adapter's work; it does not measure remote model compute. The CPU estimate is absent if a reading is missing, identities differ, or the counter decreases. Processes leaving the tree can distort the estimate even when it is positive.
-
-### Memory
-
-| Field | Meaning | Unit |
-| --- | --- | --- |
-| `before.snapshot.resident_memory_bytes`, `after.snapshot.resident_memory_bytes` | Process-tree resident memory immediately before and after the invocation, when observations are available | Bytes |
-| `sampled.resident_memory_bytes.sampled_peak` | Largest valid retained RSS reading during the invocation | Bytes |
-| `sampled.resident_memory_bytes.time_weighted_mean` | Average RSS over the intervals covered by valid readings | Bytes |
-
-RSS sums the resident memory of the adapter host and its descendants; shared pages can be counted more than once. Before/after values are instantaneous observations. Sampling can reveal temporary demand that disappears before the final reading, but its peak can still miss shorter spikes. The mean holds each reading until the next valid reading and excludes intervals with missing readings or gaps longer than twice the requested cadence. Check coverage alongside the mean.
-
-### Resources and Execution Conditions
-
-The limits below come from `cgroup.after.snapshot` when that observation is available. The CPU usage and throttling fields are invocation deltas under `cgroup`.
-
-| Field | Meaning | Unit |
-| --- | --- | --- |
-| `cgroup.after.snapshot.visible_cpu_limit_cores` | CPU bound derived from the effective cpuset and visible ancestor quotas | CPU cores |
-| `cgroup.after.snapshot.visible_memory_limit_bytes` | Smallest configured memory limit among visible ancestors | Bytes |
-| `cgroup.cpu_usage_microseconds` | Increase in the cgroup's CPU usage counter between before/after readings | Microseconds of CPU time |
-| `cgroup.cpu_throttled_microseconds` | Increase in the cgroup's CPU throttling counter between before/after readings | Microseconds |
-
-A limit is a ceiling, not a reservation or a measurement of free capacity. An `unlimited` memory limit means no numeric bound was found among the visible limit sources; it does not mean physical memory is unlimited. These counters cover the cgroup and its descendants, potentially including parallel workloads. Throttled time is accounting evidence, not elapsed delay or proof that another task caused contention.
-
-### Collection Quality
-
-| Field | Meaning | Unit |
-| --- | --- | --- |
-| `sampled.resident_memory_bytes.covered_fraction` | Fraction of invocation time contributing to the RSS mean | Fraction from 0 to 1 |
-| `sampled.dropped_samples` | Samples skipped because collection fell behind or retention was full | Count |
-
-Coverage of 1 means the full duration qualified for the mean under the collector's gap rules, not that every memory spike was observed. Dropped samples disclose incomplete sampling; zero drops does not guarantee every measurement was available. Read availability states and diagnostics too. `not_collected` means a metric group was excluded, `unsupported` means the source is not supported, and `unavailable` means evidence could not be obtained. None of these states represents zero usage.
-
-### Complete Field Reference
-
-See the [RunResult JSON Schema](../../schemas/sdk/run-result.schema.json) for the complete field list, types, and required or optional structure. Start at `system_stats` and follow its definitions for invocation stats, cgroup observations, sampled summaries, and gauges. For configuration fields, see the [FabricConfig JSON Schema](../../schemas/sdk/agent.schema.json). Use the schemas from the same release or commit as your runtime when checking saved results.
