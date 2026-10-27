@@ -91,6 +91,7 @@ for (const [description, mutate] of [
   ["a new high advisory on an approved parent", (r) => r.vulnerabilities["@opencode/core"].via.push({ ...advisory })],
   ["a changed advisory range", (r) => { r.vulnerabilities.zod.via[0].range = "*"; }],
   ["an additional Zod install path", (r) => r.vulnerabilities.zod.nodes.push("node_modules/other/node_modules/zod")],
+  ["the patched OpenCode Zod install path", (r) => r.vulnerabilities.zod.nodes.push("node_modules/zod")],
   ["an additional SDK install path", (r) => r.vulnerabilities["@factory/droid-sdk"].nodes.push("other")],
   ["a critical finding", (r) => { r.vulnerabilities.zod.severity = "critical"; r.metadata.vulnerabilities.high--; r.metadata.vulnerabilities.critical++; }],
   ["an unrelated high package", (r) => { r.vulnerabilities.other = { name: "other", severity: "high", nodes: ["node_modules/other"], via: ["zod"] }; r.metadata.vulnerabilities.high++; }],
