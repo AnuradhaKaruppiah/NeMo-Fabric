@@ -56,6 +56,8 @@
       "zod": "4.6.7"
     },
     "@parcel/watcher": "2.6.0",
+    "cross-spawn": "7.0.6",
+    "debug": "4.4.3",
     "fast-uri": "3.1.9",
     "@earendil-works/pi-coding-agent@1.0.3": {
       "undici": "8.12.3"
