@@ -30,7 +30,8 @@ OpenCode 2.0.23 pins Zod 4.1.8. The NeMo Fabric source workspace overrides
 compatible Zod 4 dependencies to 4.6.7 while preserving the GitLab provider's
 Zod 3 requirement and its dependencies' original peer ranges. For a
 published-adapter installation, apply the `@opencode/core`, `@opencode/plugin`,
-`fast-uri`, and `debug` overrides from the [workspace manifest](../package.json)
+`fast-uri`, and `debug` overrides from the
+[workspace manifest](https://github.com/NVIDIA/NeMo-Fabric/blob/8a5549a72241dd7c3066233275266ba32011fd07/adapters/typescript/package.json)
 to the consuming project's root `package.json`, use Zod 4.6.7 as its root
 Zod peer, and refresh the lockfile. npm does not inherit overrides from
 installed dependency packages. Verify the resulting tree with `npm ls --all`
