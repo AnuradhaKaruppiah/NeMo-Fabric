@@ -47,6 +47,7 @@ const zodPath = "node_modules/@factory/droid-sdk/node_modules/zod";
 const exceptionLock = {
   packages: {
     [zodPath]: { version: "3.25.76" },
+    "node_modules/zod": { version: "4.1.8" },
     "node_modules/@factory/droid-sdk": { version: "0.9.1" },
     "node_modules/@opencode/core": { version: "2.0.23" },
     "node_modules/@opencode/plugin": { version: "2.0.23" },
