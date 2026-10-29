@@ -49,9 +49,9 @@ NeMo Fabric includes adapters for the following harnesses and execution targets.
 
 ✅ Supported · — Not supported. Support may come through normalized configuration, native harness behavior, or a specific target. Refer to each adapter guide or the [complete compatibility matrix](adapters/README.md#configuration-compatibility) for details and limitations.
 
-## NVIDIA Ecosystem
+## Ecosystem
 
-NeMo Fabric is an execution layer for NVIDIA products that build, evaluate, deploy, and improve agents. The ecosystem includes shipped integrations with [NVIDIA NeMo Helix](https://github.com/NVIDIA-NeMo/nemo-helix), concrete integrations with [NVIDIA NemoClaw](https://github.com/NVIDIA/NemoClaw/) and [NVIDIA NeMo Gym](https://github.com/NVIDIA-NeMo/gym), and emerging rollout integrations such as [NVIDIA Polar](https://github.com/NVIDIA-NeMo/ProRL-Agent-Server). [Explore the NeMo Fabric ecosystem](docs/about-nemo-fabric/ecosystem.mdx).
+NeMo Fabric brings supported agent harnesses into the frameworks teams use to benchmark and improve agents: [Harbor 0.25.0](https://github.com/harbor-framework/harbor/releases/tag/v0.25.0) ships `FabricAgent` upstream, and [NVIDIA NeMo Gym](https://github.com/NVIDIA-NeMo/gym) provides Fabric-backed agents for evaluation and training rollouts. The ecosystem also includes shipped workflows in [NVIDIA NeMo Helix](https://github.com/NVIDIA-NeMo/nemo-helix), an active integration with [NVIDIA NemoClaw](https://github.com/NVIDIA/NemoClaw/), and emerging rollout integrations such as [NVIDIA Polar](https://github.com/NVIDIA-NeMo/ProRL-Agent-Server). [Explore the NeMo Fabric ecosystem](docs/about-nemo-fabric/ecosystem.mdx).
 
 ## Extensibility
 
