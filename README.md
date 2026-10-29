@@ -82,8 +82,6 @@ Planned areas of development include:
 
 - **Harness coverage:** Expand supported harnesses and adapter capabilities.
 - **Configuration explainability:** Explain native configuration, mappings, precedence, and unsupported fields; redact secrets without launching harnesses or modifying workspaces.
-- **ACP capabilities:** Extend the shared Agent Client Protocol runner with streaming, cancellation, permission handling, and capability-dependent resume.
 - **Sandbox execution:** Support additional sandbox providers, configurable access boundaries, provider-supported sudo, and judge-code isolation.
 - **Environment bootstate:** Capture files, configuration, dependencies, and supported image snapshots for restoration and branching evaluations.
-- **System statistics:** Add supported GPU measurements and correlate available token/cost metrics with NeMo Fabric execution IDs; identify unavailable measurements.
 
