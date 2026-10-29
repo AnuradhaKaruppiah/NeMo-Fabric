@@ -54,15 +54,15 @@ Harbor ships `FabricAgent` upstream in [Harbor 0.25.0](https://github.com/harbor
 
 Runtime resource snapshots and `RunResult.system_stats` complement software provenance with CPU, memory, and process counts for the adapter host and its child-process tree, including local agent and tool work within that tree. Before/after readings capture invocation boundaries; optional bounded sampling captures transient demand. Visible Linux cgroup limits, throttling, memory conditions, and pressure counters add context for comparing runs under different resource constraints. Results distinguish `unsupported`, `unavailable`, and `not_collected` observations. The code-review and Harbor examples expose collection controls and sampled artifacts. Refer to [Resource Usage and Stats](../sdk/system-stats.mdx) for collection scope and interpretation.
 
-### OpenShell Provider and Extensible Sandbox Execution
+### Choose Where Agents Run With OpenShell
 
-The SDK separates sandbox ownership from agent runtime ownership with `prepare_environment()`, `attach_environment()`, `start_runtime_in()`, and `release_environment()`. A NeMo Fabric-owned environment is deleted on release; a caller-owned environment is detached without deleting its resource.
+**Choose where agents run without rewriting the application.** NeMo Fabric keeps the application's SDK workflow consistent across local execution and OpenShell sandboxes. Select the execution environment through configuration to control where the agent or harness loop runs, while retaining the same interface for running agents and collecting results and evidence.
 
-The optional [OpenShell provider](https://github.com/NVIDIA/NeMo-Fabric/tree/main/environment-providers/openshell) routes ordinary SDK operations into a task image through `fabric-agent-ctl`. One sandbox can host multiple runtimes, and stopping one runtime leaves the others usable. Provider readiness is checked before runtime startup, sandbox IDs prevent accidental attachment to same-name replacements, and declared artifacts are copied back to host paths with bounded, verified transfers.
+The optional [OpenShell provider](https://github.com/NVIDIA/NeMo-Fabric/tree/main/environment-providers/openshell) supports new or existing sandboxes with explicit lifecycle and cleanup controls. One sandbox can host multiple agent runtimes independently, and declared artifacts are transferred back to the host.
 
-The maintained [Hermes Code Review](https://github.com/NVIDIA/NeMo-Fabric/tree/main/examples/code_review_agent) and [custom LangGraph agent](https://github.com/NVIDIA/NeMo-Fabric/tree/main/examples/langgraph_custom_agent) examples exercise this SDK path, with optional Relay support. Refer to the [sandbox command bridge](../sdk/python.mdx#sandbox-command-bridge) for lifecycle and cleanup behavior.
+The [Hermes Code Review](https://github.com/NVIDIA/NeMo-Fabric/tree/main/examples/code_review_agent) and [custom LangGraph agent](https://github.com/NVIDIA/NeMo-Fabric/tree/main/examples/langgraph_custom_agent) examples demonstrate this workflow, including optional Relay integration. See the [sandbox execution guide](../sdk/python.mdx#sandbox-command-bridge) for setup and lifecycle details.
 
-OpenShell is the first sandbox provider shipped through this execution boundary. Support for additional sandbox providers is planned; it is not part of the 0.6 release.
+OpenShell is the first supported sandbox provider, with additional providers planned.
 
 ### Normalized Health Checks Into Native Agent State
 
