@@ -23,7 +23,7 @@ This page summarizes NVIDIA NeMo Fabric 0.6.0. [GitHub Releases](https://github.
 
 ## Current Release
 
-NeMo Fabric 0.6.0 adds explicit environment lifecycle APIs and an OpenShell provider, runtime health checks, resource snapshots and invocation statistics, and selected software execution evidence. It adds Kiro and AWS Strands adapters through a shared Agent Client Protocol (ACP) runner, supports Harbor 0.24, and updates Relay-enabled integrations for NeMo Relay 0.11.
+NeMo Fabric 0.6.0 strengthens benchmark comparisons with Harbor Framework integration, software provenance, and resource statistics covering the agent's process tree. It adds OpenShell sandbox execution, normalized health checks that inspect native agent state, and support for Kiro and AWS Strands.
 
 ## Upgrade Notes
 
@@ -46,7 +46,15 @@ Rust callers constructing `FabricConfig` or `RunResult` with complete struct lit
 
 ## Release Highlights
 
-### Environment Lifecycle and OpenShell Execution
+### Harbor Framework Integration and Benchmark Comparisons
+
+Harbor ships `FabricAgent` upstream in [Harbor 0.25.0](https://github.com/harbor-framework/harbor/releases/tag/v0.25.0), connecting its benchmark tasks and verifiers to supported NeMo Fabric harnesses. That Harbor release's `fabric` extra targets NeMo Fabric 0.5.x. The separately packaged NeMo Fabric 0.6 Harbor bridge supports Harbor 0.24 and adds software provenance and invocation resource statistics to help teams make stronger A/B comparisons between benchmark runs. Hold the task and verifier fixed, vary the selected harness or configuration, and inspect execution evidence alongside task reward and model usage. Refer to the [Harbor integration guide](../integrations/consumer/harbor.mdx).
+
+`RunResult.execution` identifies selected SDK, core, adapter, and harness software, together with reported infrastructure versions, observation sources, capture times, and coverage. Harbor can supply application evidence or disable collection through `fabric_provenance`; callers can forward their own snapshots through `FabricConfig.provenance.reports`. Evidence is retained across OpenShell host/guest execution and OpenClaw service reuse. SDK and adapter snapshots are collected at initialization and reused; missing or malformed optional reports become explicit coverage gaps without replacing the invocation outcome. This provenance helps reviewers identify software differences between runs; it does not establish reproducibility by itself. Refer to [Selected Software Evidence](../sdk/python.mdx#selected-software-evidence).
+
+Runtime resource snapshots and `RunResult.system_stats` complement software provenance with CPU, memory, and process counts for the adapter host and its child-process tree, including local agent and tool work within that tree. Before/after readings capture invocation boundaries; optional bounded sampling captures transient demand. Visible Linux cgroup limits, throttling, memory conditions, and pressure counters add context for comparing runs under different resource constraints. Results distinguish `unsupported`, `unavailable`, and `not_collected` observations. The code-review and Harbor examples expose collection controls and sampled artifacts. Refer to [Resource Usage and Stats](../sdk/system-stats.mdx) for collection scope and interpretation.
+
+### OpenShell Provider and Extensible Sandbox Execution
 
 The SDK separates sandbox ownership from agent runtime ownership with `prepare_environment()`, `attach_environment()`, `start_runtime_in()`, and `release_environment()`. A NeMo Fabric-owned environment is deleted on release; a caller-owned environment is detached without deleting its resource.
 
@@ -54,29 +62,21 @@ The optional [OpenShell provider](https://github.com/NVIDIA/NeMo-Fabric/tree/mai
 
 The maintained [Hermes Code Review](https://github.com/NVIDIA/NeMo-Fabric/tree/main/examples/code_review_agent) and [custom LangGraph agent](https://github.com/NVIDIA/NeMo-Fabric/tree/main/examples/langgraph_custom_agent) examples exercise this SDK path, with optional Relay support. Refer to the [sandbox command bridge](../sdk/python.mdx#sandbox-command-bridge) for lifecycle and cleanup behavior.
 
-### Runtime Health Checks
+OpenShell is the first sandbox provider shipped through this execution boundary. Support for additional sandbox providers is planned; it is not part of the 0.6 release.
+
+### Normalized Health Checks Into Native Agent State
 
 Use `Fabric.check()` to check an agent runtime, an OpenShell runtime server, or a prepared or attached OpenClaw Gateway service. Checks return typed observations with `passed`, `failed`, `unknown`, or `unsupported` outcomes under one timeout budget. Supported `live`, `active`, and `ready` levels depend on the adapter's native evidence; a busy runtime can still be healthy.
 
+The shared report normalizes harness-specific observations of native agent state: for example, a fresh Codex thread read, Cline's resident-session status, or Pi's configured model, tool, and MCP state. Supported checks inspect the owned session and native request interface, extending health observations into the agent runtime. Systems such as NVIDIA NemoClaw can use these reports to inform monitoring and recovery decisions without implementing each harness's probes themselves. Unsupported levels remain explicit, and passing a check does not guarantee successful inference or acceptance of another concurrent prompt.
+
 OpenShell routes server and runtime checks through `fabric-agent-ctl check`, independently of an in-flight invocation. Refer to [Health Checks](../sdk/health-checks.mdx) for the supported levels and evidence for each adapter.
 
-### Resource Snapshots and Invocation Statistics
-
-Use runtime resource snapshots and `RunResult.system_stats` to inspect adapter process-tree CPU and memory, invocation duration, and visible Linux cgroup limits and conditions. Optional bounded sampling captures transient demand between the default before/after readings. Results distinguish `unsupported`, `unavailable`, and `not_collected` observations.
-
-The code-review and Harbor examples expose collection controls and sampled artifacts. Refer to [Resource Usage and Stats](../sdk/system-stats.mdx) for metric groups, sampling limits, and interpretation.
-
-### Selected Software Execution Evidence
-
-`RunResult.execution` records selected software versions and existing infrastructure reports with their participants, original capture times, sources, and coverage. SDK and adapter snapshots are collected at initialization and reused; the compiled core reports its own executing version. Caller-owned reports can be supplied through `FabricConfig.provenance.reports`.
-
-Evidence survives the OpenShell host/guest path and OpenClaw service reuse. Harbor can supply application evidence or disable collection through `fabric_provenance`. Missing or malformed optional reports become explicit coverage gaps without replacing the invocation outcome. Refer to [Selected Software Evidence](../sdk/python.mdx#selected-software-evidence).
-
-### Kiro and AWS Strands Adapters
+### New Harness Integrations: Kiro and AWS Strands
 
 The shared ACP runner supports [Kiro CLI V3](../integrations/harness/kiro.mdx) and [AWS Strands](../integrations/harness/strands.mdx). Each runtime owns a harness process and persistent conversation, with supported MCP configuration, invocation-local usage, and deadline cleanup. Install and authenticate the corresponding harness separately; consult each guide for supported configuration and limits.
 
-### Usage, Telemetry, and Harness Reliability
+## Usage, Telemetry, and Harness Reliability
 
 - OpenCode usage follows verified invocation coverage, Cline uses complete NVIDIA request totals, and Kilo Code usage includes all invocation steps. Harbor no longer backfills normalized usage from ATIF trajectories.
 - Claude reports per-invocation cost and cache token usage. Deep Agents supports configured reasoning effort; Claude exposes effort controls and `max_buffer_size`; Codex accepts normalized `max` and `ultra` effort values.

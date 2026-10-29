@@ -5,7 +5,7 @@ description: "Benchmark agents with Harbor and NeMo Gym, and explore the product
 {/* SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0 */}
 
-NVIDIA NeMo Fabric connects applications, benchmarking frameworks, and training systems to a growing set of agent harnesses and custom agents. Each consumer keeps ownership of its workflow while NeMo Fabric provides a common execution boundary for configuration, lifecycle, results, artifacts, and telemetry.
+NVIDIA NeMo Fabric connects applications, benchmarking frameworks, and evaluation systems to a growing set of agent harnesses and custom agents. Each consumer keeps ownership of its workflow while NeMo Fabric provides a common execution boundary for configuration, lifecycle, results, artifacts, and telemetry.
 
 ## Benchmark With Harbor and NeMo Gym
 
@@ -28,7 +28,7 @@ The ecosystem includes integrations at different maturity levels:
 | [NVIDIA NeMo Gym](https://github.com/NVIDIA-NeMo/gym) | Available upstream | Runs NeMo Fabric harnesses through its agent-server boundary for benchmark evaluation and training rollouts. |
 | [NVIDIA Polar](https://github.com/NVIDIA-NeMo/ProRL-Agent-Server) | Emerging | Can use NeMo Fabric as a portable harness boundary for agentic reinforcement learning rollouts. |
 
-## Harbor
+## Harbor Framework
 
 [Harbor](https://github.com/harbor-framework/harbor) is a framework for evaluating and optimizing agents in sandboxed environments. Its upstream `FabricAgent` connects Harbor's benchmark workflow to NeMo Fabric-supported harnesses. Harbor owns task provisioning, execution environments, verification, and benchmark results; NeMo Fabric manages the selected harness and returns normalized execution results and evidence.
 
