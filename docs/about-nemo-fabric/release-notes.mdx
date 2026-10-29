@@ -23,7 +23,7 @@ This page summarizes NVIDIA NeMo Fabric 0.6.0. [GitHub Releases](https://github.
 
 ## Current Release
 
-NeMo Fabric 0.6.0 helps teams compare agent harnesses with clearer execution evidence and more control over where they run. Harbor's upstream integration brings NeMo Fabric into the benchmarking workflows teams already use, while software provenance and system statistics help explain the software and resource demand behind each result.
+NeMo Fabric 0.6.0 helps teams compare agent harnesses with clearer execution evidence and more control over where they run. Software provenance and system statistics help explain the software and resource demand behind each result. Separately, Harbor's upstream integration expands the benchmarking workflows where teams can use NeMo Fabric.
 
 Applications can select local or OpenShell sandbox execution through a consistent SDK workflow and use shared health checks to inform monitoring and recovery across supported harnesses. Lightweight ACP integrations add Kiro and AWS Strands to the available harnesses.
 
@@ -48,13 +48,19 @@ Rust callers constructing `FabricConfig` or `RunResult` with complete struct lit
 
 ## Release Highlights
 
-### Benchmark Where You Work, With Evidence You Can Compare
+### Benchmark Where You Work
 
-**Meet benchmark users where they already work.** Harbor now ships `FabricAgent` upstream in [Harbor 0.25.0](https://github.com/harbor-framework/harbor/releases/tag/v0.25.0). Alongside the existing NeMo Gym integration, this brings supported NeMo Fabric harnesses into the frameworks teams already use to evaluate and improve agents. Teams can compare harnesses within familiar benchmark workflows. See the [Harbor integration guide](../integrations/consumer/harbor.mdx).
+Harbor now ships `FabricAgent` upstream in [Harbor 0.25.0](https://github.com/harbor-framework/harbor/releases/tag/v0.25.0). Alongside the existing NeMo Gym integration, this brings supported NeMo Fabric harnesses into the frameworks teams already use to evaluate and improve agents.
 
-**Make provenance a foundation for benchmark comparisons.** A score is more useful when you know which software produced it. NeMo Fabric 0.6 records selected harness, adapter, runtime, and reported infrastructure versions alongside execution results, helping teams spot software differences when comparing runs. This gives reviewers evidence to interpret changes in benchmark performance and investigate unexpected results. See [Selected Software Evidence](../sdk/python.mdx#selected-software-evidence).
+Harbor's upstream integration uses NeMo Fabric 0.5.x. To inspect 0.6 provenance and resource statistics alongside Harbor's benchmark results, use the separate [NeMo Fabric 0.6 Harbor bridge](../integrations/consumer/harbor.mdx) with Harbor 0.24. The bridge saves this evidence in a separate NeMo Fabric result artifact.
 
-**Understand the resources behind the result.** System statistics add CPU, memory, and process usage for the agent's local process tree alongside benchmark outcomes and model usage. Teams can compare resource demand across harnesses and configurations, while optional sampling helps reveal transient peaks. See [Resource Usage and Stats](../sdk/system-stats.mdx) for measurement scope and collection options.
+### Compare Runs With Software Provenance
+
+A benchmark score is more useful when you know which software produced it. NeMo Fabric 0.6 records selected harness, adapter, runtime, and reported infrastructure versions alongside execution results. Teams can spot software differences between runs, interpret changes in performance, and investigate unexpected results. See [Selected Software Evidence](../sdk/python.mdx#selected-software-evidence).
+
+### Understand the Resources Behind Each Result
+
+System statistics show CPU, memory, and process usage for the agent's local process tree. Teams can compare resource demand across harnesses and configurations, while optional sampling helps reveal transient peaks. See [Resource Usage and Stats](../sdk/system-stats.mdx) for measurement scope and collection options.
 
 ### Choose Where Agents Run With OpenShell
 
