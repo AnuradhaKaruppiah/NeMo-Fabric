@@ -80,5 +80,5 @@ The shared ACP runner supports [Kiro CLI V3](../integrations/harness/kiro.mdx) a
 - Health levels are adapter-specific observations, not interchangeable guarantees of model availability or prompt acceptance. Unsupported levels remain explicit.
 - Resource statistics do not measure remote model-server or tool-server resources. Shared cgroup measurements cannot be attributed exclusively to one invocation, and GPU usage is not collected by this resource API.
 - Software execution evidence is a selected inventory, not a full dependency inventory, reproducibility guarantee, or attestation. Input and configuration capture remain outside this contract.
-- Kiro and Strands do not advertise Relay telemetry or native NeMo Fabric streaming. Cancellation and cold resume remain outside the supported adapter lifecycle contract.
+- Kiro and AWS Strands use lightweight integrations through the shared ACP runner, without Relay telemetry or native NeMo Fabric streaming.
 - The adapter catalog contains metadata snapshots; it does not provide provider-backed executable registries or an automated adapter conformance suite.
