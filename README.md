@@ -53,8 +53,8 @@ NeMo Fabric includes adapters for the following harnesses and execution targets.
 
 NeMo Fabric brings supported agent harnesses into the frameworks teams use to benchmark and improve agents:
 
-- **Harbor ships FabricAgent upstream.** [Harbor 0.25.0](https://github.com/harbor-framework/harbor/releases/tag/v0.25.0) includes `FabricAgent`, bringing Fabric-backed harnesses directly into Harbor's benchmarking workflows.
-- **NeMo Gym supports Fabric-backed agents.** [NVIDIA NeMo Gym](https://github.com/NVIDIA-NeMo/gym) integrates Fabric for evaluation and training rollouts.
+- **Harbor ships FabricAgent upstream.** [Harbor 0.25.0](https://github.com/harbor-framework/harbor/releases/tag/v0.25.0) includes `FabricAgent`, bringing NeMo Fabric-backed harnesses directly into Harbor's benchmarking workflows.
+- **NeMo Gym supports NeMo Fabric-backed agents.** [NVIDIA NeMo Gym](https://github.com/NVIDIA-NeMo/gym) integrates NeMo Fabric for evaluation and training rollouts.
 
 The ecosystem also includes shipped workflows in [NVIDIA NeMo Helix](https://github.com/NVIDIA-NeMo/nemo-helix), an active integration with [NVIDIA NemoClaw](https://github.com/NVIDIA/NemoClaw/), and emerging rollout integrations such as [NVIDIA Polar](https://github.com/NVIDIA-NeMo/ProRL-Agent-Server). [Explore the NeMo Fabric ecosystem](docs/about-nemo-fabric/ecosystem.mdx).
 

@@ -62,7 +62,7 @@ OpenShell routes server and runtime checks through `fabric-agent-ctl check`, ind
 
 ### Resource Snapshots and Invocation Statistics
 
-Use runtime resource snapshots and `RunResult.system_stats` to inspect adapter process-tree CPU and memory, invocation duration, and visible Linux cgroup limits and conditions. Optional bounded sampling captures transient demand between the default before/after readings. Results distinguish unsupported, unavailable, and uncollected observations.
+Use runtime resource snapshots and `RunResult.system_stats` to inspect adapter process-tree CPU and memory, invocation duration, and visible Linux cgroup limits and conditions. Optional bounded sampling captures transient demand between the default before/after readings. Results distinguish `unsupported`, `unavailable`, and `not_collected` observations.
 
 The code-review and Harbor examples expose collection controls and sampled artifacts. Refer to [Resource Usage and Stats](../sdk/system-stats.mdx) for metric groups, sampling limits, and interpretation.
 
